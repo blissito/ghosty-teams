@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useT } from "../../i18n";
 import { useRtSubscribe } from "../../utils/rt-bus";
-import { factoryRunCardFn, factoryDecisionFn, factoryRetryPreviewFn, factoryRunActionFn } from "../../server/apps/factory";
+import { factoryRunCardFn, factoryDecisionFn, factoryRetryPreviewFn, factoryRunActionFn, factoryRunCiFn } from "../../server/apps/factory";
 import { prepareRepoFn } from "../../server/apps/readiness";
 import type { RunCardData } from "../../lib/ebdoc";
 
@@ -173,8 +173,27 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
                   : ""}
         </p>
         {st.ci?.state === "none" && st.ci.repoHasCi && (
-          <p className="mt-2 text-xs font-semibold text-amber-700 dark:text-amber-300" role="status">
-            {t("El CI ya está en el repo, pero este PR todavía no lo corre: «Merge» primero le trae lo último y lo corre.")}
+          <p className="mt-2 flex flex-wrap items-center gap-2 text-xs font-semibold text-amber-700 dark:text-amber-300" role="status">
+            {t("Este PR todavía no ha corrido el CI.")}
+            <button
+              type="button"
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                setErr("");
+                try {
+                  await factoryRunCiFn({ data: { runId: st.runId } });
+                  setTimeout(refresh, 8000);
+                } catch (e) {
+                  setErr(e instanceof Error ? e.message : String(e));
+                } finally {
+                  setBusy(false);
+                }
+              }}
+              className="rounded-full border border-amber-600 px-3 py-1 text-xs font-bold hover:bg-amber-600/10 disabled:opacity-50"
+            >
+              {t("Correr CI")}
+            </button>
           </p>
         )}
         {st.ci?.state === "pending" && (

@@ -829,6 +829,34 @@ export const factoryVerdictFn = createServerFn({ method: "POST" })
     return { runId: run.id, status: run.status, repo: run.repo, prUrl: run.prUrl, verdict, shots, preview: await R.runPreview(run.id) };
   });
 
+/**
+ * «Correr CI» desde la tarjeta del pedido: le trae a la rama lo último de la principal
+ * (update-branch), y ese commit dispara el CI. Sin esto había que picar «Merge» en OTRA tarjeta
+ * para que el merge se negara y de paso lo pusiera al día (MailMask #10, 4-oct).
+ */
+export const factoryRunCiFn = createServerFn({ method: "POST" })
+  .validator((d: { runId: number }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) throw new Error("no autenticado");
+    const R = await import("./factory-runs.server");
+    const run = await R.getRun(Number(data.runId));
+    if (!run) throw new Error("no existe el pedido");
+    const db = await import("../../db.server");
+    if (!(await db.listChannels(me.sub, me.isOwner)).some((c) => c.id === run.channelId)) throw new Error("no ves ese room");
+    const pr = run.prUrl ? R.parsePrUrl(run.prUrl) : null;
+    if (!pr) throw new Error("el pedido no tiene PR");
+    const { githubApi } = await import("../connectors/github.server");
+    const up = await githubApi(me.sub, `/repos/${pr.repo}/pulls/${pr.number}/update-branch`, { method: "PUT", body: "{}" }).catch((e) => ({ error: String(e) }));
+    if (up?.error) {
+      // 422 = ya va al día: no hay commit nuevo que lo dispare.
+      throw new Error(/422|up to date|no new commits/i.test(String(up.error)) ? "el PR ya va al día con la principal: el CI corre con su siguiente commit" : `GitHub no lo puso al día (¿choques?): ${up.error}`);
+    }
+    await R.logEvent(run.id, "ci_requested", me.name || me.sub);
+    ciCache.delete(run.prUrl!);
+    return { ok: true as const };
+  });
+
 /** «Mezclar» desde la tarjeta del veredicto: con el GitHub de quien pica. */
 export const factoryMergeFn = createServerFn({ method: "POST" })
   .validator((d: { runId: number }) => d)
