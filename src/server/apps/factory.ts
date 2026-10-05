@@ -475,7 +475,7 @@ export const factoryRunCardFn = createServerFn({ method: "POST" })
       canSign: (run.status === "plan_review" && !!plan && !plan.decision) || run.status === "escalated",
       // El CI del PR EN VIVO (no el del veredicto): tras preparar el repo, el aviso seguía pidiendo
       // «Prepara el repo» con el CI ya en main (MailMask #10, 4-oct).
-      ci: run.status === "pr_review" && run.prUrl ? await liveCi(me.sub, run.prUrl, run.repo) : null,
+      ci: run.prUrl && !["done", "cancelled"].includes(run.status) ? await liveCi(me.sub, run.prUrl, run.repo) : null,
       canPrep: !!me.isOwner && !!run.repo,
       ...(await runLive(run)),
     };

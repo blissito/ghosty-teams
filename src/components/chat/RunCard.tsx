@@ -2,7 +2,7 @@
 // Dice en qué etapa va el pedido y deja firmar el plan AQUÍ, sin abrir el hilo; el detalle
 // (plan completo, hallazgos, PR) sigue en el hilo. Estado leído al pintar; se refresca con
 // los `refresh` del room que publica cada transición.
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { useT } from "../../i18n";
 import { useRtSubscribe } from "../../utils/rt-bus";
 import { factoryRunCardFn, factoryDecisionFn, factoryRetryPreviewFn, factoryRunActionFn, factoryRunCiFn } from "../../server/apps/factory";
@@ -63,6 +63,18 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
   // aquí mismo: la persona no tiene por qué saber que existe la barra del hilo (MailMask, 4-oct).
   const stalled = !!WORKING[st.status] && !st.liveTurnId && st.view.stale;
   const closed = st.status === "done" || st.status === "cancelled";
+  const runCi = async () => {
+    setBusy(true);
+    setErr("");
+    try {
+      await factoryRunCiFn({ data: { runId: st.runId } });
+      setTimeout(refresh, 8000);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const decide = async (decision: "approve" | "changes") => {
     setBusy(true);
@@ -94,7 +106,8 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
             // Escalado: el paso actual ya no es de @check sino de la persona, en ámbar.
             const deciding = now && st.status === "escalated";
             return (
-              <li key={s.key} className="flex flex-1 items-center gap-1">
+              <Fragment key={s.key}>
+              <li className="flex flex-1 items-center gap-1">
                 <span
                   className={`flex-1 rounded-full px-2 py-1 text-center text-[11px] font-semibold ${
                     // Mezclado = el morado «merged» de GitHub; en curso, verde por paso hecho.
@@ -113,6 +126,10 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
                   {deciding ? t("Te toca decidir") : t(s.label)}
                 </span>
               </li>
+              {/* El CI es una etapa del camino: estado en vivo del PR; si el repo ya tiene CI y
+                  este PR no lo ha corrido, el paso mismo lo dispara (MailMask #10, 4-oct). */}
+              {s.key === "build" && <CiStep ci={st.ci} closed={closed} busy={busy} onRun={runCi} t={t} />}
+              </Fragment>
             );
           })}
         </ol>
@@ -165,42 +182,15 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
               : st.status === "done"
                 ? ""
                 : st.status === "pr_review"
-                  ? st.preview?.state === "pending"
+                  ? st.ci?.state === "pending"
+                    ? t("⏳ El CI está corriendo en este PR. Cuando termine, el PR queda para tu revisión.")
+                    : st.preview?.state === "pending"
                     ? t("🏁 La fábrica terminó su parte. Se está construyendo la preview del PR para que lo revises.")
                     : t("🏁 La fábrica terminó su parte: el PR espera tu revisión. Nadie está trabajando en este pedido.")
                 : st.loops
                   ? `${t("Vueltas de check")}: ${st.loops}`
                   : ""}
         </p>
-        {st.ci?.state === "none" && st.ci.repoHasCi && (
-          <p className="mt-2 flex flex-wrap items-center gap-2 text-xs font-semibold text-amber-700 dark:text-amber-300" role="status">
-            {t("Este PR todavía no ha corrido el CI.")}
-            <button
-              type="button"
-              disabled={busy}
-              onClick={async () => {
-                setBusy(true);
-                setErr("");
-                try {
-                  await factoryRunCiFn({ data: { runId: st.runId } });
-                  setTimeout(refresh, 8000);
-                } catch (e) {
-                  setErr(e instanceof Error ? e.message : String(e));
-                } finally {
-                  setBusy(false);
-                }
-              }}
-              className="rounded-full border border-amber-600 px-3 py-1 text-xs font-bold hover:bg-amber-600/10 disabled:opacity-50"
-            >
-              {t("Correr CI")}
-            </button>
-          </p>
-        )}
-        {st.ci?.state === "pending" && (
-          <p className="mt-2 text-xs text-muted" role="status">
-            {t("El CI está corriendo en este PR…")}
-          </p>
-        )}
         {st.ci?.state === "failure" && (
           <p className="mt-2 text-xs font-semibold text-red-600 dark:text-red-400" role="status">
             {t("El CI falló en este PR: revisa los checks antes de mezclar.")}
@@ -332,5 +322,44 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
         {err && <p className="mt-2 text-xs text-danger">{err}</p>}
       </div>
     </div>
+  );
+}
+
+/** El paso «CI» entre Build y Check: lo que dice GitHub del PR, no lo que declaró un rol. */
+function CiStep({ ci, closed, busy, onRun, t }: {
+  ci: { state: string; repoHasCi: boolean } | null | undefined;
+  closed: boolean;
+  busy: boolean;
+  onRun: () => void;
+  t: (s: string) => string;
+}) {
+  const base = "flex-1 rounded-full px-2 py-1 text-center text-[11px] font-semibold";
+  if (!closed && ci?.state === "none" && ci.repoHasCi)
+    return (
+      <li className="flex flex-1 items-center gap-1">
+        <button type="button" disabled={busy} onClick={onRun} className={`${base} border border-amber-600 text-amber-700 hover:bg-amber-600/10 disabled:opacity-50 dark:text-amber-300`}>
+          ▶ {t("Correr CI")}
+        </button>
+      </li>
+    );
+  const look =
+    closed || ci?.state === "success"
+      ? { cls: "bg-emerald-600/15 text-emerald-700", txt: `✓ ${t("CI")}` }
+      : ci?.state === "pending"
+        ? { cls: "bg-brand text-white", txt: t("CI corriendo"), spin: true }
+        : ci?.state === "failure"
+          ? { cls: "bg-red-600/15 text-red-700 dark:text-red-400", txt: `✗ ${t("CI")}` }
+          : ci?.state === "none"
+            ? { cls: "bg-amber-500/15 text-amber-700 dark:text-amber-300", txt: t("Sin CI") }
+            : { cls: "bg-surface-3 text-muted", txt: t("CI") };
+  return (
+    <li className="flex flex-1 items-center gap-1">
+      <span className={`${base} ${look.cls} inline-flex items-center justify-center gap-1.5`}>
+        {"spin" in look && look.spin && (
+          <span className="h-3 w-3 animate-spin rounded-full border-2 border-white/40 border-t-white motion-reduce:animate-none" aria-hidden />
+        )}
+        {look.txt}
+      </span>
+    </li>
   );
 }
