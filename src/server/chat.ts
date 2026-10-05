@@ -1276,16 +1276,7 @@ export const askAgent = createServerFn({ method: "POST" })
       bus.publish(bus.ch.room(ns, channel.id), { t: "turn", ...st });
     let registeredId: number | null = null;
     // Último paso narrado por el agente, sacado del bloque ```gt-steps``` que él mismo emite.
-    const pasoDe = (body: string): string => {
-      const m = /```gt-steps[^\n]*\n([\s\S]*?)\n```/.exec(body);
-      if (!m) return "";
-      try {
-        const pasos = (JSON.parse(m[1]) as { steps?: string[] }).steps ?? [];
-        return pasos.length ? String(pasos[pasos.length - 1]).slice(0, 120) : "";
-      } catch {
-        return "";
-      }
-    };
+    const pasoDe = (await import("./body-flush.server")).stepOfBody;
     // Cómo se LLAMA la tarea: lo que pidió la persona, recortado. Cursor nombra así cada fila
     // de su panel ("Live stock ticker") en vez de con el nombre del agente, y es lo que hace
     // que una lista de tres agentes se pueda leer de un vistazo.

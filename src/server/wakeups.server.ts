@@ -235,7 +235,7 @@ async function sweepTenant(ns: string): Promise<void> {
 }
 
 /** Abre el turno donde se pidió el trabajo, con un mensaje de PLATAFORMA (no de la persona). */
-async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
+export async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
   const db = await import("../db.server");
   const bus = await import("./bus.server");
   const { resolvedAgents, runAgentTurn } = await import("../agents.server");
@@ -307,6 +307,23 @@ async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
     });
   };
 
+  // Adopción tras un reinicio: la fila vuelve a `running` (con latido y la clave) ANTES del
+  // primer frame. Si Teams se reinicia otra vez en ese hueco, el barrido la ve huérfana y encola
+  // la siguiente adopción; antes quedaba `expired` y el turno se perdía (palmera-legal #9, 4-oct).
+  if (ref.adopt) {
+    // Tope: un turno que se corta una y otra vez no se encadena para siempre.
+    if ((w.key.match(/:adopt/g) ?? []).length > 4) {
+      const msg = "⚠️ Este turno se cortó demasiadas veces por reinicios. Menciona al agente para que retome.";
+      await db.setMessageBody(ref.adopt.shellId, msg).catch(() => {});
+      publish({ t: "message:body", id: ref.adopt.shellId, body: msg });
+      return;
+    }
+    register(ref.adopt.shellId);
+  }
+  // El cuerpo se guarda mientras corre (como en chat): quien recarga a media obra ve lo que lleva
+  // el rol, y un corte no deja la burbuja vacía. El paso actual va al estado del turno (tarjeta).
+  const bf = await import("./body-flush.server");
+  const flusher = bf.makeBodyFlusher();
   const { id, reply } = await runAgentTurn({
     signal: controller.signal,
     onShell: register,
@@ -325,8 +342,10 @@ async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
     createShell: async () => {
       if (ref.adopt) {
         shellId = ref.adopt.shellId;
-        await db.setMessageBody(shellId, "").catch(() => {});
-        publish({ t: "message:body", id: shellId, body: "" });
+        // El backlog de gs se repite desde el frame 0 y lo reemplaza; mientras, no queda vacío.
+        const wait = "_Retomando tras un reinicio…_";
+        await db.setMessageBody(shellId, wait).catch(() => {});
+        publish({ t: "message:body", id: shellId, body: wait });
         return shellId;
       }
       let mid: number;
@@ -344,8 +363,14 @@ async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
     },
     emitDelta: (mid, chunk) =>
       publish({ t: "message:delta", id: mid, chunk, channelId: dest.channelId ?? null, parentId: dest.parentId ?? null, dmId: dest.dmId ?? null }),
-    emitBody: (mid, body) => publish({ t: "message:body", id: mid, body }),
-  }).finally(() => {
+    emitBody: (mid, body) => {
+      publish({ t: "message:body", id: mid, body });
+      flusher.offer(mid, body);
+      const p = bf.stepOfBody(body);
+      if (p) turns.setTurnStep(ns, mid, p);
+    },
+  }).finally(async () => {
+    if (shellId != null) await flusher.flush(shellId).catch(() => {});
     if (registeredId != null) turns.finishTurn(ns, registeredId);
   });
 

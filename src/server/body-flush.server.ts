@@ -79,3 +79,15 @@ export function makeBodyFlusher(intervalMs = 2000) {
     },
   };
 }
+
+/** El paso que narra el agente ahora (último de ```gt-steps```), para el estado del turno. */
+export function stepOfBody(body: string): string {
+  const m = /```gt-steps[^\n]*\n([\s\S]*?)\n```/.exec(body);
+  if (!m) return "";
+  try {
+    const pasos = (JSON.parse(m[1]) as { steps?: string[] }).steps ?? [];
+    return pasos.length ? String(pasos[pasos.length - 1]).slice(0, 120) : "";
+  } catch {
+    return "";
+  }
+}
