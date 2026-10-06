@@ -27,7 +27,7 @@ async function verify(ts: string, sig: string, rawBody: string): Promise<boolean
 /** Lo que manda gs (`PrEvent` en app-hook.server.ts). */
 type PrEvent = {
   delivery: string;
-  action: "opened" | "reopened" | "ready_for_review" | "merged" | "closed" | "review" | "comment";
+  action: "opened" | "reopened" | "ready_for_review" | "merged" | "closed" | "review" | "comment" | "ci";
   repo: string;
   number: number;
   title: string;
@@ -39,6 +39,8 @@ type PrEvent = {
   review?: { state: string; at: string };
   /** Lo que alguien del repo le pidió a Ghosty (comentario con @ghosty o «Request changes»). */
   ask?: { text: string; url: string; path?: string; line?: number };
+  /** Sólo en `ci`: terminó el CI de la cabeza del PR. */
+  ci?: { conclusion: string; sha: string };
 };
 
 const LINE: Record<PrEvent["action"], (ev: PrEvent) => string> = {
@@ -50,6 +52,8 @@ const LINE: Record<PrEvent["action"], (ev: PrEvent) => string> = {
   // Una review no se anuncia en los rooms (se sale antes de avisar); sólo se mide.
   review: () => "",
   comment: () => "",
+  // El fin del CI no se anuncia: sólo adelanta los barridos de la fábrica.
+  ci: () => "",
 };
 
 /** Aviso + tarjeta `gt-gh` (sin botones: es un hecho, no algo que accionar desde aquí). */
@@ -110,6 +114,15 @@ export const Route = createFileRoute("/api/internal/github-event")({
           const runRooms = new Set<number>();
           const { runsByPr, onPrEvent, recordFirstReview } = await import("../server/apps/factory-runs.server");
           // Una review no se anuncia en los rooms: sólo se mide (¿la fábrica pasó a la primera?).
+          // Terminó el CI del PR: lo que el sondeo de 2 min haría, ya. @check despierta por su
+          // vigilancia (`pr-watches`) y un rojo en «PR listo» regresa a @build sin esperar.
+          if (ev.action === "ci") {
+            const runs = await runsByPr(ev.repo, ev.number);
+            const { sweepRunNow } = await import("../server/apps/factory-runs.server");
+            for (const run of runs) if (run.status === "pr_review") await sweepRunNow(run);
+            await (await import("../server/pr-watches.server")).sweepPrWatchesNow();
+            return Response.json({ ok: true, runs: runs.length });
+          }
           if (ev.action === "review" || ev.action === "comment") {
             let recorded = 0;
             const asked: string[] = [];

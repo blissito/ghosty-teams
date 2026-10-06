@@ -78,6 +78,11 @@ async function sweep(): Promise<void> {
   }
 }
 
+/** El barrido de ESTE espacio ya (lo llama el fin del CI que avisa GitHub). El de cada 2 min sigue. */
+export async function sweepPrWatchesNow(): Promise<void> {
+  await sweepTenant().catch(() => {});
+}
+
 async function sweepTenant(): Promise<void> {
   await dbq(
     `UPDATE gt_pr_watches SET done_at=unixepoch(), result='caducó' WHERE done_at IS NULL AND expires_at <= unixepoch()`,

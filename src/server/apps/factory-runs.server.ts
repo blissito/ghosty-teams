@@ -70,6 +70,9 @@ export async function getPlan(runId: number, version: number) {
         decision: (r.decision ?? null) as "approve" | "changes" | null,
         decidedBy: (r.decided_by ?? null) as string | null,
         note: (r.note ?? null) as string | null,
+        /** Crítico del plan: pending | pass | fail | timeout, o null si no pasó por él. */
+        critique: (r.critique ?? null) as string | null,
+        critiqueNotes: (r.critique_notes ?? null) as string | null,
       }
     : null;
 }
@@ -192,6 +195,113 @@ export async function lastFailUncounted(runId: number): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+// ── Crítico del plan ─────────────────────────────────────────────────────────
+
+/** Cuánto se espera al crítico antes de seguir sin él (sprint) o dejar de marcarlo pendiente. */
+export const CRITIQUE_TIMEOUT_S = 15 * 60;
+
+/**
+ * Manda el plan recién entregado a @check (conversación aparte, `-critic`) antes de construir.
+ * Una sola vuelta por pedido: si una versión anterior ya falló con el crítico, la nueva va
+ * directo a la firma humana (sin ping-pong). `autoApprove` = ticket de sprint: al pasar el
+ * crítico se aprueba solo, con quien aprobó el sprint. Devuelve si el crítico quedó corriendo.
+ */
+export async function startCritique(run: Run, version: number, origin: string, autoApprove?: { sub: string; who: string }): Promise<boolean> {
+  const failedBefore = await dbq("SELECT 1 FROM gt_factory_plans WHERE run_id = ? AND version < ? AND critique = 'fail' LIMIT 1", [run.id, version]).catch(() => []);
+  if (failedBefore.length) return false;
+  const plan = await getPlan(run.id, version);
+  if (!plan) return false;
+  const db = await import("../../db.server");
+  const root = await db.getMessage(run.rootMsgId).catch(() => null);
+  await dbq(
+    "UPDATE gt_factory_plans SET critique = 'pending', critique_at = unixepoch(), auto_approve_by = ?, auto_approve_who = ? WHERE run_id = ? AND version = ?",
+    [autoApprove?.sub ?? null, autoApprove?.who ?? null, run.id, version],
+  );
+  const { criticBrief } = await import("./factory-roles");
+  const ok = await handoff(run, "check", autoApprove?.sub ?? run.requestedBy, "revisar el plan", criticBrief(run.id, version, plan.planMd, String(root?.body ?? run.title)), origin, "-critic");
+  if (!ok) await dbq("UPDATE gt_factory_plans SET critique = NULL WHERE run_id = ? AND version = ?", [run.id, version]);
+  return ok;
+}
+
+/**
+ * Cierre del crítico. `pass`: el plan queda marcado «revisado por @check» y, si es ticket de
+ * sprint, se aprueba solo como antes. `fail`: vuelve a @plan como un «cambios: …» firmado por
+ * @check. Si una persona ya firmó mientras tanto, no se toca nada.
+ */
+export async function finishCritique(run: Run, pass: boolean, findings: string, origin: string): Promise<{ ok: boolean; error?: string; status?: string }> {
+  const [row] = await dbq("SELECT critique, auto_approve_by, auto_approve_who, decision FROM gt_factory_plans WHERE run_id = ? AND version = ?", [run.id, run.planVersion]).catch(() => []);
+  if (!row || row.critique !== "pending") return { ok: false, error: "este plan no espera crítica (ya se revisó o ya lo firmó alguien)" };
+  if (run.status !== "plan_review" || row.decision) {
+    await dbq("UPDATE gt_factory_plans SET critique = ?, critique_notes = ? WHERE run_id = ? AND version = ?", [pass ? "pass" : "fail", findings.slice(0, 4000) || null, run.id, run.planVersion]);
+    return { ok: true, status: run.status };
+  }
+  await dbq("UPDATE gt_factory_plans SET critique = ?, critique_notes = ? WHERE run_id = ? AND version = ?", [pass ? "pass" : "fail", findings.slice(0, 4000) || null, run.id, run.planVersion]);
+  if (pass) {
+    await postInThread(run, "check", `🔎 Revisé el plan v${run.planVersion}: se puede construir así.${findings.trim() ? `\n\n${findings.trim()}` : ""}`);
+    if (row.auto_approve_by) {
+      const next = await decide({ run, version: run.planVersion, decision: "approve", sub: String(row.auto_approve_by), who: String(row.auto_approve_who ?? "Quien aprobó el sprint"), origin });
+      return { ok: true, status: next.status };
+    }
+    void refreshRoom(run.channelId);
+    return { ok: true, status: run.status };
+  }
+  const next = await decide({
+    run,
+    version: run.planVersion,
+    decision: "changes",
+    note: `Hallazgos del crítico del plan (@check):\n${findings.trim()}`,
+    sub: run.requestedBy,
+    who: "@check",
+    origin,
+  });
+  return { ok: true, status: next.status };
+}
+
+/** Críticos que no cerraron (turno muerto): a los 15 min se sigue sin ellos. */
+async function sweepStaleCritiques(): Promise<void> {
+  const rows = await dbq(
+    `SELECT p.run_id, p.version, p.auto_approve_by, p.auto_approve_who FROM gt_factory_plans p JOIN gt_factory_runs r ON r.id = p.run_id
+     WHERE p.critique = 'pending' AND p.critique_at < unixepoch() - ? LIMIT 10`,
+    [CRITIQUE_TIMEOUT_S],
+  ).catch(() => []);
+  for (const p of rows) {
+    const claimed = await dbq("UPDATE gt_factory_plans SET critique = 'timeout' WHERE run_id = ? AND version = ? AND critique = 'pending' RETURNING run_id", [p.run_id, p.version]).catch(() => []);
+    if (!claimed.length) continue;
+    const run = await getRun(Number(p.run_id));
+    if (!run || run.status !== "plan_review" || run.planVersion !== Number(p.version)) continue;
+    void logEvent(run.id, "critique_timeout", null, { version: run.planVersion });
+    if (p.auto_approve_by) {
+      const [w] = await dbq("SELECT origin FROM gt_agent_wakeups WHERE key LIKE ? AND origin IS NOT NULL AND origin != '' ORDER BY rowid DESC LIMIT 1", [`factory:${run.id}:%`]).catch(() => []);
+      await decide({ run, version: run.planVersion, decision: "approve", sub: String(p.auto_approve_by), who: String(p.auto_approve_who ?? "Quien aprobó el sprint"), origin: String(w?.origin ?? "") }).catch((e) => console.error("[factory] crítico vencido", e));
+    } else void refreshRoom(run.channelId);
+  }
+}
+
+/**
+ * Lo que @check dejó al escalar (bloqueo o vueltas agotadas), para pintarlo ARRIBA en la tarjeta:
+ * quien aprueba tiene que ver qué está aprobando (mercadito #7: se aprobó en 2 min un cambio a CI
+ * y una cifra doble que sólo estaban en un mensaje del hilo). null si no está escalado.
+ */
+export async function escalationOf(run: Run): Promise<{ findings: string; at: number } | null> {
+  if (run.status !== "escalated") return null;
+  const [row] = await dbq(
+    "SELECT data_json, at FROM gt_factory_events WHERE run_id = ? AND type IN ('check_blocked', 'check_fail') ORDER BY id DESC LIMIT 1",
+    [run.id],
+  ).catch(() => []);
+  try {
+    const findings = row?.data_json ? String(JSON.parse(String(row.data_json)).findings ?? "") : "";
+    return findings ? { findings, at: Number(row.at) } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Los hallazgos como viñetas (una por punto), para enseñar los primeros arriba. */
+export function findingPoints(findings: string): string[] {
+  const bullets = findings.split(/\n(?=\s*[-*•]\s)/).map((x) => x.replace(/^\s*[-*•]\s*/, "").trim()).filter(Boolean);
+  return bullets.length ? bullets : [findings.trim()];
 }
 
 // ── Notas del pedido (`factory_note`) ───────────────────────────────────────
@@ -391,7 +501,7 @@ export async function handoff(
   const groupId = await agentGroupId(agent, `factory-${run.id}${groupSuffix}`);
   // Las skills del paso van en el encargo, junto a la tarea: en el prompt del rol no se seguían.
   let skills = "";
-  if (to === "build" || to === "check") {
+  if ((to === "build" || to === "check") && !groupSuffix) {
     const plan = run.planVersion ? await getPlan(run.id, run.planVersion).catch(() => null) : null;
     skills = `\n\n${(await import("./factory-roles")).roleSkillsLine(to, `${run.title}\n${plan?.planMd ?? ""}`)}`;
   }
@@ -648,6 +758,22 @@ export async function maybeThreadDecision(opts: {
     if (!d) return false;
     const run = await runOfThread(opts.channelId, opts.rootId);
     if (!run || (run.status !== "plan_review" && run.status !== "escalated")) return false;
+    // Escalado: un «✅» suelto no aprueba. Se le enseñan los puntos y se pide «✅ confirmo»,
+    // para que nadie apruebe a ciegas lo que @check frenó (mercadito #7, 5-oct).
+    if (run.status === "escalated" && d.decision === "approve" && !("confirmed" in d && d.confirmed)) {
+      const esc = await escalationOf(run);
+      if (esc) {
+        const points = findingPoints(esc.findings);
+        await postInThread(
+          run,
+          "check",
+          `Antes de otra vuelta, esto es lo que frené (${points.length} punto${points.length === 1 ? "" : "s"}):\n\n` +
+            points.map((p, i) => `${i + 1}. ${p}`).join("\n") +
+            `\n\nSi lo leíste y va, contesta «✅ confirmo». Para cambiar algo, «cambios: …».`,
+        );
+        return true;
+      }
+    }
     await decide({
       run,
       version: run.planVersion,
@@ -928,8 +1054,16 @@ async function repairRunTitles(): Promise<void> {
   }
 }
 
+/** Revisa ya el PR de un pedido (CI rojo, aprobado → «¿hago merge?», choques), sin esperar
+ *  los 2 min del tick. Lo dispara el fin del CI (`check_suite` de GitHub vía gs). */
+export async function sweepRunNow(run: Run): Promise<void> {
+  lastPrCheck.delete(run.id);
+  await closeFinishedRuns().catch((e) => console.error("[factory] barrido por CI", e));
+}
+
 export async function closeFinishedRuns(): Promise<void> {
   await repairRunTitles();
+  await sweepStaleCritiques();
   // Autocorrección: un pedido cancelado (reciente) cuyo PR SÍ se mezcló es un pedido
   // terminado. Pasa cuando alguien lo cierra a mano antes de que el tick vea el merge.
   const wrong = await dbq(

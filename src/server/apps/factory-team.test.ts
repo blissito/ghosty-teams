@@ -13,7 +13,7 @@ describe("parseTeamFile", () => {
   });
 
   it("sin frontmatter todo es nota", () => {
-    expect(parseTeamFile("sólo convenciones")).toEqual({ roles: {}, notes: "sólo convenciones" });
+    expect(parseTeamFile("sólo convenciones")).toEqual({ roles: {}, notes: "sólo convenciones", roleNotes: {} });
   });
 
   it("la plantilla se vuelve a leer igual", () => {
@@ -51,5 +51,23 @@ describe("base de conocimiento del repo", () => {
     expect(knowledgeLine("a/b", ["pagos.md", "glosario.md"])).toContain("docs/agents/pagos.md, docs/agents/glosario.md");
     expect(knowledgeLine("a/b", [])).toContain("todavía no hay fichas");
     expect(knowledgeLine("a/b", Array.from({ length: 45 }, (_, i) => `f${i}.md`))).toContain("y 5 más");
+  });
+});
+
+describe("reglas por rol en .ghosty/factory.md", () => {
+  it("lo de `## @check` va sólo a @check y lo demás a los tres", () => {
+    const f = parseTeamFile(
+      "---\nbuild: { model: sonnet }\n---\nUsa pnpm.\n\n## @check\nUn cambio a migraciones sin prueba es hallazgo.\n\n## Estilo\nTabs.\n",
+    );
+    expect(f.roleNotes.check).toBe("Un cambio a migraciones sin prueba es hallazgo.");
+    expect(f.roleNotes.build).toBeUndefined();
+    expect(f.notes).toContain("Usa pnpm.");
+    expect(f.notes).toContain("## Estilo\nTabs.");
+    expect(f.notes).not.toContain("migraciones");
+  });
+  it("sin frontmatter también separa las secciones", () => {
+    const f = parseTeamFile("## plan\nPlanes de 5 pasos máx.\n");
+    expect(f.roleNotes.plan).toBe("Planes de 5 pasos máx.");
+    expect(f.notes).toBe("");
   });
 });

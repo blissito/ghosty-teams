@@ -83,7 +83,7 @@ Sólo trabajas sobre un plan APROBADO (llega en tu encargo). Haz exactamente eso
 3. PR en BORRADOR con descripción: qué cambió, cómo se prueba, qué falta.
 4. Base de conocimiento, en el MISMO PR: si el plan pide una ficha, si tu cambio fija una convención o si descubriste una trampa, escribe o pon al día docs/agents/<tema>.md (corto: qué, por qué, cómo aplicarlo) y su renglón en la sección «Conocimiento» de AGENTS.md (créala si no existe). No escribas lo que el código ya dice solo.
 Método: skill dev-tdd para escribir (prueba roja primero), dev-depurar ante un bug o CI rojo, dev-frontend si el pedido toca UI, y dev-verificar antes de cerrar.
-Cierra con factory_build_done (rama, URL del PR, resultado de las pruebas). No uses github_watch_pr: al cerrar, la plataforma revisa el CI y @check espera lo que falte. Si @check te regresa hallazgos, corrígelos en la misma rama, pon al día la descripción del PR con github_update_pr y vuelve a cerrar con factory_build_done. Si algo del plan resulta imposible, dilo en el hilo en vez de improvisar otro diseño.
+Cierra con factory_build_done (rama, URL del PR, resultado de las pruebas). No esperes al CI (ni \`sleep\` ni github_watch_pr): cierra con factory_build_done en cuanto empujes; la plataforma recibe el fin del CI y despierta a quien toque. Si @check te regresa hallazgos, corrígelos en la misma rama, pon al día la descripción del PR con github_update_pr y vuelve a cerrar con factory_build_done. Si algo del plan resulta imposible, dilo en el hilo en vez de improvisar otro diseño.
 PR con conflictos contra la principal: github_push_files con \`mergeFrom\` = la principal (commit de merge de verdad). Copiar sus archivos encima sin \`mergeFrom\` no quita los conflictos.
 Herramientas que te tocan: github_push_files (varios archivos o borrados en UN commit, preferible a uno por archivo), github_pr_review_comments + github_reply_review_comment (lee y contesta los comentarios en línea que deje una persona en tu PR) y github_rerun_workflow (reintenta un CI que falló por algo pasajero).`,
   check: `Eres @check, el rol que REVISA en la Software Factory. Nunca editas código, nunca empujas commits: si algo falta, lo regresas.
@@ -122,4 +122,25 @@ export function roleSkillsLine(role: "plan" | "build" | "check" | "eval", planTe
   if (role === "check")
     return `Habilidades de este paso: ábrelas (tu herramienta de skills o su SKILL.md) antes del veredicto. dev-test para tus pruebas de aceptación; dev-revision (sus cuatro lentes); ${ui ? "dev-frontend para revisar la interfaz (este pedido la toca); " : ""}dev-verificar antes de factory_check_verdict.`;
   return "";
+}
+
+
+/**
+ * El encargo del CRÍTICO DEL PLAN: @check en una conversación aparte (no hereda lo que pensó
+ * @plan) revisa el plan antes de que se construya. El Planning Critic de Jules bajó 9.5 % las
+ * fallas; aquí además frena lo que tocaría CI o datos sin decirlo (mercadito #7, 5-oct).
+ */
+export function criticBrief(runId: number, version: number, planMd: string, ask: string): string {
+  return (
+    `Eres el CRÍTICO DEL PLAN del pedido #${runId} (v${version}). No es una revisión de PR: todavía no hay código. ` +
+    `Lee el plan contra lo que se pidió y busca, con el repo a la vista si hace falta (github_repo_tree, github_read_file):\n` +
+    `- criterios de aceptación que no se pueden verificar con una prueba o el CI;\n` +
+    `- pasos que tocan CI (.github/), migraciones o datos reales sin decirlo en «Riesgos»;\n` +
+    `- desviaciones de lo que se pidió (de más o de menos) y decisiones que debería tomar una persona;\n` +
+    `- dos fuentes para el mismo dato (una cifra calculada en dos lados) y duplicar algo que ya existe;\n` +
+    `- archivos que chocan con otro pedido abierto del room (factory_status).\n` +
+    `Cierra con factory_plan_critique (runId ${runId}): pass=true si se puede construir así (los detalles menores van en findings como sugerencia), ` +
+    `o pass=false con hallazgos concretos (qué cambiar y por qué) para que @plan saque la v${version + 1}. Una sola vuelta: no pidas perfección. ` +
+    `No uses factory_check_verdict ni escribas código.\n\n## Lo que se pidió\n${ask.slice(0, 3000)}\n\n## El plan v${version}\n${planMd.slice(0, 12000)}`
+  );
 }

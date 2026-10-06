@@ -413,6 +413,7 @@ export const factoryPlanCardFn = createServerFn({ method: "POST" })
       decidedBy: plan.decidedBy,
       note: plan.note,
       prUrl: run.prUrl,
+      critique: plan.critique,
     };
   });
 
@@ -501,6 +502,11 @@ export const factoryRunCardFn = createServerFn({ method: "POST" })
       // Con el GitHub de quien aprobó/pidió (como el tick): quien mira sin GitHub conectado también ve el paso.
       ci: run.prUrl && !["done", "cancelled"].includes(run.status) ? await liveCi(run.approvedBy ?? run.requestedBy ?? me.sub, run.prUrl, run.repo, me.sub) : null,
       canPrep: !!me.isOwner && !!run.repo,
+      // Escalado: lo que @check pide decidir, para pintarlo arriba (y aprobar con un 2º clic).
+      escalation: await (async () => {
+        const e = await R.escalationOf(run);
+        return e ? { points: R.findingPoints(e.findings), at: e.at } : null;
+      })(),
       // Después del merge: lo que vio el vigilante en producción (paso «Prod»).
       prod: run.status === "done" ? await (await import("./post-merge.server")).runProd(run) : null,
       ...(await runLive(run)),

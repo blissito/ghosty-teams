@@ -98,6 +98,15 @@ export function PlanCard({ card, channelId, expanded = false }: { card: PlanCard
             {st.status === "planning" ? t("@plan está rehaciendo el plan…") : t("@build arrancó con el plan aprobado…")}
           </p>
         )}
+        {!superseded && st.critique && st.status === "plan_review" && !st.decision && (
+          <p className="mt-2 text-xs text-muted" role="status">
+            {st.critique === "pending"
+              ? `🔎 ${t("@check está revisando el plan antes de construir. Puedes firmar sin esperarlo.")}`
+              : st.critique === "pass"
+                ? `🔎 ${t("Revisado por @check: se puede construir así.")}`
+                : ""}
+          </p>
+        )}
         <div className="mt-3 flex flex-wrap items-center gap-2">
           {canSign && st.status === "escalated" ? (
             <span className="w-full text-xs font-semibold text-ink">⚠️ {t("@check no pudo cerrarlo en 3 vueltas: ¿otra vuelta o replanear?")}</span>

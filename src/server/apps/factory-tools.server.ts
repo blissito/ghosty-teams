@@ -273,13 +273,45 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         if (msgId) await dbq("UPDATE gt_factory_plans SET msg_id = ? WHERE run_id = ? AND version = ?", [msgId, run.id, version]);
         // La tarjeta viva en el room (la primera vez) y el aviso de que hay plan nuevo.
         await R.ensureRunCard(run);
+        // Crítico del plan: @check lo revisa en otra conversación antes de construir. La persona
+        // puede firmar igual; si el crítico pide cambios, vuelve a ti como «cambios: …».
+        const critic = await R.startCritique(run, version, await origin()).catch(() => false);
         void R.refreshRoom(run.channelId);
         return {
           ok: true,
           runId: run.id,
           version,
-          note: `Tarjeta publicada en el hilo. Ahora espera la firma: no construyas. Di en una línea qué necesita revisar la persona. Si lo nombras, es el «pedido #${run.id}» (nunca «corrida»).`,
+          note:
+            `Tarjeta publicada en el hilo. Ahora espera la firma: no construyas. Di en una línea qué necesita revisar la persona. Si lo nombras, es el «pedido #${run.id}» (nunca «corrida»).` +
+            (critic ? " @check ya está revisando el plan; si pide cambios te llegan como encargo." : ""),
         };
+      },
+    },
+    {
+      name: "factory_plan_critique",
+      description:
+        "SÓLO @check cuando te encargan CRITICAR UN PLAN (todavía sin código). pass=true si se puede construir así; " +
+        "pass=false con hallazgos concretos para que @plan saque otra versión. No es factory_check_verdict.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          runId: { type: "number", description: "El pedido (si no, el del hilo)" },
+          pass: { type: "boolean", description: "true = se puede construir así" },
+          findings: { type: "string", description: "Hallazgos (obligatorios con pass=false): qué cambiar y por qué, en viñetas" },
+        },
+        required: ["pass"],
+      },
+      handler: async (_sub, a) => {
+        if (dest?.handle && dest.handle !== "check") return { ok: false, error: "sólo @check critica planes" };
+        if (!dest?.channelId) return { ok: false, error: "la fábrica trabaja en un room, no en un DM" };
+        const run = await runOf(dest, a.runId);
+        if (!run) return { ok: false, error: "no encuentro el pedido: pasa runId" };
+        const pass = a.pass === true;
+        const findings = String(a.findings ?? "").trim();
+        if (!pass && !findings) return { ok: false, error: "con pass=false los hallazgos son obligatorios" };
+        const R = await import("./factory-runs.server");
+        const r = await R.finishCritique(run, pass, findings, await origin());
+        return r.ok ? { ...r, note: "Listo. La plataforma ya avisó en el hilo: termina sin repetirlo." } : r;
       },
     },
     {
@@ -518,12 +550,12 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         }
         if (!findings) return { ok: false, error: "con pass=false los hallazgos son obligatorios" };
         if (a.blocked === true) {
-          const next = await R.applyEvent(run, "check_blocked", checked, { actor: "check", data: { findings: findings.slice(0, 500) } });
+          const next = await R.applyEvent(run, "check_blocked", checked, { actor: "check", data: { findings: findings.slice(0, 4000) } });
           await R.postInThread(
             next,
             "check",
             `⚠️ **Necesita una decisión** — @build no puede resolver esto con sus herramientas, así que no se lo regresé:\n\n${findings}\n\n` +
-              `Contesta «✅» para otra vuelta de @build (si ya lo destrabaste), o «cambios: …» para replanear.`,
+              `Si ya lo destrabaste y leíste los puntos, contesta «✅ confirmo» para otra vuelta de @build, o «cambios: …» para replanear.`,
           );
           return { ok: true, status: next.status, note: "Escalado a una persona. No lo repitas." };
         }
@@ -533,14 +565,14 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           run,
           "check_fail",
           { loops: run.loops + (counted ? 1 : 0), ...checked },
-          { actor: "check", data: { findings: findings.slice(0, 500), counted } },
+          { actor: "check", data: { findings: findings.slice(0, 4000), counted } },
         );
         if (next.status === "escalated") {
           await R.postInThread(
             next,
             "check",
             `⚠️ **Necesita una decisión** — ${next.loops} vueltas entre @build y @check sin cerrar. Lo último que encontré:\n\n${findings}\n\n` +
-              `Contesta «✅» para otra vuelta de @build, o «cambios: …» para replanear.`,
+              `Si leíste los puntos y va, contesta «✅ confirmo» para otra vuelta de @build, o «cambios: …» para replanear.`,
           );
           return { ok: true, status: next.status };
         }
@@ -1086,6 +1118,7 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
     const { factoryTurnFor } = await import("./factory-team.server");
     const ft = await factoryTurnFor(h, dest, "").catch(() => null);
     if (ft?.notes) parts.push(`Convenciones del repo ${ft.repo} (.ghosty/factory.md, las escribió el equipo; le ganan a lo general): ${ft.notes}`);
+    if (ft?.roleNotes) parts.push(`Reglas de @${h} en ${ft.repo} (sección «## @${h}» de .ghosty/factory.md; le ganan a lo general): ${ft.roleNotes}`);
     if (ft?.repo && !ft.refusal) {
       const { knowledgeLine } = await import("./factory-team");
       parts.push(knowledgeLine(ft.repo, ft.knowledge));
@@ -1166,7 +1199,7 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
   }
   // Misma frase que Tasks: tenerlas y no llamarlas es el otro modo de falla.
   parts.push(
-    "Tus tools de la fábrica (factory_plan_submit, factory_build_done, factory_check_verdict, factory_status, factory_close, factory_ci_starter, factory_repo_prep, factory_preview, factory_sprint_submit, factory_note, factory_context, factory_room) " +
+    "Tus tools de la fábrica (factory_plan_submit, factory_plan_critique, factory_build_done, factory_check_verdict, factory_status, factory_close, factory_ci_starter, factory_repo_prep, factory_preview, factory_sprint_submit, factory_note, factory_context, factory_room) " +
       "ya están disponibles en este turno: LLÁMALAS para cerrar tu paso; sin ellas la estafeta no avanza." +
       notaNombres(toolChannel),
   );

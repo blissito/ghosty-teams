@@ -44,6 +44,9 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
   const [note, setNote] = useState("");
   const [err, setErr] = useState("");
   const [prepUrl, setPrepUrl] = useState("");
+  // Escalado: aprobar pide un 2º clic con los puntos a la vista (no se aprueba a ciegas).
+  const [confirming, setConfirming] = useState(false);
+  const [allPoints, setAllPoints] = useState(false);
 
   const refresh = useCallback(() => {
     factoryRunCardFn({ data: { runId: card.runId } }).then(setSt).catch(() => {});
@@ -224,6 +227,21 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
                   ? `${t("Vueltas de check")}: ${st.loops}`
                   : ""}
         </p>
+        {st.status === "escalated" && st.escalation?.points.length ? (
+          <div className="mt-2 rounded-lg border border-amber-600/40 bg-amber-500/5 px-3 py-2 text-xs" role="note">
+            <p className="font-semibold text-ink">{t("Lo que @check pide decidir:")}</p>
+            <ol className="mt-1 list-decimal space-y-1 pl-4 text-ink">
+              {(allPoints || confirming ? st.escalation.points : st.escalation.points.slice(0, 3)).map((p, i) => (
+                <li key={i} className="break-words">{allPoints || confirming || p.length <= 240 ? p : `${p.slice(0, 240)}…`}</li>
+              ))}
+            </ol>
+            {st.escalation.points.length > 3 && !allPoints && !confirming && (
+              <button type="button" onClick={() => setAllPoints(true)} className="mt-1 text-xs font-semibold text-brand hover:underline">
+                {t("Ver los {n} puntos").replace("{n}", String(st.escalation.points.length))}
+              </button>
+            )}
+          </div>
+        ) : null}
         {st.ci?.state === "failure" && st.status === "pr_review" && (
           <p className="mt-2 flex flex-wrap items-center gap-2 text-xs font-semibold text-red-600 dark:text-red-400" role="status">
             {t("El CI falló en este PR.")}
@@ -284,10 +302,18 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
               <button
                 type="button"
                 disabled={busy}
-                onClick={() => decide("approve")}
+                onClick={() => {
+                  // Escalado con puntos: el 1er clic los despliega todos y pide confirmar.
+                  if (st.status === "escalated" && st.escalation?.points.length && !confirming) return setConfirming(true);
+                  decide("approve");
+                }}
                 className="rounded-full border border-emerald-600 px-3 py-1 text-xs font-bold text-emerald-600 hover:bg-emerald-600/10 disabled:opacity-50"
               >
-                {st.status === "escalated" ? t("Otra vuelta") : `${t("Aprobar plan")} v${st.planVersion}`}
+                {st.status === "escalated"
+                  ? confirming
+                    ? t("Leí los {n} puntos: otra vuelta").replace("{n}", String(st.escalation?.points.length ?? 0))
+                    : t("Otra vuelta")
+                  : `${t("Aprobar plan")} v${st.planVersion}`}
               </button>
               <button
                 type="button"

@@ -23,6 +23,8 @@ export type FactoryTurn = {
   source: { agent: RoleSource; model: RoleSource };
   /** Cuerpo de `.ghosty/factory.md`: convenciones del repo para el contexto del turno. */
   notes: string | null;
+  /** Lo de `## @<rol>` en `.ghosty/factory.md`: reglas sólo para este rol. */
+  roleNotes: string | null;
   /** Fichas `.md` de `docs/agents/` del repo (nombres, sin la carpeta). */
   knowledge: string[];
   /** Lo pedido no se puede (modelo de otro motor, agente que no existe): se dice y no se corre. */
@@ -182,12 +184,13 @@ export async function factoryTurnFor(handle: string, dest: ToolDest | null | und
     model,
     source: { agent: agentSource, model: modelSource },
     notes: file?.notes ? file.notes.slice(0, 4000) : null,
+    roleNotes: file?.roleNotes?.[h] ? file.roleNotes[h]!.slice(0, 4000) : null,
     knowledge: repo && connectedBy ? await repoKnowledge(repo, connectedBy).catch(() => []) : [],
     refusal: null,
   };
 
   function refuse(handle: FactoryHandle, repo: string | null, text: string): FactoryTurn {
-    return { handle, repo, fleetId: null, model: null, source: { agent: "space", model: "space" }, notes: null, knowledge: [], refusal: text };
+    return { handle, repo, fleetId: null, model: null, source: { agent: "space", model: "space" }, notes: null, roleNotes: null, knowledge: [], refusal: text };
   }
 }
 

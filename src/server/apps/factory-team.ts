@@ -36,7 +36,12 @@ export function knowledgeLine(repo: string, files: string[]): string {
 }
 
 export type RoleSpec = { agent?: string; model?: string };
-export type TeamFile = { roles: Partial<Record<FactoryHandle, RoleSpec>>; notes: string };
+export type TeamFile = {
+  roles: Partial<Record<FactoryHandle, RoleSpec>>;
+  notes: string;
+  /** Lo que va bajo `## @plan`, `## @build` o `## @check` en el cuerpo: sólo para ese rol. */
+  roleNotes: Partial<Record<FactoryHandle, string>>;
+};
 
 /** Lo que se pidió EN el mensaje: modelo por rol y, si se nombró, el repo. */
 export type TurnOverrides = {
@@ -52,7 +57,7 @@ const unquote = (s: string) => s.trim().replace(/^["']|["']$/g, "").trim();
 export function parseTeamFile(raw: string): TeamFile {
   const text = raw.replace(/^﻿/, "");
   const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
-  if (!m) return { roles: {}, notes: text.trim() };
+  if (!m) return { roles: {}, ...splitRoleNotes(text) };
   const roles: TeamFile["roles"] = {};
   let current: FactoryHandle | null = null;
   for (const line of m[1].split(/\r?\n/)) {
@@ -76,7 +81,34 @@ export function parseTeamFile(raw: string): TeamFile {
     const nested = line.match(/^\s+([a-z]+)\s*:\s*(.+)$/i);
     if (nested && current) assign((roles[current] ??= {}), nested[1], nested[2]);
   }
-  return { roles, notes: m[2].trim() };
+  return { roles, ...splitRoleNotes(m[2]) };
+}
+
+/**
+ * Parte el cuerpo por encabezados `## @rol`: cada sección va sólo a ese rol (las reglas de
+ * revisión que @check debe aplicar en ESTE repo, como el `BUGBOT.md` de Cursor) y el resto son
+ * las convenciones de los tres. Una sección termina en el siguiente `## `.
+ */
+function splitRoleNotes(body: string): Pick<TeamFile, "notes" | "roleNotes"> {
+  const roleNotes: TeamFile["roleNotes"] = {};
+  const common: string[] = [];
+  let current: FactoryHandle | null = null;
+  for (const line of body.split(/\r?\n/)) {
+    const h2 = line.match(/^##\s+@?([a-z]+)\s*$/i);
+    if (h2) {
+      const h = h2[1].toLowerCase();
+      current = (FACTORY_HANDLES as readonly string[]).includes(h) ? (h as FactoryHandle) : null;
+      if (current) continue;
+    } else if (/^##\s/.test(line)) current = null;
+    if (current) roleNotes[current] = `${roleNotes[current] ?? ""}${line}\n`;
+    else common.push(line);
+  }
+  for (const h of Object.keys(roleNotes) as FactoryHandle[]) {
+    const t = roleNotes[h]!.trim();
+    if (t) roleNotes[h] = t;
+    else delete roleNotes[h];
+  }
+  return { notes: common.join("\n").trim(), roleNotes };
 }
 
 function assign(spec: RoleSpec, key: string, value: string) {

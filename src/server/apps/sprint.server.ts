@@ -456,7 +456,10 @@ async function startItem(sprint: SprintRow, it: SprintItemRow, all: SprintItemRo
   await R.ensureRunCard(run);
   await announce(sprint, `▶️ **Arrancó el ticket ${it.idx} de ${n}:** ${it.title} · [ver pedido](${await threadLink(sprint.channelId, rootId)})`).catch(() => {});
   const who = (await dbq("SELECT name FROM gc_users WHERE sub = ?", [approver]).catch(() => []))[0]?.name ?? "Quien aprobó el sprint";
-  await R.decide({ run, version: 1, decision: "approve", sub: approver, who: String(who), origin: sprint.origin ?? "" });
+  // El crítico del plan revisa el ticket antes de construir; al pasar se aprueba solo con quien
+  // aprobó el sprint (`finishCritique`). Sin @check (o si no arranca), como antes: de una vez.
+  const critic = await R.startCritique(run, 1, sprint.origin ?? "", { sub: approver, who: String(who) }).catch(() => false);
+  if (!critic) await R.decide({ run, version: 1, decision: "approve", sub: approver, who: String(who), origin: sprint.origin ?? "" });
 }
 
 /** Del pedido al sprint: cualquier cambio de un pedido de sprint puede destrabar el siguiente. */

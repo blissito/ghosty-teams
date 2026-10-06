@@ -994,6 +994,14 @@ async function migrate(): Promise<void> {
     at         INTEGER NOT NULL DEFAULT (unixepoch()),
     PRIMARY KEY (run_id, version)
   )`);
+  // Crítico del plan (5-oct): @check en conversación aparte revisa el plan antes de construir.
+  // `critique` = pending | pass | fail | timeout; null = esa versión no pasó por el crítico.
+  // `auto_approve_by/who`: ticket de sprint que se aprueba solo al pasar el crítico.
+  await addColumn("gt_factory_plans", "critique", "TEXT");
+  await addColumn("gt_factory_plans", "critique_at", "INTEGER");
+  await addColumn("gt_factory_plans", "critique_notes", "TEXT");
+  await addColumn("gt_factory_plans", "auto_approve_by", "TEXT");
+  await addColumn("gt_factory_plans", "auto_approve_who", "TEXT");
 
   // Campañas de Ghosty Ads (2026-09-26): el #N de cada campaña de Meta que se propuso en un
   // room con @ads o que se importó. La credencial de Meta y la Marketing API viven en gs
