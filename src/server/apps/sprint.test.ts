@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { findCycle, itemStatusOf, nextReady, ticketFiles, validateSprintItems } from "./sprint.server";
+import { findCycle, itemStatusOf, nextReady, ticketFiles, ticketLine, validateSprintItems } from "./sprint.server";
 
 const t = (key: string, depends_on: string[] = [], size = "S") => ({ key, title: `Ticket ${key} del CLI`, size, depends_on, criteria: "- pasa `npm test` y el lint" });
 
@@ -67,5 +67,18 @@ describe("sprint: qué arranca y cuándo", () => {
     expect(itemStatusOf("done", "pr")).toBe("merged");
     expect(itemStatusOf("cancelled", "active")).toBe("failed");
     expect(itemStatusOf(null, "skipped")).toBe("skipped");
+  });
+});
+
+describe("ticketLine (avisos del hilo del sprint)", () => {
+  const it0 = { idx: 2, title: "SDK" };
+  it("PR listo, mezclado y cancelado llevan sus ligas", () => {
+    expect(ticketLine("pr", it0, 3, "https://github.com/o/r/pull/9", "/c/dev?thread=5")).toBe("🔎 **Listo para revisar, ticket 2 de 3:** SDK · [PR](https://github.com/o/r/pull/9) · [ver pedido](/c/dev?thread=5)");
+    expect(ticketLine("merged", it0, 3, null, "")).toBe("✅ **Mezclado, ticket 2 de 3:** SDK");
+    expect(ticketLine("failed", it0, 3, null, "")).toContain("Reintentar");
+  });
+  it("activo o pendiente no se anuncian (el arranque lo avisa startItem)", () => {
+    expect(ticketLine("active", it0, 3, null, "")).toBeNull();
+    expect(ticketLine("pending", it0, 3, null, "")).toBeNull();
   });
 });

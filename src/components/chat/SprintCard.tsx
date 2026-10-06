@@ -82,6 +82,8 @@ export function SprintCard({ card, channelId, expanded = false }: { card: { spri
   const merged = included.filter((i) => i.status === "merged" || i.status === "skipped").length;
   const byKey = new Map(st.items.map((i) => [i.key, i]));
   const working = included.filter((i) => i.status === "active" || i.status === "pr").length;
+  const current = included.find((i) => i.status === "active" || i.status === "pr");
+  const stageLabel = (s: string | null) => (s === "you_review" ? t("te toca revisar el PR") : s === "you_decide" ? t("te toca decidir") : s ?? "");
   const openPanel = () => onOpenArtifact?.({ kind: "sprint", title: st.title, sprintId: st.id, channelId });
 
   if (!expanded) {
@@ -110,6 +112,17 @@ export function SprintCard({ card, channelId, expanded = false }: { card: { spri
             {!draft && st.items.length > included.length ? ` · ${st.items.length - included.length} ${t("fuera")}` : ""}
             {st.repo && <span className="ml-1 font-mono">· {st.repo}</span>}
           </p>
+          {!draft && !done && current && (
+            <p className="mt-1 truncate text-xs text-ink">
+              <span className="text-muted">{t("Ahora")}:</span> #{current.idx} {current.title}
+              {current.stage && <span className="font-semibold"> · {stageLabel(current.stage)}</span>}
+              {current.threadUrl && (
+                <a href={current.threadUrl} className="ml-1.5 text-brand hover:underline">
+                  {t("Pedido")} →
+                </a>
+              )}
+            </p>
+          )}
           <div className="mt-2 flex flex-wrap items-center gap-2">
             {draft && st.canEdit && (
               <button

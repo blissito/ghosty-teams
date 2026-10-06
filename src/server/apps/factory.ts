@@ -968,6 +968,8 @@ async function readSprint(sprintId: number) {
       prUrl: run?.prUrl ?? null,
       issueUrl: it.issueNumber && sprint.repo ? `https://github.com/${sprint.repo}/issues/${it.issueNumber}` : null,
       issueNumber: it.issueNumber,
+      // Quién lo tiene AHORA (para la tarjeta chica): un rol o la persona.
+      stage: !run ? null : ({ planning: "@plan", building: "@build", checking: "@check", pr_review: "you_review", escalated: "you_decide" } as Record<string, string>)[run.status] ?? null,
       threadUrl: run ? `/c/${ch.slug}?thread=${run.rootMsgId}` : null,
     });
   }

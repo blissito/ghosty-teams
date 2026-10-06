@@ -157,6 +157,8 @@ export type SprintRow = {
   id: number;
   channelId: number;
   cardMsgId: number | null;
+  /** Raíz del hilo de la tarjeta (la tarjeta misma, o el hilo donde se pidió). */
+  rootMsgId: number | null;
   repo: string | null;
   goal: string;
   title: string;
@@ -187,6 +189,7 @@ const toSprint = (r: Record<string, any>): SprintRow => ({
   id: Number(r.id),
   channelId: Number(r.channel_id),
   cardMsgId: r.card_msg_id != null ? Number(r.card_msg_id) : null,
+  rootMsgId: r.root_msg_id != null ? Number(r.root_msg_id) : null,
   repo: r.repo ?? null,
   goal: String(r.goal),
   title: String(r.title),
@@ -336,6 +339,12 @@ export async function approveSprint(id: number, sub: string, origin: string): Pr
     if (run.status === "pr_review") await R.reopenWithNotes(run, "@plan", "", origin, { sprint: id, ticket: it.key });
     else await R.postInThread(run, "plan", `🧩 Este pedido ahora es el ticket ${it.key} del sprint «${claimed[0].title}»: @build recibe el alcance nuevo en su siguiente encargo.`);
   }
+  // Visibilidad al lanzar: antes el hilo del sprint se quedaba callado hasta el confeti y cada
+  // ticket abría su pedido en otro hilo (MailMask, 5-oct). Aquí se avisa cada paso.
+  await announce(
+    toSprint(claimed[0]),
+    `🚀 **Sprint lanzado:** ${items.length} ${items.length === 1 ? "ticket" : "tickets"}, uno a la vez (en orden y según sus dependencias). Aquí aviso cuando arranca, queda listo para revisar o se mezcla cada uno.`,
+  ).catch(() => {});
   // El sprint vive en gt_factory_sprint_items: la tarjeta y /factory lo pintan de ahí (sin Tasks desde 30-sep).
   await advanceSprint(id);
   return (await getSprint(id))!;
@@ -372,8 +381,13 @@ export async function advanceSprint(id: number): Promise<void> {
     const run = it.runId ? await R.getRun(it.runId) : null;
     const st = itemStatusOf(run?.status ?? null, it.status);
     if (st !== it.status) {
-      await dbq("UPDATE gt_factory_sprint_items SET status = ? WHERE id = ?", [st, it.id]);
+      // Condicional: con dos ticks a la vez, sólo quien hace el cambio lo anuncia.
+      const moved = await dbq("UPDATE gt_factory_sprint_items SET status = ? WHERE id = ? AND status = ? RETURNING id", [st, it.id, it.status]);
       it.status = st;
+      if (moved.length && run && it.included) {
+        const line = ticketLine(st, it, items.filter((i) => i.included).length, run.prUrl, await threadLink(run.channelId, run.rootMsgId));
+        if (line) await announce(sprint, line).catch(() => {});
+      }
     }
   }
   const live = items.filter((i) => i.included);
@@ -398,13 +412,14 @@ export async function advanceSprint(id: number): Promise<void> {
 
 /** Publica en el hilo de la tarjeta del sprint. */
 async function announce(sprint: SprintRow, body: string): Promise<void> {
-  if (!sprint.cardMsgId) return;
+  const parent = sprint.rootMsgId ?? sprint.cardMsgId;
+  if (!parent) return;
   const db = await import("../../db.server");
   const bus = await import("../bus.server");
   const { currentNamespace } = await import("../tenant.server");
   const { resolvedAgents } = await import("../../agents.server");
   const plan = (await resolvedAgents()).find((a) => a.handle === "plan");
-  const { id } = await db.postAgent(sprint.channelId, sprint.cardMsgId, body, "msg", "plan", plan?.name ?? "Plan", "general", plan?.avatar ?? "");
+  const { id } = await db.postAgent(sprint.channelId, parent, body, "msg", "plan", plan?.name ?? "Plan", "general", plan?.avatar ?? "");
   const msg = await db.getMessage(id);
   if (msg) bus.publish(bus.ch.room(await currentNamespace(), sprint.channelId), { t: "message:new", msg });
 }
@@ -439,6 +454,7 @@ async function startItem(sprint: SprintRow, it: SprintItemRow, all: SprintItemRo
   const msgId = await R.postInThread(run, "plan", R.planCardFence(run.id, 1));
   if (msgId) await dbq("UPDATE gt_factory_plans SET msg_id = ? WHERE run_id = ? AND version = 1", [msgId, run.id]);
   await R.ensureRunCard(run);
+  await announce(sprint, `▶️ **Arrancó el ticket ${it.idx} de ${n}:** ${it.title} · [ver pedido](${await threadLink(sprint.channelId, rootId)})`).catch(() => {});
   const who = (await dbq("SELECT name FROM gc_users WHERE sub = ?", [approver]).catch(() => []))[0]?.name ?? "Quien aprobó el sprint";
   await R.decide({ run, version: 1, decision: "approve", sub: approver, who: String(who), origin: sprint.origin ?? "" });
 }
@@ -487,4 +503,21 @@ export async function createItemIssue(sprintId: number, itemId: number, sub: str
   if (!Number.isInteger(n) || n <= 0) throw new Error(r?.error ? String(r.error) : "GitHub no abrió el issue");
   await dbq("UPDATE gt_factory_sprint_items SET issue_number = ? WHERE id = ? AND sprint_id = ?", [n, it.id, sprint.id]);
   return n;
+}
+
+/** Liga relativa al hilo de un pedido (para los avisos del sprint). */
+async function threadLink(channelId: number, rootMsgId: number): Promise<string> {
+  const db = await import("../../db.server");
+  const ch = await db.getChannelById(channelId).catch(() => null);
+  return ch ? `/c/${ch.slug}?thread=${rootMsgId}` : "";
+}
+
+/** El renglón que el hilo del sprint recibe cuando un ticket cambia de estado (null = no se avisa). */
+export function ticketLine(st: ItemStatus, it: { idx: number; title: string }, n: number, prUrl: string | null, link: string): string | null {
+  const head = `ticket ${it.idx} de ${n}`;
+  const pedido = link ? ` · [ver pedido](${link})` : "";
+  if (st === "pr") return `🔎 **Listo para revisar, ${head}:** ${it.title}${prUrl ? ` · [PR](${prUrl})` : ""}${pedido}`;
+  if (st === "merged") return `✅ **Mezclado, ${head}:** ${it.title}${pedido}`;
+  if (st === "failed") return `⚠️ **Se canceló el ${head}:** ${it.title}. Decide en la tarjeta: «Reintentar» o «Quitar del sprint».${pedido}`;
+  return null;
 }

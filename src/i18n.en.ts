@@ -670,6 +670,8 @@ export const en: Record<string, string> = {
   "Sin preview": "No preview",
   "Issue": "Issue",
   "Dejar como issue": "Keep as issue",
+  "te toca revisar el PR": "your turn to review the PR",
+  "te toca decidir": "your call",
   "Preview apagada": "Preview off",
   "Apagada para todo el repo": "Off for the whole repo",
   "Encender": "Turn on",
