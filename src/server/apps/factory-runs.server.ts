@@ -215,6 +215,8 @@ export async function startCritique(run: Run, version: number, origin: string, a
   if (!plan) return false;
   const db = await import("../../db.server");
   const root = await db.getMessage(run.rootMsgId).catch(() => null);
+  // Una versión nueva reemplaza a la que el crítico estuviera revisando.
+  await dbq("UPDATE gt_factory_plans SET critique = 'superseded' WHERE run_id = ? AND version < ? AND critique = 'pending'", [run.id, version]).catch(() => {});
   await dbq(
     "UPDATE gt_factory_plans SET critique = 'pending', critique_at = unixepoch(), auto_approve_by = ?, auto_approve_who = ? WHERE run_id = ? AND version = ?",
     [autoApprove?.sub ?? null, autoApprove?.who ?? null, run.id, version],
@@ -230,14 +232,27 @@ export async function startCritique(run: Run, version: number, origin: string, a
  * sprint, se aprueba solo como antes. `fail`: vuelve a @plan como un «cambios: …» firmado por
  * @check. Si una persona ya firmó mientras tanto, no se toca nada.
  */
-export async function finishCritique(run: Run, pass: boolean, findings: string, origin: string): Promise<{ ok: boolean; error?: string; status?: string }> {
-  const [row] = await dbq("SELECT critique, auto_approve_by, auto_approve_who, decision FROM gt_factory_plans WHERE run_id = ? AND version = ?", [run.id, run.planVersion]).catch(() => []);
-  if (!row || row.critique !== "pending") return { ok: false, error: "este plan no espera crítica (ya se revisó o ya lo firmó alguien)" };
-  if (run.status !== "plan_review" || row.decision) {
-    await dbq("UPDATE gt_factory_plans SET critique = ?, critique_notes = ? WHERE run_id = ? AND version = ?", [pass ? "pass" : "fail", findings.slice(0, 4000) || null, run.id, run.planVersion]);
+export async function finishCritique(
+  run: Run,
+  pass: boolean,
+  findings: string,
+  origin: string,
+  version = run.planVersion,
+): Promise<{ ok: boolean; error?: string; status?: string }> {
+  const [row] = await dbq("SELECT critique, auto_approve_by, auto_approve_who, decision FROM gt_factory_plans WHERE run_id = ? AND version = ?", [run.id, version]).catch(() => []);
+  if (!row || row.critique !== "pending")
+    return { ok: false, error: row?.critique === "superseded" ? `el plan v${version} ya fue reemplazado: termina sin repetir nada` : "este plan no espera crítica (ya se revisó)" };
+  // Una persona firmó mientras tanto (o el pedido siguió): el veredicto se guarda y, si pide
+  // cambios, le llega a @build como nota para que no se pierda.
+  if (version !== run.planVersion || run.status !== "plan_review" || row.decision) {
+    await dbq("UPDATE gt_factory_plans SET critique = ?, critique_notes = ? WHERE run_id = ? AND version = ?", [pass ? "pass" : "fail", findings.slice(0, 4000) || null, run.id, version]);
+    if (!pass && version === run.planVersion && !["done", "cancelled"].includes(run.status)) {
+      await addNote(run.id, "@check (crítico del plan)", `Lo que el crítico encontró en el plan v${version} (ya estaba firmado):\n${findings.trim()}`);
+      await postInThread(run, "check", `🔎 Revisé el plan v${version} después de la firma. Esto le llega a @build como nota:\n\n${findings.trim()}`);
+    }
     return { ok: true, status: run.status };
   }
-  await dbq("UPDATE gt_factory_plans SET critique = ?, critique_notes = ? WHERE run_id = ? AND version = ?", [pass ? "pass" : "fail", findings.slice(0, 4000) || null, run.id, run.planVersion]);
+  await dbq("UPDATE gt_factory_plans SET critique = ?, critique_notes = ? WHERE run_id = ? AND version = ?", [pass ? "pass" : "fail", findings.slice(0, 4000) || null, run.id, version]);
   if (pass) {
     await postInThread(run, "check", `🔎 Revisé el plan v${run.planVersion}: se puede construir así.${findings.trim() ? `\n\n${findings.trim()}` : ""}`);
     if (row.auto_approve_by) {
@@ -758,21 +773,11 @@ export async function maybeThreadDecision(opts: {
     if (!d) return false;
     const run = await runOfThread(opts.channelId, opts.rootId);
     if (!run || (run.status !== "plan_review" && run.status !== "escalated")) return false;
-    // Escalado: un «✅» suelto no aprueba. Se le enseñan los puntos y se pide «✅ confirmo»,
-    // para que nadie apruebe a ciegas lo que @check frenó (mercadito #7, 5-oct).
-    if (run.status === "escalated" && d.decision === "approve" && !("confirmed" in d && d.confirmed)) {
-      const esc = await escalationOf(run);
-      if (esc) {
-        const points = findingPoints(esc.findings);
-        await postInThread(
-          run,
-          "check",
-          `Antes de otra vuelta, esto es lo que frené (${points.length} punto${points.length === 1 ? "" : "s"}):\n\n` +
-            points.map((p, i) => `${i + 1}. ${p}`).join("\n") +
-            `\n\nSi lo leíste y va, contesta «✅ confirmo». Para cambiar algo, «cambios: …».`,
-        );
-        return true;
-      }
+    // Escalado: un «✅» en el hilo no aprueba a ciegas lo que @check frenó (mercadito #7, 5-oct).
+    // Se contesta con la tarjeta: los puntos arriba y la decisión con clics, sin escribir nada.
+    if (run.status === "escalated" && d.decision === "approve" && (await escalationOf(run))) {
+      await postInThread(run, "check", `Antes de otra vuelta, lee lo que frené y decide en la tarjeta:\n\n${runCardFence(run.id)}`);
+      return true;
     }
     await decide({
       run,
@@ -803,6 +808,9 @@ export async function refreshRoom(channelId: number): Promise<void> {
   }
 }
 
+/** La tarjeta viva de un pedido (`RunCard`): estado y botones para decidir. */
+export const runCardFence = (runId: number) => "```gt-run\n" + JSON.stringify({ runId }) + "\n```";
+
 /**
  * Publica UNA vez la tarjeta viva de la corrida en el room (top-level, con la cara de @plan).
  * Dice en qué etapa va y deja firmar ahí mismo; el detalle vive en el hilo del pedido. Nunca
@@ -816,7 +824,7 @@ export async function ensureRunCard(run: Run): Promise<void> {
     const bus = await import("../bus.server");
     const { currentNamespace } = await import("../tenant.server");
     const who = await agentIdentity("plan");
-    const body = "```gt-run\n" + JSON.stringify({ runId: run.id }) + "\n```";
+    const body = runCardFence(run.id);
     const { id } = await db.postAgent(run.channelId, null, body, "msg", who.handle, who.name, run.topic, who.avatar);
     await dbq("UPDATE gt_factory_runs SET card_msg_id = ? WHERE id = ? AND card_msg_id IS NULL", [id, run.id]);
     const msg = await db.getMessage(id);

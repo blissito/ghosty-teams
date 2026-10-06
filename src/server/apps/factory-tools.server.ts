@@ -296,6 +296,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         type: "object",
         properties: {
           runId: { type: "number", description: "El pedido (si no, el del hilo)" },
+          version: { type: "number", description: "La versión del plan que revisaste (viene en tu encargo)" },
           pass: { type: "boolean", description: "true = se puede construir así" },
           findings: { type: "string", description: "Hallazgos (obligatorios con pass=false): qué cambiar y por qué, en viñetas" },
         },
@@ -310,7 +311,8 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         const findings = String(a.findings ?? "").trim();
         if (!pass && !findings) return { ok: false, error: "con pass=false los hallazgos son obligatorios" };
         const R = await import("./factory-runs.server");
-        const r = await R.finishCritique(run, pass, findings, await origin());
+        const version = Number.isInteger(Number(a.version)) && Number(a.version) > 0 ? Number(a.version) : run.planVersion;
+        const r = await R.finishCritique(run, pass, findings, await origin(), version);
         return r.ok ? { ...r, note: "Listo. La plataforma ya avisó en el hilo: termina sin repetirlo." } : r;
       },
     },
@@ -471,6 +473,8 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
             return { ok: true, note: "Es un eval: tu veredicto ya está con el juez. Tu paso terminó." };
           }
         }
+        if (run.status === "plan_review")
+          return { ok: false, error: "todavía no hay PR: si te encargaron criticar el plan, ciérralo con factory_plan_critique" };
         if (run.status !== "checking") return { ok: false, error: `el pedido no está en revisión (está en ${run.status})` };
         // La regla de @check se cumple aquí, no en su prompt: si la cabeza del PR se movió
         // desde que @build cerró, alguien empujó durante la revisión.
@@ -555,7 +559,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
             next,
             "check",
             `⚠️ **Necesita una decisión** — @build no puede resolver esto con sus herramientas, así que no se lo regresé:\n\n${findings}\n\n` +
-              `Si ya lo destrabaste y leíste los puntos, contesta «✅ confirmo» para otra vuelta de @build, o «cambios: …» para replanear.`,
+              `Decide en la tarjeta (lee los puntos y elige «Otra vuelta» o «Replanear»):\n\n${R.runCardFence(next.id)}`,
           );
           return { ok: true, status: next.status, note: "Escalado a una persona. No lo repitas." };
         }
@@ -572,7 +576,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
             next,
             "check",
             `⚠️ **Necesita una decisión** — ${next.loops} vueltas entre @build y @check sin cerrar. Lo último que encontré:\n\n${findings}\n\n` +
-              `Si leíste los puntos y va, contesta «✅ confirmo» para otra vuelta de @build, o «cambios: …» para replanear.`,
+              `Decide en la tarjeta (lee los puntos y elige «Otra vuelta» o «Replanear»):\n\n${R.runCardFence(next.id)}`,
           );
           return { ok: true, status: next.status };
         }

@@ -106,3 +106,21 @@ describe("crítico del plan", () => {
     expect(wakeups).toHaveLength(0);
   });
 });
+
+describe("crítico del plan: carreras", () => {
+  it("un veredicto sobre una versión reemplazada no toca la vigente", async () => {
+    plan = { critique: "superseded", decision: null };
+    const r = await finishCritique({ ...run("plan_review"), planVersion: 2 }, false, "- x", "https://x", 1);
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("reemplazado");
+    expect(wakeups).toHaveLength(0);
+  });
+
+  it("fail después de la firma: le llega a @build como nota y se dice en el hilo", async () => {
+    current = "building";
+    plan = { critique: "pending", decision: "approve" };
+    await finishCritique(run("building"), false, "- falta la prueba del corte", "https://x");
+    expect(sqls.some((s) => s.sql.startsWith("INSERT INTO gt_factory_notes") && String(s.args[1]).includes("falta la prueba"))).toBe(true);
+    expect(posts.some((p) => p.includes("después de la firma"))).toBe(true);
+  });
+});

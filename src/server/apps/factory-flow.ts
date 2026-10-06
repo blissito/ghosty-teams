@@ -97,13 +97,11 @@ export function stageLabel(status: RunStatus): string {
  * «cambios: …» → pedir cambios con esa nota. Lo demás no se interpreta: mejor que la
  * persona use el botón que adivinar una firma.
  */
-export function parseThreadDecision(text: string): { decision: "approve"; confirmed?: true } | { decision: "changes"; note: string } | null {
+export function parseThreadDecision(text: string): { decision: "approve" } | { decision: "changes"; note: string } | null {
   const t = text.trim();
   if (!t || t.length > 2000) return null;
   const m = t.match(/^(?:cambios?|cambia|pido cambios)\s*[:：-]\s*([\s\S]+)$/i);
   if (m && m[1].trim()) return { decision: "changes", note: m[1].trim() };
-  // «✅ confirmo»: la firma de un escalado ya leído (`maybeThreadDecision` la exige ahí).
-  if (/^(✅|👍|☑️|✔️)*\s*confirm[oa]d?[oa]?[\s.!]*$/iu.test(t)) return { decision: "approve", confirmed: true };
   if (/^(✅|👍|☑️|✔️)+\s*$/u.test(t)) return { decision: "approve" };
   if (/^(aprobad[oa]|apruebo|aprobar|va|dale|s[ií]|ok|adelante|lgtm)[\s.!]*$/i.test(t)) return { decision: "approve" };
   return null;

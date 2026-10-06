@@ -41,10 +41,7 @@ describe("nextStatus", () => {
 });
 
 describe("parseThreadDecision", () => {
-  it("«✅ confirmo» es una firma confirmada; «✅» solo, no", () => {
-    for (const t of ["✅ confirmo", "confirmo", "Confirmado.", "👍 confirmo"]) expect(parseThreadDecision(t)).toEqual({ decision: "approve", confirmed: true });
-    expect(parseThreadDecision("✅")).toEqual({ decision: "approve" });
-  });
+
   it("firmas", () => {
     for (const t of ["✅", "👍", "aprobado", "Va", "sí", "ok!", "LGTM", "dale"]) expect(parseThreadDecision(t)).toEqual({ decision: "approve" });
   });

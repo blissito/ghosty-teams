@@ -139,7 +139,7 @@ export function criticBrief(runId: number, version: number, planMd: string, ask:
     `- desviaciones de lo que se pidió (de más o de menos) y decisiones que debería tomar una persona;\n` +
     `- dos fuentes para el mismo dato (una cifra calculada en dos lados) y duplicar algo que ya existe;\n` +
     `- archivos que chocan con otro pedido abierto del room (factory_status).\n` +
-    `Cierra con factory_plan_critique (runId ${runId}): pass=true si se puede construir así (los detalles menores van en findings como sugerencia), ` +
+    `Cierra con factory_plan_critique (runId ${runId}, version ${version}): pass=true si se puede construir así (los detalles menores van en findings como sugerencia), ` +
     `o pass=false con hallazgos concretos (qué cambiar y por qué) para que @plan saque la v${version + 1}. Una sola vuelta: no pidas perfección. ` +
     `No uses factory_check_verdict ni escribas código.\n\n## Lo que se pidió\n${ask.slice(0, 3000)}\n\n## El plan v${version}\n${planMd.slice(0, 12000)}`
   );
