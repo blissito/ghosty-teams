@@ -26,6 +26,7 @@ vi.mock("./turns.server", () => ({
   registerTurn: (t: { messageId: number }) => (calls.push("register"), registered.push(t.messageId)),
   setTurnDurable: async (id: number, f: { wakeKey?: string }) => void durable.push({ id, ...f }),
   finishTurn: (_ns: string, id: number) => void finished.push(id),
+  turnState: () => null,
   setTurnStep: (_ns: string, _id: number, p: string) => void steps.push(p),
 }));
 vi.mock("./mentions.server", () => ({ notificarMencionesDelAgente: async (_ns: string, _c: unknown, reply: string) => (mentioned.push(reply), "") }));

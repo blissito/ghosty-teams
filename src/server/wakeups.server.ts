@@ -297,6 +297,9 @@ export async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
     void turns.setTurnDurable(mid, { wakeKey: w.key });
     turns.registerTurn({
       ns, messageId: mid, groupId: ref.groupId, invokerSub: ref.sub, controller,
+      // Sin esto la barra de «Trabajando ahora» nunca se enteraba de los turnos de un
+      // despertador (relevos de la fábrica, handoffs): corrían sin fila (MailMask #12, 5-oct).
+      announce: (st) => publish({ t: "turn", ...st }),
       channelId: dest.channelId ?? null, parentId: dest.parentId ?? null, dmId: dest.dmId ?? null,
       dest: { ...dest, handle, name, avatar },
       publicChannel: false,
@@ -371,7 +374,13 @@ export async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
     },
   }).finally(async () => {
     if (shellId != null) await flusher.flush(shellId).catch(() => {});
-    if (registeredId != null) turns.finishTurn(ns, registeredId);
+    if (registeredId != null) {
+      const stopped = turns.turnState(ns, registeredId)?.state === "stopped";
+      turns.finishTurn(ns, registeredId);
+      // `finishTurn` no anuncia el fin (en chat lo hace `avisarFinDeTurno`); aquí el cuerpo ya
+      // quedó guardado, así que se cierra la fila de la barra.
+      if (!stopped) publish({ t: "turn", id: registeredId, state: "done", position: 1, startedAt: Date.now() });
+    }
   });
 
   const finalBody = reply.trim();

@@ -1335,6 +1335,12 @@ export async function mergeRun(run: Run, sub: string): Promise<{ ok: true } | { 
         const up = await githubApi(sub, `/repos/${pr.repo}/pulls/${pr.number}/update-branch`, { method: "PUT", body: "{}" }).catch(() => null);
         await dbq("UPDATE gt_factory_runs SET merge_asked = NULL WHERE id = ?", [run.id]).catch(() => {});
         await logEvent(run.id, "behind_main", null, { behindBy: Number(cmp.behind_by), updated: !up?.error });
+        // Choques: GitHub no puede ponerlo al día solo. Antes sólo se decía en la tarjeta y el
+        // pedido se quedaba en PR (MailMask #17, 5-oct); ahora va a @build como cualquier choque.
+        if (up?.error && /conflict/i.test(String(up.error))) {
+          await onPrConflict(run, head);
+          return { ok: false, error: `El PR tiene choques con ${base}: se lo regresé a Build para resolverlos; el merge se vuelve a ofrecer al terminar.` };
+        }
         return {
           ok: false,
           error: up?.error
