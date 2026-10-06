@@ -377,6 +377,7 @@ export async function handoff(
   /** Otra conversación del mismo rol en el mismo pedido (el juez de un eval de @check). */
   groupSuffix = "",
 ): Promise<boolean> {
+  const t0 = Date.now();
   const { resolvedAgents, agentGroupId } = await import("../../agents.server");
   const agent = (await resolvedAgents()).find((a) => a.handle === to);
   if (!agent) {
@@ -400,8 +401,11 @@ export async function handoff(
     cause,
     text: `[Pedido #${run.id} · «${run.title}»${run.repo ? ` · repo ${run.repo}` : ""}]\n${text}`,
     origin,
-    dueAt: Math.floor(Date.now() / 1000) + 2,
+    // Vencido YA: con +2 s el barrido inmediato de `kickWakeups` lo veía «aún no» y el relevo
+    // esperaba al siguiente tick (pedir cambios tardó ~30 s en arrancar a @plan, MailMask #15).
+    dueAt: Math.floor(Date.now() / 1000),
   });
+  if (Date.now() - t0 > 3000) console.warn(`[factory] handoff a @${to} del #${run.id} tardó ${Date.now() - t0} ms en encolarse`);
   // `kick`, no `arm`: con sólo armar, el relevo esperaba al siguiente tick (hasta 30 s) y la
   // persona veía «nada pasó» tras firmar (MailMask, 2026-10-01).
   if (ok) (await import("../wakeups.server")).kickWakeups(ns);
