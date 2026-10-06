@@ -172,7 +172,7 @@ export function suggestItems(raw: unknown, repos: string[] = []): SuggestedAsk[]
 export const SECTION_HEADING =
   // Encabezado COMPLETO de sección (con variantes conocidas). Nunca por prefijo: «Pruebas
   // vitest para…» es un título real y un prefijo lo tomaba por sección.
-  /^(historia( de usuario)?|brief( t[ée]cnico)?|riesgos( y (lo que |qu[ée] )?no se har[áa])?|contexto|resumen|objetivo|criterios( de aceptaci[óo]n)?|alcance|(lo que |qu[ée] )?no se har[áa]|pruebas|plan|c[óo]mo( se prueba)?)\s*:?\s*$/i;
+  /^(historia( de usuario)?|brief( t[ée]cnico)?|riesgos( y (lo que |qu[ée] )?no se har[áa])?|contexto|resumen|objetivo|criterios( de aceptaci[óo]n)?|alcance|(lo que |qu[ée] )?no se har[áa]|pruebas|plan|c[óo]mo( se prueba)?|problema|pasos|riesgos y fuera de alcance|fuera de alcance|listo cuando)\s*:?\s*$/i;
 
 /** Título de la corrida: el explícito, o el primer encabezado del plan que no sea de sección. */
 export function planTitle(title: unknown, planMd: string): string {
