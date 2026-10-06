@@ -196,7 +196,8 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand opacity-60 motion-reduce:animate-none" />
               <span className="relative inline-flex h-2 w-2 rounded-full bg-brand" />
             </span>
-            {t(WORKING[st.status])}
+            {/* Sin turno vivo todavía: el relevo va en camino (pasa unos segundos tras firmar). */}
+            {st.liveTurnId ? t(WORKING[st.status]) : t("Arrancando a @{rol}…").replace("{rol}", st.status === "planning" ? "plan" : st.status === "building" ? "build" : "check")}
             {st.loops ? <span className="text-muted">· {t("Vueltas de check")}: {st.loops}</span> : null}
             {/* Lo que narra el rol AHORA (mismo dato que la barra del hilo): desde el room se ve que avanza. */}
             {st.currentStep ? <span className="min-w-0 truncate text-muted">· {st.currentStep}</span> : null}

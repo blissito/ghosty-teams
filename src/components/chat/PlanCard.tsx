@@ -6,7 +6,7 @@ import { ChatCtx } from "./message";
 import { useT } from "../../i18n";
 import { useRtSubscribe } from "../../utils/rt-bus";
 import { Markdown } from "../Markdown";
-import { splitPlan } from "../../lib/plan-md";
+import { splitPlan, planStats } from "../../lib/plan-md";
 import { factoryPlanCardFn, factoryDecisionFn } from "../../server/apps/factory";
 import type { PlanCardData } from "../../lib/ebdoc";
 
@@ -25,6 +25,8 @@ export function PlanCard({ card, channelId, expanded = false }: { card: PlanCard
   const [asking, setAsking] = useState(false);
   const [note, setNote] = useState("");
   const [open, setOpen] = useState(false);
+  // Aprobar sin leer no tiene sentido: el botón fuerte es «Leer el plan» hasta que se abre.
+  const [read, setRead] = useState(false);
 
   const refresh = useCallback(() => {
     factoryPlanCardFn({ data: { runId: card.runId, version: card.version } })
@@ -76,17 +78,25 @@ export function PlanCard({ card, channelId, expanded = false }: { card: PlanCard
         {expanded || open ? (
           <PlanBody planMd={st.planMd} t={t} />
         ) : (
-          <button
-            type="button"
-            onClick={() =>
-              onOpenArtifact
-                ? onOpenArtifact({ kind: "run", title: `${t("Pedido")} #${st.runId}`, runId: st.runId, channelId })
-                : setOpen(true)
-            }
-            className="text-xs font-semibold text-brand hover:underline"
-          >
-            {t("Ver el plan completo")}
-          </button>
+          <PlanSummary
+            planMd={st.planMd}
+            t={t}
+            onRead={() => {
+              setRead(true);
+              if (onOpenArtifact) onOpenArtifact({ kind: "run", title: `${t("Pedido")} #${st.runId}`, runId: st.runId, channelId });
+              else setOpen(true);
+            }}
+          />
+        )}
+        {/* Pidió cambios / aprobó y el rol todavía no contesta: que se vea que ya va. */}
+        {!superseded && !canSign && st.decision && (st.status === "planning" || st.status === "building") && (
+          <p className="mt-2 flex items-center gap-1.5 text-xs text-muted" role="status">
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand opacity-60 motion-reduce:animate-none" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-brand" />
+            </span>
+            {st.status === "planning" ? t("@plan está rehaciendo el plan…") : t("@build arrancó con el plan aprobado…")}
+          </p>
         )}
         <div className="mt-3 flex flex-wrap items-center gap-2">
           {canSign && st.status === "escalated" ? (
@@ -108,7 +118,11 @@ export function PlanCard({ card, channelId, expanded = false }: { card: PlanCard
                 type="button"
                 disabled={!!busy}
                 onClick={() => decide("approve")}
-                className="rounded-full border border-emerald-600 px-3 py-1 text-xs font-bold text-emerald-600 hover:bg-emerald-600/10 disabled:opacity-50"
+                className={
+                  read || expanded || open
+                    ? "rounded-full bg-emerald-600 px-3 py-1 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-50"
+                    : "rounded-full px-2 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-600/10 disabled:opacity-50 dark:text-emerald-300"
+                }
               >
                 {busy === "approve" ? t("Firmando…") : t("Aprobar")}
               </button>
@@ -116,11 +130,10 @@ export function PlanCard({ card, channelId, expanded = false }: { card: PlanCard
                 type="button"
                 disabled={!!busy}
                 onClick={() => setAsking((v) => !v)}
-                className="rounded-full border border-border px-3 py-1 text-xs font-semibold text-muted hover:text-ink disabled:opacity-50"
+                className="rounded-full px-2 py-1 text-xs font-semibold text-muted hover:text-ink disabled:opacity-50"
               >
                 {t("Pedir cambios")}
               </button>
-              <span className="text-[11px] text-muted">{t("o contesta «✅» / «cambios: …» en el hilo")}</span>
             </>
           ) : (
             <span className="text-xs text-muted">{t("Esperando al plan")}</span>
@@ -171,3 +184,29 @@ function PlanBody({ planMd, t }: { planMd: string; t: (s: string) => string }) {
     </div>
   );
 }
+
+/** El plan cerrado: qué entrega («Listo cuando»), de qué tamaño es y el botón para leerlo. */
+function PlanSummary({ planMd, t, onRead }: { planMd: string; t: (s: string) => string; onRead: () => void }) {
+  const { done, body } = splitPlan(planMd);
+  const { criteria, steps } = planStats(body);
+  const size = [criteria ? `${criteria} ${t(criteria === 1 ? "criterio" : "criterios")}` : "", steps ? `${steps} ${t(steps === 1 ? "paso" : "pasos")}` : ""]
+    .filter(Boolean)
+    .join(" · ");
+  return (
+    <div className="text-sm">
+      {done && (
+        <div className="gt-plan mb-2 text-ink [&_p]:inline">
+          <span className="font-semibold">{t("Listo cuando")}: </span>
+          <Markdown body={done} />
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" onClick={onRead} className="rounded-full bg-ink px-3 py-1 text-xs font-bold text-surface hover:opacity-90">
+          {t("Leer el plan")}
+        </button>
+        {size && <span className="text-xs text-muted">{size}</span>}
+      </div>
+    </div>
+  );
+}
+

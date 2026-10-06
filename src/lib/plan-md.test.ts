@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { splitPlan } from "./plan-md";
+import { splitPlan, planStats } from "./plan-md";
 
 describe("splitPlan", () => {
   it("quita el título y saca «Listo cuando»", () => {
@@ -19,3 +19,11 @@ describe("splitPlan", () => {
     expect(splitPlan(md).body).toBe(md);
   });
 });
+
+describe("planStats", () => {
+  it("cuenta criterios y pasos por sección", () => {
+    const body = "## Problema\n- no cuenta\n## Criterios de aceptación\n- a\n- b\n## Pasos\n1. x\n2. y\n3. z\n## Riesgos\n- r";
+    expect(planStats(body)).toEqual({ criteria: 2, steps: 3 });
+  });
+});
+

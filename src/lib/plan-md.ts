@@ -14,3 +14,20 @@ export function splitPlan(planMd: string): { done: string | null; body: string }
   }
   return { done, body: lines.join("\n").trim() };
 }
+
+/** Cuántos criterios y pasos trae el plan (para el resumen de la tarjeta cerrada). */
+export function planStats(body: string): { criteria: number; steps: number } {
+  let section = "";
+  let criteria = 0;
+  let steps = 0;
+  for (const line of body.split("\n")) {
+    const h = /^#{1,4}\s+(.+)$/.exec(line);
+    if (h) {
+      section = h[1].toLowerCase();
+      continue;
+    }
+    if (/criterios/.test(section) && /^\s{0,1}[-*]\s+\S/.test(line)) criteria++;
+    if (/pasos|brief/.test(section) && /^\s{0,1}(\d+[.)]|[-*])\s+\S/.test(line)) steps++;
+  }
+  return { criteria, steps };
+}
