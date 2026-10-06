@@ -389,6 +389,12 @@ export async function handoff(
   // Una conversación por corrida y rol: el contexto viaja en el encargo, y @check no hereda
   // lo que @build pensó.
   const groupId = await agentGroupId(agent, `factory-${run.id}${groupSuffix}`);
+  // Las skills del paso van en el encargo, junto a la tarea: en el prompt del rol no se seguían.
+  let skills = "";
+  if (to === "build" || to === "check") {
+    const plan = run.planVersion ? await getPlan(run.id, run.planVersion).catch(() => null) : null;
+    skills = `\n\n${(await import("./factory-roles")).roleSkillsLine(to, `${run.title}\n${plan?.planMd ?? ""}`)}`;
+  }
   const { enqueueWakeup, mintWakeRef } = await import("../wakeups.server");
   const ok = await enqueueWakeup({
     key: `factory:${run.id}:${to}:${Date.now()}`,
@@ -399,7 +405,7 @@ export async function handoff(
       dest: { channelId: run.channelId, parentId: run.rootMsgId, topic: run.topic, handle: agent.handle, name: agent.name, avatar: agent.avatar },
     }),
     cause,
-    text: `[Pedido #${run.id} · «${run.title}»${run.repo ? ` · repo ${run.repo}` : ""}]\n${text}`,
+    text: `[Pedido #${run.id} · «${run.title}»${run.repo ? ` · repo ${run.repo}` : ""}]\n${text}${skills}`,
     origin,
     // Vencido YA: con +2 s el barrido inmediato de `kickWakeups` lo veía «aún no» y el relevo
     // esperaba al siguiente tick (pedir cambios tardó ~30 s en arrancar a @plan, MailMask #15).

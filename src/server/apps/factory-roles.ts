@@ -101,3 +101,25 @@ Si lo que falta no lo puede hacer @build con sus herramientas (falta una tool, u
 readFirst es para lo CORRECTO pero delicado. Si lo describirías como un hueco (alguien puede abusar de él), como código que cambia datos reales sin prueba o como duplicación, es hallazgo con pass=false, no readFirst: la persona confía en tu «listo».
 Cierra con factory_check_verdict: pass=true si está listo para que una persona lo revise, con readFirst (máx. 5 archivo + líneas + por qué, lo más delicado arriba) para que lo revise en 2 minutos, y risk=high si hay lógica delicada que las rutas no delatan; pass=false con hallazgos concretos (archivo:línea y qué falta) para que @build los corrija. Sé específico y breve; no reescribas el PR en tu respuesta.`,
 };
+
+/** ¿El pedido toca interfaz? Rutas de UI o palabras de pantalla en el título o el plan. */
+const UI_HINT = /\.(jsx|tsx|vue|svelte|astro|css|scss|html)\b|\b(ui|ux|landing|layout|componente|component|p[aá]gina|pantalla|panel|bot[oó]n|formulario|estilos?|dise[ñn]o|responsive|m[oó]vil)\b/i;
+
+export function touchesUi(text: string): boolean {
+  return UI_HINT.test(text);
+}
+
+/**
+ * La línea de skills que va en CADA encargo de @build y @check. En el prompt del rol el «Método»
+ * se quedaba en el aire: ni con Claude se abrían dev-frontend, dev-tdd, dev-verificar ni
+ * dev-revision (15 pedidos de UI en palmera-legal y el #7 de mercadito, 5-oct); sólo dev-test,
+ * que el prompt nombra dentro de un paso. En el encargo, junto a la tarea, sí se sigue.
+ */
+export function roleSkillsLine(role: "plan" | "build" | "check" | "eval", planText: string): string {
+  const ui = touchesUi(planText);
+  if (role === "build")
+    return `Habilidades de este paso: ábrelas (tu herramienta de skills o su SKILL.md) ANTES de hacer lo que cubren; no basta con conocerlas. ${ui ? "dev-frontend antes de escribir la interfaz (este pedido la toca); " : ""}dev-tdd al escribir código; dev-test para correr en la caja de trabajo; dev-verificar antes de factory_build_done.`;
+  if (role === "check")
+    return `Habilidades de este paso: ábrelas (tu herramienta de skills o su SKILL.md) antes del veredicto. dev-test para tus pruebas de aceptación; dev-revision (sus cuatro lentes); ${ui ? "dev-frontend para revisar la interfaz (este pedido la toca); " : ""}dev-verificar antes de factory_check_verdict.`;
+  return "";
+}
