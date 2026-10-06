@@ -362,6 +362,15 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         // Pedido escalado y una persona despertó a @build en el hilo («reintenta»): eso ES la
         // decisión de otra vuelta. Sin esto @build hacía el trabajo y no podía cerrar su paso.
         if (run.status === "escalated") run = await R.applyEvent(run, "approve");
+        // Pedido ya revisado (PR listo) y @build empujó más sobre ESE PR (la persona se lo pidió en
+        // el hilo): eso reabre la revisión. Sin esto no podía cerrar su paso, @check no volvía a
+        // revisar y la tarjeta del veredicto se quedaba vieja (MailMask #15, 6-oct).
+        const samePr = (x: string | null | undefined) => {
+          const p1 = R.parsePrUrl(String(x ?? "")), p2 = R.parsePrUrl(url);
+          return !!p1 && !!p2 && p1.repo.toLowerCase() === p2.repo.toLowerCase() && p1.number === p2.number;
+        };
+        if (run.status === "pr_review" && samePr(run.prUrl))
+          run = await R.applyEvent(run, "rework", {}, { actor: "build", data: { reason: "commits después del veredicto" } });
         // CI en rojo no llega a @check: se ahorra una vuelta y lo arregla quien construyó.
         const ci = await R.prCi(sub, url);
         if (ci?.state === "failure") {
