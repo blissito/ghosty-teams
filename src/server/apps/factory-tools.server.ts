@@ -1100,6 +1100,18 @@ export function findingsText(raw: unknown): string {
   return uno(raw);
 }
 
+/** ¿Este turno de @check es el del crítico del plan? Pedido del hilo en `plan_review` con su
+ *  versión vigente pendiente de crítica. */
+export async function isCriticTurn(dest: ToolDest | null): Promise<boolean> {
+  const root = threadRoot(dest);
+  if (!dest?.channelId || !root) return false;
+  const R = await import("./factory-runs.server");
+  const run = await R.runOfThread(dest.channelId, root);
+  if (!run || run.status !== "plan_review") return false;
+  const plan = await R.getPlan(run.id, run.planVersion);
+  return plan?.critique === "pending";
+}
+
 /** Bloque de contexto del turno: el papel del rol, la corrida del hilo y las alertas. null sin la app. */
 export async function factoryContext(dest: ToolDest | null, toolChannel: ToolChannel = "gs-sdk"): Promise<string | null> {
   if (!(await isInstalled("factory").catch(() => false))) return null;
@@ -1115,9 +1127,13 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
     parts.push(JUDGE_INSTRUCTIONS);
   }
   if (h && (FACTORY_HANDLES as readonly string[]).includes(h)) {
-    parts.push(`En ESTE turno actúas como @${h}; tu identidad de siempre se queda, pero aplica este rol.`);
+    // @check con el pedido esperando firma y su plan pendiente de crítica = es el CRÍTICO DEL
+    // PLAN, no el revisor del PR: sus instrucciones de PR (pruebas en caja, veredicto) lo
+    // confundían. El encargo trae el detalle; aquí sólo el papel.
+    const critic = h === "check" && (await isCriticTurn(dest).catch(() => false));
+    parts.push(`En ESTE turno actúas como @${h}${critic ? " en su papel de CRÍTICO DEL PLAN" : ""}; tu identidad de siempre se queda, pero aplica este rol.`);
     parts.push(FACTORY_COMMON);
-    parts.push(ROLE_INSTRUCTIONS[h]);
+    parts.push(critic ? (await import("./factory-roles")).CRITIC_ROLE : ROLE_INSTRUCTIONS[h]);
     // Convenciones del repo (`.ghosty/factory.md`): le ganan a lo genérico de arriba.
     const { factoryTurnFor } = await import("./factory-team.server");
     const ft = await factoryTurnFor(h, dest, "").catch(() => null);

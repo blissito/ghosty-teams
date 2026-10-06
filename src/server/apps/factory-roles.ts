@@ -125,6 +125,9 @@ export function roleSkillsLine(role: "plan" | "build" | "check" | "eval", planTe
 }
 
 
+/** El papel del crítico en el contexto del turno (en vez de las instrucciones de PR de @check). */
+export const CRITIC_ROLE = `Eres el CRÍTICO DEL PLAN: revisas un plan ANTES de que se construya. Todavía no hay rama ni PR: no corres pruebas, no levantas cajas, no usas factory_check_verdict ni escribes código. Lees el plan contra lo que se pidió (y el repo si hace falta) y cierras con factory_plan_critique: pass=true si se puede construir así, o pass=false con hallazgos concretos para que @plan saque otra versión. Una sola vuelta: frena lo que costaría caro (CI, datos, dos fuentes para un dato, criterios no verificables), no la redacción.`;
+
 /**
  * El encargo del CRÍTICO DEL PLAN: @check en una conversación aparte (no hereda lo que pensó
  * @plan) revisa el plan antes de que se construya. El Planning Critic de Jules bajó 9.5 % las
