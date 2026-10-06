@@ -657,6 +657,57 @@ export async function ambientContext(
 // ── Tools ────────────────────────────────────────────────────────────────────
 
 const str = (description: string) => ({ type: "string", description });
+
+// Binarios (imágenes, PDFs, fuentes): `content` es texto y se codifica como UTF-8, así que un
+// JPEG pasado por ahí llegaba corrupto y @build se quedaba parado pidiéndole a un humano que lo
+// subiera. Ahora el archivo llega por `fromUrl` (la liga de descarga que ya dio el agente) o
+// `contentBase64`. `fromUrl` sólo acepta NUESTRO almacenamiento: la petición sale de nuestra red
+// y una URL libre sería SSRF.
+const BINARY_HOSTS = ["t3.storage.dev", "tigris.dev", "ghosty.studio"];
+const MAX_BINARY = 10 * 1024 * 1024;
+
+async function binaryContent(a: Record<string, any>): Promise<{ b64: string } | { error: string } | null> {
+  if (typeof a.contentBase64 === "string" && a.contentBase64.trim()) {
+    const b64 = a.contentBase64.replace(/^data:[^,]*,/, "").replace(/\s+/g, "");
+    if (!/^[A-Za-z0-9+/]*={0,2}$/.test(b64)) return { error: "`contentBase64` no es base64 válido." };
+    if (b64.length * 0.75 > MAX_BINARY) return { error: "El archivo pasa de 10 MB." };
+    return { b64 };
+  }
+  if (typeof a.fromUrl !== "string" || !a.fromUrl.trim()) return null;
+  const allowed = (u: URL) => {
+    const host = u.hostname.toLowerCase();
+    return u.protocol === "https:" && !u.port && !u.username && BINARY_HOSTS.some((h) => host === h || host.endsWith(`.${h}`));
+  };
+  let u: URL;
+  try {
+    u = new URL(a.fromUrl.trim());
+  } catch {
+    return { error: "`fromUrl` no es una URL." };
+  }
+  // Las ligas de ghosty.studio redirigen a la firmada: cada salto se revalida contra la lista.
+  let r: Response | null = null;
+  for (let hop = 0; hop < 4; hop++) {
+    if (!allowed(u))
+      return { error: `\`fromUrl\` sólo acepta ligas https de nuestro almacenamiento (${BINARY_HOSTS.join(", ")}). Publica el archivo primero y pasa esa liga.` };
+    const res = await fetch(u, { redirect: "manual", signal: AbortSignal.timeout(30_000) }).catch((e) => String(e?.message ?? e));
+    if (typeof res === "string") return { error: `No pude descargar el archivo: ${res}` };
+    const loc = res.status >= 300 && res.status < 400 ? res.headers.get("location") : null;
+    if (!loc) { r = res; break; }
+    u = new URL(loc, u);
+  }
+  if (!r) return { error: "Demasiadas redirecciones." };
+  if (!r.ok) return { error: `No pude descargar el archivo: HTTP ${r.status}${r.status === 403 ? " (¿la liga caducó?)" : ""}.` };
+  if (Number(r.headers.get("content-length") ?? 0) > MAX_BINARY) return { error: "El archivo pasa de 10 MB." };
+  const buf = Buffer.from(await r.arrayBuffer());
+  if (buf.length > MAX_BINARY) return { error: "El archivo pasa de 10 MB." };
+  if (!buf.length) return { error: "La liga devolvió un archivo vacío." };
+  return { b64: buf.toString("base64") };
+}
+
+const binaryProps = {
+  fromUrl: str("Para BINARIOS (imagen, PDF, fuente): liga https de nuestro almacenamiento (la de descarga de un archivo publicado). Se baja y se commitea byte a byte. En lugar de `content`."),
+  contentBase64: str("Para binarios chicos: el archivo en base64. En lugar de `content`."),
+};
 const repoProp = { repo: str('Repositorio como "dueño/repo".') };
 
 const ALL_TOOLS: ConnectorTool[] = [
@@ -1362,10 +1413,10 @@ const ALL_TOOLS: ConnectorTool[] = [
         mergeFrom: str("Opcional: rama (o commit) a fusionar en la tuya con este commit, para resolver conflictos. Normalmente la principal."),
         files: {
           type: "array",
-          description: "Cambios. `content` para crear/reemplazar; `delete: true` para borrar.",
+          description: "Cambios. `content` para crear/reemplazar texto; `fromUrl`/`contentBase64` para binarios (imágenes, PDFs); `delete: true` para borrar.",
           items: {
             type: "object",
-            properties: { path: str("Ruta."), content: str("Contenido completo."), delete: { type: "boolean" } },
+            properties: { path: str("Ruta."), content: str("Contenido completo (texto)."), ...binaryProps, delete: { type: "boolean" } },
             required: ["path"],
           },
         },
@@ -1380,7 +1431,8 @@ const ALL_TOOLS: ConnectorTool[] = [
       if (files.length > 100) return { error: "Máximo 100 archivos por commit." };
       for (const f of files) {
         if (!f?.path) return { error: "Cada archivo lleva `path`." };
-        if (!f.delete && typeof f.content !== "string") return { error: `${f.path}: falta \`content\` (o \`delete: true\`).` };
+        if (!f.delete && typeof f.content !== "string" && !f.fromUrl && !f.contentBase64)
+          return { error: `${f.path}: falta \`content\` (o \`fromUrl\`/\`contentBase64\`, o \`delete: true\`).` };
       }
       const w = await writeToken(sub, p);
       if ("error" in w) return w;
@@ -1395,11 +1447,17 @@ const ALL_TOOLS: ConnectorTool[] = [
       const base = await apiWith(w.token, `/repos/${p}/git/commits/${parent}`);
       if (base?.error) return base;
       const clean = (x: string) => String(x).replace(/^\/+/, "");
-      const entries: Record<string, unknown>[] = files.map((f) =>
-        f.delete
-          ? { path: clean(f.path), mode: "100644", type: "blob", sha: null }
-          : { path: clean(f.path), mode: "100644", type: "blob", content: String(f.content) },
-      );
+      // Los binarios van como blob base64 aparte: `content` del árbol sólo admite texto.
+      const entries: Record<string, unknown>[] = [];
+      for (const f of files) {
+        if (f.delete) { entries.push({ path: clean(f.path), mode: "100644", type: "blob", sha: null }); continue; }
+        const bin = await binaryContent(f);
+        if (bin && "error" in bin) return { error: `${f.path}: ${bin.error}` };
+        if (!bin) { entries.push({ path: clean(f.path), mode: "100644", type: "blob", content: String(f.content) }); continue; }
+        const blob = await apiWith(w.token, `/repos/${p}/git/blobs`, { method: "POST", body: JSON.stringify({ content: bin.b64, encoding: "base64" }) });
+        if (blob?.error) return { error: `${f.path}: ${blob.error}` };
+        entries.push({ path: clean(f.path), mode: "100644", type: "blob", sha: blob?.sha });
+      }
       // MERGE (choques de un PR): el commit lleva DOS padres, la rama y `mergeFrom`. El árbol es
       // el de la rama + lo que cambió en `mergeFrom` desde el ancestro común y la rama no tocó
       // (entra solo) + lo que manda el agente (los que chocan, ya resueltos). Un archivo que
@@ -1831,22 +1889,26 @@ const ALL_TOOLS: ConnectorTool[] = [
   {
     name: "github_write_file",
     description:
-      "Crea o reemplaza un archivo en una rama, con su commit. Para SOBRESCRIBIR uno que ya existe hay que pasar su `sha` (lo devuelve github_read_file) — sin él GitHub rechaza el cambio para no pisar trabajo ajeno. Escribe en una rama de trabajo, nunca en la principal.",
+      "Crea o reemplaza un archivo en una rama, con su commit. Texto en `content`; un BINARIO (imagen, PDF) con `fromUrl` o `contentBase64`, nunca en `content` (llegaría corrupto). Para SOBRESCRIBIR uno que ya existe hay que pasar su `sha` (lo devuelve github_read_file) — sin él GitHub rechaza el cambio para no pisar trabajo ajeno. Escribe en una rama de trabajo, nunca en la principal.",
     inputSchema: {
       type: "object",
       properties: {
         ...repoProp,
         path: str("Ruta del archivo."),
-        content: str("Contenido COMPLETO del archivo (no un parche)."),
+        content: str("Contenido COMPLETO del archivo (no un parche), si es texto."),
+        ...binaryProps,
         message: str("Mensaje del commit."),
         branch: str("Rama donde commitear."),
         sha: str("SHA del archivo actual. Obligatorio si el archivo ya existe."),
       },
-      required: ["repo", "path", "content", "message", "branch"],
+      required: ["repo", "path", "message", "branch"],
     },
     handler: async (sub, a) => {
       const p = repoPath(a.repo);
       if (!p) return BAD_REPO;
+      const bin = await binaryContent(a);
+      if (bin && "error" in bin) return bin;
+      if (!bin && typeof a.content !== "string") return { error: "Falta `content` (o `fromUrl`/`contentBase64` para un binario)." };
       const w = await writeToken(sub, p);
       if ("error" in w) return w;
       // Con el bot como autor, el trailer es lo ÚNICO que conserva a la persona en el
@@ -1857,7 +1919,7 @@ const ALL_TOOLS: ConnectorTool[] = [
         method: "PUT",
         body: JSON.stringify({
           message,
-          content: Buffer.from(String(a.content), "utf8").toString("base64"),
+          content: bin ? bin.b64 : Buffer.from(String(a.content), "utf8").toString("base64"),
           branch: a.branch,
           ...(a.sha ? { sha: a.sha } : {}),
         }),
