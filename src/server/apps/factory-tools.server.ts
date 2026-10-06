@@ -536,6 +536,8 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
             risk: risk.level,
             riskReasons: risk.reasons,
             readFirst: risk.readFirst,
+            // La ruta que pidió @check: si las capturas se rehacen con una preview nueva, salen de ahí.
+            evidencePath: a.evidencePath ? String(a.evidencePath) : null,
           };
           const { dbq } = await import("../../dbq.server");
           await dbq("UPDATE gt_factory_runs SET verdict_json = ?, pr_ready_at = unixepoch() WHERE id = ?", [JSON.stringify(verdict), run.id]);
@@ -931,7 +933,8 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         }
         if (!run.prUrl) return { ok: true, state: "none", note: "el pedido todavía no tiene PR" };
         const R = await import("./factory-runs.server");
-        const p = await R.runPreview(run.id);
+        // `fresh`: tras un push la fila sigue «lista» con la caja vieja; @check revisaba la anterior.
+        const p = await R.runPreview(run.id, { fresh: true });
         const note =
           p.state === "ready"
             ? "Ábrela y prueba ahí los criterios de aceptación visibles."

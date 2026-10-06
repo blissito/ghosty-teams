@@ -43,20 +43,32 @@ async function screenshot(url: string, width: number, height: number): Promise<B
   return buf.length > 1000 ? buf : null;
 }
 
+/** ¿La página contesta? Un 404/5xx (la caja que se rehace, la ruta que no existe) no se captura. */
+async function pageAnswers(url: string): Promise<boolean> {
+  const res = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(20_000) }).catch(() => null);
+  return !!res && res.status < 400;
+}
+
 /** Captura la preview del pedido y la cuelga del veredicto. Espera a que la preview esté lista. */
 export async function captureVerdictShots(runId: number, path?: string | null): Promise<void> {
   try {
     const R = await import("./factory-runs.server");
-    // La preview puede ir un poco atrás del veredicto: se espera hasta ~3 min.
-    let preview = await R.runPreview(runId);
-    for (let i = 0; i < 6 && preview.state === "pending"; i++) {
+    // La preview puede ir atrás del veredicto (sobre todo tras un push): se espera hasta ~5 min
+    // a que esté lista Y sea del commit actual del PR. Si no llega, `announcePreviews` vuelve a
+    // llamar aquí cuando anuncia la nueva.
+    let preview = await R.runPreview(runId, { fresh: true });
+    for (let i = 0; i < 10 && preview.state === "pending"; i++) {
       await new Promise((ok) => setTimeout(ok, 30_000));
-      preview = await R.runPreview(runId);
+      preview = await R.runPreview(runId, { fresh: true });
     }
     if (preview.state !== "ready" || !preview.url) return;
     const storage = await import("../storage.server");
     if (!storage.storageConfigured()) return;
     const url = shotUrl(preview.url, path);
+    if (!(await pageAnswers(url))) {
+      console.warn(`[factory] capturas #${runId}: ${url} no contesta (4xx/5xx), no se adjuntan`);
+      return;
+    }
     const shots: Shot[] = [];
     for (const v of VIEWPORTS) {
       const png = await screenshot(url, v.width, v.height).catch(() => null);
@@ -68,7 +80,7 @@ export async function captureVerdictShots(runId: number, path?: string | null): 
     const rows = await dbq("SELECT verdict_json, channel_id FROM gt_factory_runs WHERE id = ?", [runId]);
     if (!rows[0]?.verdict_json) return;
     const verdict = JSON.parse(String(rows[0].verdict_json));
-    await dbq("UPDATE gt_factory_runs SET verdict_json = ? WHERE id = ?", [JSON.stringify({ ...verdict, shots, shotPath: path ?? null }), runId]);
+    await dbq("UPDATE gt_factory_runs SET verdict_json = ? WHERE id = ?", [JSON.stringify({ ...verdict, shots, shotPath: path ?? null, shotSha: preview.sha }), runId]);
     void R.refreshRoom(Number(rows[0].channel_id));
   } catch (e) {
     console.error("[factory] capturas de la preview", e);

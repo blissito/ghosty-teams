@@ -1361,6 +1361,14 @@ export async function announcePreviews(): Promise<void> {
       {
         if (run.status !== "building")
           await postInThread(run, "build", `🔎 **Preview ${row.preview_sha && !sameSha ? "actualizada" : "lista"}**${next.provider ? ` (${next.provider})` : ""} · [Abrir](${next.url})`);
+        // Si @check ya dio su veredicto con otra versión (o sin preview), las capturas de su
+        // tarjeta se rehacen con ésta: la tarjeta se corrige sola aunque @check se adelantara.
+        let verdict: { shotSha?: string; shotPath?: string | null; evidencePath?: string | null } | null = null;
+        try {
+          verdict = row.verdict_json ? JSON.parse(String(row.verdict_json)) : null;
+        } catch { /* veredicto ilegible: sin capturas */ }
+        if (verdict && verdict.shotSha !== head.sha)
+          void import("./factory-shots.server").then((S) => S.captureVerdictShots(run.id, verdict.shotPath ?? verdict.evidencePath ?? null));
       }
     else if (next.state === "needs_env")
       await postInThread(
@@ -1439,14 +1447,37 @@ async function missingPreviewEnv(sub: string, repo: string): Promise<boolean> {
 
 export type RunPreviewState = "none" | "pending" | "ready" | "failed" | "needs_env" | "off";
 
-/** Lo que la tarjeta y @check saben de la preview del pedido (leído de la fila). */
-export async function runPreview(runId: number): Promise<{ state: RunPreviewState; url: string | null; error: string | null }> {
-  const rows = await dbq("SELECT status, preview_state, preview_url, preview_error FROM gt_factory_runs WHERE id = ?", [runId]).catch(() => []);
+/**
+ * Lo que la tarjeta y @check saben de la preview del pedido (leído de la fila).
+ *
+ * `fresh`: además compara el commit de la preview con la cabeza del PR (una llamada a GitHub).
+ * Tras un push, la fila sigue «lista» con la caja VIEJA hasta el siguiente tick (≤ 2 min): las
+ * capturas del veredicto salieron del 404 de la caja que se rehacía y @check revisó la versión
+ * anterior (MailMask #20, 6-oct). Con sha distinto cuenta como `pending`. Sólo lo piden quien
+ * captura y la tool de @check; la tarjeta lee la fila tal cual.
+ */
+export async function runPreview(
+  runId: number,
+  opts: { fresh?: boolean } = {},
+): Promise<{ state: RunPreviewState; url: string | null; error: string | null; sha: string | null }> {
+  const rows = await dbq(
+    "SELECT status, preview_state, preview_url, preview_error, preview_sha, pr_url, approved_by, requested_by FROM gt_factory_runs WHERE id = ?",
+    [runId],
+  ).catch(() => []);
   const r = rows[0];
   // Cerrado = su caja ya se bajó: las filas viejas aún guardan la liga muerta.
   const closed = r?.status === "done" || r?.status === "cancelled";
-  const state = (closed ? "none" : (r?.preview_state ?? "none")) as RunPreviewState;
-  return { state, url: state === "ready" ? (r?.preview_url ?? null) : null, error: state === "failed" ? (r?.preview_error ?? null) : null };
+  let state = (closed ? "none" : (r?.preview_state ?? "none")) as RunPreviewState;
+  if (opts.fresh && state === "ready" && r?.pr_url) {
+    const head = await prHead(String(r.approved_by ?? r.requested_by ?? ""), String(r.pr_url)).catch(() => null);
+    if (head && head.sha !== r.preview_sha) state = "pending";
+  }
+  return {
+    state,
+    url: state === "ready" ? (r?.preview_url ?? null) : null,
+    error: state === "failed" ? (r?.preview_error ?? null) : null,
+    sha: state === "ready" ? (r?.preview_sha ?? null) : null,
+  };
 }
 
 /**
