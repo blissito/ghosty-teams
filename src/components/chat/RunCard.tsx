@@ -151,13 +151,14 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
               {/* El CI es una etapa del camino: estado en vivo del PR; si el repo ya tiene CI y
                   este PR no lo ha corrido, el paso mismo lo dispara (MailMask #10, 4-oct). */}
               {s.key === "build" && <CiStep ci={st.ci} closed={closed} busy={busy} onRun={runCi} t={t} />}
+              {s.key === "pr" && st.prod && <ProdStep prod={st.prod} t={t} />}
               </Fragment>
             );
           })}
         </ol>
         {st.status === "done" && (
           <p className="mt-2 rounded-md bg-violet-600/10 px-2.5 py-1.5 text-xs font-semibold text-violet-700 dark:text-violet-300">
-            🎉 {t("Terminado: PR merged.")}
+            🎉 {st.prod?.state === "success" ? t("Terminado: en producción.") : t("Terminado: PR merged.")}
           </p>
         )}
         {stalled && !waiting && (
@@ -385,6 +386,42 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
         {err && <p className="mt-2 text-xs text-danger">{err}</p>}
       </div>
     </div>
+  );
+}
+
+/** El paso «Prod» después del PR: lo que vio el vigilante post-merge en producción. */
+function ProdStep({ prod, t }: { prod: { state: string; url?: string | null }; t: (s: string) => string }) {
+  const base = "flex-1 whitespace-nowrap rounded-full px-1.5 py-1 text-center text-[11px] font-semibold inline-flex items-center justify-center gap-1.5";
+  const look =
+    prod.state === "success"
+      ? { cls: "bg-emerald-600/15 text-emerald-700", txt: `✓ ${t("Prod")}` }
+      : prod.state === "pending"
+        ? { cls: "bg-brand text-white", txt: t("Desplegando"), spin: true }
+        : prod.state === "failure"
+          ? { cls: "bg-red-600/15 text-red-700 dark:text-red-400", txt: `✗ ${t("Prod")}` }
+          : prod.state === "timeout"
+            ? { cls: "bg-amber-500/15 text-amber-700 dark:text-amber-300", txt: t("Deploy lento") }
+            : { cls: "bg-surface-3 text-muted", txt: t("Sin deploy") };
+  const title =
+    prod.state === "none" ? t("El repo no despliega con cada merge a la rama principal.") : prod.state === "failure" ? t("Ver el log del deploy") : prod.url ?? undefined;
+  const body = (
+    <>
+      {"spin" in look && look.spin && (
+        <span className="h-3 w-3 animate-spin rounded-full border-2 border-white/40 border-t-white motion-reduce:animate-none" aria-hidden />
+      )}
+      {look.txt}
+    </>
+  );
+  return (
+    <li className="flex flex-1 items-center gap-1">
+      {prod.url ? (
+        <a href={prod.url} target="_blank" rel="noreferrer" title={title} className={`${base} ${look.cls} hover:underline`}>
+          {body}
+        </a>
+      ) : (
+        <span title={title} className={`${base} ${look.cls}`}>{body}</span>
+      )}
+    </li>
   );
 }
 

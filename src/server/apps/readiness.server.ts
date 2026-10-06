@@ -25,7 +25,8 @@ export type ReadinessKey =
   | "codeowners"
   | "dependabot"
   | "protected"
-  | "preview";
+  | "preview"
+  | "prod_env";
 
 export type ReadinessCheck = {
   key: ReadinessKey;
@@ -62,12 +63,14 @@ export type RepoFacts = {
   envSavedKeys: string[] | null;
   /** Repo privado en cuenta gratis: GitHub no deja proteger la rama sin Pro/Team. */
   protectionPlanRequired: boolean;
+  /** Workflow que despliega a producción en cada push (null = el repo no despliega por Actions). */
+  deployWorkflow?: string | null;
 };
 
 export const LEVELS: Record<1 | 2 | 3, ReadinessKey[]> = {
   1: ["readme", "lockfile", "scripts"],
   2: ["agents_md", "ci"],
-  3: ["codeowners", "dependabot", "protected", "preview"],
+  3: ["codeowners", "dependabot", "protected", "preview", "prod_env"],
 };
 
 /** Qué criterio arregla «Preparar repo». Los scripts piden dependencias: nunca a ciegas. */
@@ -82,6 +85,8 @@ const FIXABLE: Record<ReadinessKey, boolean> = {
   protected: false,
   // La da el hosting o nuestra caja; lo que falta (variables) no va en un PR.
   preview: false,
+  // Una línea en el workflow de deploy que ya existe: la escribe @build en el mismo PR.
+  prod_env: true,
 };
 
 /** Nivel alcanzado a partir de los criterios (puro, para probarlo). */
@@ -158,7 +163,8 @@ export async function repoReadiness(sub: string, repo: string, opts: { fresh?: b
   const codeowners = coPath ? decode(await githubApi(sub, `/repos/${repo}/contents/${coPath}`)) : null;
 
   // Protegida = el ruleset de la fábrica, o cualquier protección que GitHub reporte en la rama.
-  const { protectionState, hasWorkflows: hasPrCi } = await import("./ci-starter.server");
+  const { protectionState, hasWorkflows: hasPrCi, deployWorkflow } = await import("./ci-starter.server");
+  const deploy = await deployWorkflow(sub, repo, workflows).catch(() => null);
   const protection = await protectionState(sub, repo).catch(() => "error" as const);
   const P = await import("./preview.server");
   const previewHosting = await P.repoHasPreviews(sub, repo, defaultBranch).catch(() => false);
@@ -188,6 +194,8 @@ export async function repoReadiness(sub: string, repo: string, opts: { fresh?: b
     dependabot: ghFiles.some((n) => /^dependabot\.ya?ml$/i.test(n)) || has("renovate.json"),
     protected: protection === "protected" || branch?.protected === true,
     preview: previews || previewOff,
+    // Sin workflow de deploy no hay nada que declarar: no cuenta como pendiente.
+    prod_env: !deploy || deploy.hasEnv,
   };
   const checks: ReadinessCheck[] = ([1, 2, 3] as const).flatMap((level) =>
     LEVELS[level].map((key) => ({ key, level, ok: ok[key], fixable: FIXABLE[key] })),
@@ -210,6 +218,7 @@ export async function repoReadiness(sub: string, repo: string, opts: { fresh?: b
       envExampleKeys,
       envSavedKeys,
       protectionPlanRequired: protection === "plan_required",
+      deployWorkflow: deploy?.path ?? null,
     },
     checkedAt: Date.now(),
   };
@@ -328,6 +337,8 @@ export function preparationPlan(r: Readiness): { title: string; planMd: string; 
       `- \`AGENTS.md\` — reglas para agentes de código${r.facts.hasClaudeMd ? " (remite a `CLAUDE.md`)" : ""}. Completa «Arquitectura» y «Qué no tocar» leyendo el repo.`,
     );
   if (miss("readme")) steps.push("- `README.md` — qué es y cómo correrlo.");
+  if (miss("prod_env") && r.facts.deployWorkflow)
+    steps.push(`- \`${r.facts.deployWorkflow}\` — agrega \`environment: production\` al job que despliega (una línea; no cambies nada más). Así GitHub enseña «deployed to production» en cada PR.`);
   const later: string[] = [];
   if (miss("scripts"))
     later.push(`- Faltan scripts en package.json: ${r.facts.missingScripts.map((s) => `\`${s}\``).join(", ")}. Piden elegir herramientas: va en su propio pedido.`);

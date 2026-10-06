@@ -115,6 +115,39 @@ async function postThread(row: Row, body: string): Promise<void> {
 
 async function finish(row: Row, state: "ok" | "failed" | "timeout", result: string): Promise<void> {
   await dbq("UPDATE gt_post_merge SET state = ?, result = ? WHERE id = ?", [state, result.slice(0, 500), row.id]);
+  // La tarjeta del pedido pinta el paso «Prod» de esta fila: que se entere ya.
+  const R = await import("./factory-runs.server");
+  await R.refreshRoom(row.channelId).catch(() => {});
+}
+
+export type ProdState = {
+  state: "pending" | "success" | "failure" | "timeout" | "none";
+  url?: string | null;
+  at?: number | null;
+};
+
+/**
+ * El paso «Prod» de la tarjeta de un pedido con merge: lo que vio el vigilante en producción.
+ * null = pedido de antes del vigilante (sin fila): la tarjeta no enseña el paso.
+ */
+export async function runProd(run: { id: number; channelId: number; prUrl: string | null }): Promise<ProdState | null> {
+  const { parsePrUrl } = await import("./factory-runs.server");
+  const pr = run.prUrl ? parsePrUrl(run.prUrl) : null;
+  if (!pr) return null;
+  const [row] = await dbq("SELECT state, result FROM gt_post_merge WHERE channel_id = ? AND repo = ? AND pr = ?", [run.channelId, pr.repo, pr.number]).catch(() => []);
+  if (!row) return null;
+  const st = String(row.state);
+  if (st === "pending") return { state: "pending" };
+  if (st === "timeout") return { state: "timeout" };
+  const [ev] = await dbq(
+    "SELECT type, at, data_json FROM gt_factory_events WHERE run_id = ? AND type IN ('deployed','deploy_failed') ORDER BY id DESC LIMIT 1",
+    [run.id],
+  ).catch(() => []);
+  const data = ev?.data_json ? (JSON.parse(String(ev.data_json)) as { urls?: string[]; url?: string; workflows?: string[] }) : {};
+  if (st === "failed") return { state: "failure", url: data.url ?? null };
+  // Verde sin workflows de deploy en ese sha: el sitio contesta, pero no hubo despliegue que ver.
+  if (String(row.result) === "sin workflows") return { state: "none" };
+  return { state: "success", url: data.urls?.[0] ?? null, at: ev ? Number(ev.at) : null };
 }
 
 async function step(row: Row): Promise<void> {
@@ -176,7 +209,7 @@ async function step(row: Row): Promise<void> {
     return finish(row, "failed", `smoke: ${fails.join(", ")}`);
   }
 
-  // Todo bien: sin mensaje nuevo. ✅ en el aviso del merge y renglón en la bitácora del pedido.
+  // Todo bien: ✅ en el aviso del merge, renglón en la bitácora del pedido y, si hubo deploy, «🚀 en producción».
   if (row.noticeMsgId) {
     const db = await import("../../db.server");
     const notice = await db.getMessage(row.noticeMsgId);
@@ -188,6 +221,8 @@ async function step(row: Row): Promise<void> {
   for (const run of await R.runsByPr(row.repo, row.pr)) {
     if (run.channelId === row.channelId) await R.logEvent(run.id, "deployed", null, { sha, urls, workflows: runs.map((r) => r.name) });
   }
+  // Un renglón cuando sí hubo despliegue: es lo que la persona quiere saber después del merge.
+  if (verdict.kind === "green") await postThread(row, `🚀 #${row.pr} en producción${urls[0] ? ` · ${urls[0]}` : ""}`);
   return finish(row, "ok", verdict.kind === "green" ? `${runs.length} workflow(s) verdes` : "sin workflows");
 }
 

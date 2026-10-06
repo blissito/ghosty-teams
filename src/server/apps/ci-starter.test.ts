@@ -25,7 +25,7 @@ vi.mock("../connectors/github.server", () => ({
   },
 }));
 
-import { buildCiStarter, protectMain, hasWorkflows } from "./ci-starter.server";
+import { buildCiStarter, protectMain, hasWorkflows, deployWorkflowOf } from "./ci-starter.server";
 
 describe("CI starter", () => {
   beforeEach(() => {
@@ -92,3 +92,22 @@ describe("CI starter", () => {
     expect(posts[0].body.rules.map((x: any) => x.type)).not.toContain("required_status_checks");
   });
 });
+
+describe("deployWorkflowOf", () => {
+  const fly = "name: Deploy\non:\n  push:\n    branches: [main]\njobs:\n  deploy:\n    runs-on: ubuntu-latest\n    steps:\n      - run: flyctl deploy --remote-only\n";
+  it("encuentra el deploy por push y ve si le falta environment", () => {
+    expect(deployWorkflowOf([{ path: ".github/workflows/deploy.yml", text: fly }])).toEqual({ path: ".github/workflows/deploy.yml", hasEnv: false });
+  });
+  it("environment: production (corto o con name) cuenta", () => {
+    const corto = fly.replace("    runs-on:", "    environment: production\n    runs-on:");
+    const largo = fly.replace("    runs-on:", "    environment:\n      name: production\n    runs-on:");
+    expect(deployWorkflowOf([{ path: "d.yml", text: corto }])?.hasEnv).toBe(true);
+    expect(deployWorkflowOf([{ path: "d.yml", text: largo }])?.hasEnv).toBe(true);
+  });
+  it("el CI de los PR no es deploy; sin workflows de deploy, null", () => {
+    const ci = "name: CI\non:\n  pull_request:\n  push:\njobs:\n  t:\n    steps:\n      - run: npm test\n";
+    expect(deployWorkflowOf([{ path: "ci.yml", text: ci }])).toBeNull();
+    expect(deployWorkflowOf([])).toBeNull();
+  });
+});
+

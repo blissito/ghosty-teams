@@ -56,6 +56,36 @@ export async function hasWorkflows(sub: string, repo: string, listing?: unknown)
   return texts.some((t) => /\bpull_request(_target)?\b/.test(t));
 }
 
+/**
+ * El workflow que despliega a producción en cada push a la rama principal, y si declara
+ * `environment: production` (así GitHub enseña «deployed to production» en el PR y el repo
+ * lleva la lista de despliegues). null = el repo no despliega por Actions.
+ */
+export function deployWorkflowOf(files: { path: string; text: string }[]): { path: string; hasEnv: boolean } | null {
+  for (const f of files) {
+    const pushes = /^\s*(on:\s*\[?[^\n]*\bpush\b|push:)/m.test(f.text);
+    const deploys = /\b(flyctl|fly deploy|vercel|netlify|wrangler|railway|render\.com|deploy)\b/i.test(f.text.replace(/^\s*name:.*$/gm, ""));
+    if (!pushes || !deploys || /\bpull_request\b/.test(f.text)) continue;
+    const hasEnv = /^\s*environment:\s*['"]?production\b/m.test(f.text) || /^\s*environment:\s*\n\s*name:\s*['"]?production\b/m.test(f.text);
+    return { path: f.path, hasEnv };
+  }
+  return null;
+}
+
+export async function deployWorkflow(sub: string, repo: string, listing?: unknown): Promise<{ path: string; hasEnv: boolean } | null> {
+  const r = listing ?? (await githubApi(sub, `/repos/${repo}/contents/.github/workflows`));
+  if (!Array.isArray(r)) return null;
+  const files = r.filter((f: any) => /\.ya?ml$/i.test(String(f?.name ?? ""))).slice(0, 10);
+  const texts = await Promise.all(
+    files.map((f: any) =>
+      githubApi(sub, `/repos/${repo}/contents/${String(f.path)}`)
+        .then((c: any) => ({ path: String(f.path), text: typeof c?.content === "string" ? Buffer.from(c.content, "base64").toString("utf8") : "" }))
+        .catch(() => ({ path: String(f.path), text: "" })),
+    ),
+  );
+  return deployWorkflowOf(texts);
+}
+
 export type CiStarter = { files: { path: string; content: string }[]; notes: string[] };
 
 /** Arma el workflow y el CODEOWNERS para `repo`, adaptados a su gestor de paquetes. */

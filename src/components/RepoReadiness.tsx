@@ -28,6 +28,7 @@ const CRITERIA: Record<ReadinessKey, { label: string; detail: string }> = {
   dependabot: { label: "Dependencias al día", detail: "dependabot.yml (o Renovate). OpenSSF Scorecard: Dependency-Update-Tool." },
   protected: { label: "Nada entra a main sin tu aprobación", detail: "Regla en la rama principal: PR, aprobación de una persona y CI en verde. OpenSSF Scorecard: Branch-Protection." },
   preview: { label: "Cada cambio se ve antes del merge", detail: "Una preview por PR: la de tu hosting si la publica (Vercel, Netlify…) o una que la fábrica levanta en su propia caja. @check prueba ahí." },
+  prod_env: { label: "Los despliegues se ven en GitHub", detail: "El workflow de deploy declara «environment: production»: cada PR enseña «deployed to production» y el repo lleva la lista de despliegues. Si el repo no despliega por Actions, no aplica." },
 };
 
 export function RepoReadiness({ channelId, repo, compact = false, onLevel, autoOpenEnv = false }: {

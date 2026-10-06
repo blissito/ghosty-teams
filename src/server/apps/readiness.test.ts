@@ -90,7 +90,7 @@ describe("Listo para agentes", () => {
     // Nivel 3 completo pero sin el 2: se queda en 1.
     expect(levelOf({ readme: true, lockfile: true, scripts: true, codeowners: true, dependabot: true, protected: true, preview: true })).toBe(1);
     expect(
-      levelOf({ readme: true, lockfile: true, scripts: true, agents_md: true, ci: true, codeowners: true, dependabot: true, protected: true, preview: true }),
+      levelOf({ readme: true, lockfile: true, scripts: true, agents_md: true, ci: true, codeowners: true, dependabot: true, protected: true, preview: true, prod_env: true }),
     ).toBe(3);
   });
 
@@ -105,18 +105,18 @@ describe("Listo para agentes", () => {
   it("repo pelón: nivel 0 y los scripts que faltan", async () => {
     const r = await check();
     expect(r.level).toBe(0);
-    // Sólo la preview: tiene `dev` y no pide variables, así que nuestra caja la puede dar.
-    expect(r.passed).toBe(1);
-    expect(r.total).toBe(9);
+    // La preview (tiene `dev` y no pide variables) y prod_env (sin deploy por Actions no aplica).
+    expect(r.passed).toBe(2);
+    expect(r.total).toBe(10);
     expect(r.facts.missingScripts).toEqual(["test", "typecheck"]);
     expect(r.facts.pm).toBeNull();
   });
 
-  it("repo completo: nivel 3, 9/9", async () => {
+  it("repo completo: nivel 3, 10/10", async () => {
     complete();
     const r = await check();
     expect(r.level).toBe(3);
-    expect(r.passed).toBe(9);
+    expect(r.passed).toBe(10);
     expect(r.facts.pm).toBe("pnpm");
   });
 
