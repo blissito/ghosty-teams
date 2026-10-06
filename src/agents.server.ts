@@ -3008,13 +3008,18 @@ async function runAgentTurnInner(opts: {
   /** Causa del fallo de transporte, si el turno murió. `null` = entregó.
    *  Lo consumen chat.ts/dm.ts para marcar el turno como fallido en vez de `done`. */
 }): Promise<{ id: number; reply: string; failure?: string | null; toolsCorridas?: string[]; plan?: { id: number; body: string } }> {
-  let id: number | null = null;
-  const ensure = async (): Promise<number> => {
-    if (id == null) {
-      id = await opts.createShell();
-      opts.onShell?.(id);
-    }
-    return id;
+  // Se guarda la PROMESA, no sólo el id: al retomar tras un reinicio gs repite el backlog de
+  // golpe y varios eventos llamaban a `ensure` antes de que la primera burbuja existiera —
+  // cada uno creaba la suya (mercadito #4, 5-oct: 22 burbujas idénticas de @build).
+  let shellP: Promise<number> | null = null;
+  const ensure = (): Promise<number> => {
+    shellP ??= opts.createShell().then((mid) => {
+      opts.onShell?.(mid);
+      return mid;
+    });
+    // Si crearla falló, el siguiente evento lo vuelve a intentar (como antes).
+    shellP.catch(() => { shellP = null; });
+    return shellP;
   };
   // El turnId durable se guarda en la fila del turno: si este proceso muere, el siguiente lo adopta.
   const rememberDurable = async (turnId: string) => {
