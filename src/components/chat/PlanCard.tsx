@@ -6,6 +6,7 @@ import { ChatCtx } from "./message";
 import { useT } from "../../i18n";
 import { useRtSubscribe } from "../../utils/rt-bus";
 import { Markdown } from "../Markdown";
+import { splitPlan } from "../../lib/plan-md";
 import { factoryPlanCardFn, factoryDecisionFn } from "../../server/apps/factory";
 import type { PlanCardData } from "../../lib/ebdoc";
 
@@ -73,9 +74,7 @@ export function PlanCard({ card, channelId, expanded = false }: { card: PlanCard
       </div>
       <div className="p-3">
         {expanded || open ? (
-          <div className="relative text-sm">
-            <Markdown body={st.planMd} />
-          </div>
+          <PlanBody planMd={st.planMd} t={t} />
         ) : (
           <button
             type="button"
@@ -148,6 +147,26 @@ export function PlanCard({ card, channelId, expanded = false }: { card: PlanCard
           </div>
         )}
         {err && <p className="mt-2 text-xs text-danger">{err}</p>}
+      </div>
+    </div>
+  );
+}
+
+/** El plan para leerse: sin el título repetido, «Listo cuando» arriba y estilos de tarjeta (`.gt-plan`). */
+function PlanBody({ planMd, t }: { planMd: string; t: (s: string) => string }) {
+  const { done, body } = splitPlan(planMd);
+  return (
+    <div className="relative text-sm">
+      {done && (
+        <div className="gt-plan-done mb-3 rounded-md bg-emerald-600/10 px-3 py-2 text-emerald-900 dark:text-emerald-200">
+          <span className="font-semibold">{t("Listo cuando")}: </span>
+          <span className="gt-plan inline [&_p]:inline">
+            <Markdown body={done} />
+          </span>
+        </div>
+      )}
+      <div className="gt-plan">
+        <Markdown body={body} />
       </div>
     </div>
   );

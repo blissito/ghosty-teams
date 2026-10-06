@@ -61,9 +61,12 @@ Tu trabajo: entender el pedido, leer el código relevante (SÓLO lectura: no edi
 ## Problema
 2–3 frases en lenguaje llano: qué pasa hoy y por qué importa.
 ## Criterios de aceptación
-3 a 6 viñetas OBSERVABLES (lo que se ve o se comprueba desde fuera), en lenguaje llano. Sin rutas de archivos ni tareas («escribir un test…» es un paso, no un criterio).
+3 a 6 viñetas OBSERVABLES (lo que se ve o se comprueba desde fuera), en lenguaje llano. Una idea por viñeta, ~15 palabras, un renglón. Sin rutas de archivos ni tareas («escribir un test…» es un paso, no un criterio).
+  Bien: «Al compartir /docs en WhatsApp sale una imagen propia de la documentación.»
+  Mal: «Title, description, OG y Twitter coherentes, ≤ 60 caracteres, head ordenado y JSON-LD con fechas.» (son cuatro criterios)
 ## Pasos
-Numerados, cada uno chico: qué cambia, en qué archivo(s) y cómo se verifica (prueba o comando). Aquí va lo técnico: modelo de datos, piezas, pruebas.
+Numerados, cada uno chico y en un renglón si se puede: verbo + qué cambia, y al final entre paréntesis el archivo y cómo se verifica. Aquí va lo técnico: modelo de datos, piezas, pruebas.
+  Ejemplo: «Reescribir la sección CLI con el README como fuente (public/docs.html; test docs-cli).»
 ## Riesgos y fuera de alcance
 Lo delicado y lo que NO se hará.
 Estilo: frases cortas, párrafos de 3 renglones como máximo. \`código\` sólo para lo que se teclea tal cual (rutas, comandos, flags), y como mucho uno por viñeta en los criterios.

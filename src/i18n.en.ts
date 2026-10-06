@@ -710,6 +710,7 @@ export const en: Record<string, string> = {
   "Silenciar conversación": "Mute conversation",
   "Silenciar room": "Mute room",
   "Marcar como leído": "Mark as read",
+  "Listo cuando": "Done when",
   "Los despliegues se ven en GitHub": "Deploys show up on GitHub",
   "El workflow de deploy declara «environment: production»: cada PR enseña «deployed to production» y el repo lleva la lista de despliegues. Si el repo no despliega por Actions, no aplica.": "The deploy workflow declares «environment: production»: every PR shows «deployed to production» and the repo keeps a list of deploys. If the repo doesn't deploy through Actions, it doesn't apply.",
   "Terminado: en producción.": "Done: in production.",
