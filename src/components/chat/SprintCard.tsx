@@ -18,6 +18,7 @@ import {
   factorySprintEditFn,
   factorySprintFn,
   factorySprintItemFn,
+  factorySprintIssueFn,
   type SprintView,
 } from "../../server/apps/factory";
 
@@ -215,10 +216,25 @@ export function SprintCard({ card, channelId, expanded = false }: { card: { spri
                     </button>
                   ) : null}
                 </div>
-                {!draft && (i.threadUrl || i.prUrl) && (
+                {((!draft && (i.threadUrl || i.prUrl)) || i.issueUrl || (!i.included && st.canEdit && st.repo && st.status !== "cancelled")) && (
                   <div className="mt-1 flex gap-3 pl-7 text-[11px]">
-                    {i.threadUrl && <a href={i.threadUrl} className="text-brand hover:underline">{t("Pedido")} →</a>}
-                    {i.prUrl && <a href={i.prUrl} target="_blank" rel="noreferrer" className="text-muted hover:text-ink">PR ↗</a>}
+                    {!draft && i.threadUrl && <a href={i.threadUrl} className="text-brand hover:underline">{t("Pedido")} →</a>}
+                    {!draft && i.prUrl && <a href={i.prUrl} target="_blank" rel="noreferrer" className="text-muted hover:text-ink">PR ↗</a>}
+                    {i.issueUrl ? (
+                      <a href={i.issueUrl} target="_blank" rel="noreferrer" className="text-muted hover:text-ink">
+                        {t("Issue")} #{i.issueNumber} ↗
+                      </a>
+                    ) : !i.included && st.canEdit && st.repo && st.status !== "cancelled" ? (
+                      // Lo que no entra hoy queda en GitHub para después; si luego se construye, su PR lo cierra.
+                      <button
+                        type="button"
+                        disabled={!!busy}
+                        onClick={() => void run(`g${i.id}`, () => factorySprintIssueFn({ data: { sprintId: st.id, itemId: i.id } }))}
+                        className="font-semibold text-brand hover:underline disabled:opacity-50"
+                      >
+                        {busy === `g${i.id}` ? <Loader2 size={11} className="animate-spin" /> : t("Dejar como issue")}
+                      </button>
+                    ) : null}
                   </div>
                 )}
                 {!draft && i.status === "failed" && st.canEdit && (

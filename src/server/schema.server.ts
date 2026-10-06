@@ -926,6 +926,10 @@ async function migrate(): Promise<void> {
   // Sprint activo que éste reemplaza al aprobarse (la persona re-partió el trabajo, MailMask 4-oct).
   await addColumn("gt_factory_sprints", "replaces", "INTEGER");
   await addColumn("gt_factory_runs", "sprint_item_id", "INTEGER");
+  // Issue de GitHub del ticket / pedido: la PLATAFORMA mete `Closes #N` en su PR (como Copilot,
+  // Jules o Devin); un ticket que se deja fuera puede quedar como issue para después (5-oct).
+  await addColumn("gt_factory_sprint_items", "issue_number", "INTEGER");
+  await addColumn("gt_factory_runs", "issue_number", "INTEGER");
   // Ya se avisó en el hilo que no se pudo crear su tarea en Tasks (una vez).
   await addColumn("gt_factory_runs", "task_warned", "INTEGER");
   // Bitácora INMUTABLE de cada pedido (2026-09-30, patrón de las «activities» de Linear): un

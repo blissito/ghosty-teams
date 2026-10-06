@@ -966,6 +966,8 @@ async function readSprint(sprintId: number) {
       status: it.status,
       runId: run?.id ?? null,
       prUrl: run?.prUrl ?? null,
+      issueUrl: it.issueNumber && sprint.repo ? `https://github.com/${sprint.repo}/issues/${it.issueNumber}` : null,
+      issueNumber: it.issueNumber,
       threadUrl: run ? `/c/${ch.slug}?thread=${run.rootMsgId}` : null,
     });
   }
@@ -1015,6 +1017,18 @@ export const factorySprintEditFn = createServerFn({ method: "POST" })
       await dbq("UPDATE gt_factory_sprint_items SET included = ? WHERE id = ? AND sprint_id = ?", [data.included ? 1 : 0, data.itemId, sprint.id]);
     const title = String(data.title ?? "").trim().slice(0, 120);
     if (title) await dbq("UPDATE gt_factory_sprint_items SET title = ? WHERE id = ? AND sprint_id = ?", [title, data.itemId, sprint.id]);
+    return readSprint(sprint.id);
+  });
+
+/** «Dejar como issue»: el ticket queda en GitHub para después (y su PR lo cerrará si se construye). */
+export const factorySprintIssueFn = createServerFn({ method: "POST" })
+  .validator((d: { sprintId: number; itemId: number }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) throw new Error("no autenticado");
+    const { S, sprint, canEdit } = await sprintAccess(Number(data.sprintId));
+    if (!canEdit) throw new Error("sólo el dueño o quien pidió el sprint decide");
+    await S.createItemIssue(sprint.id, Number(data.itemId), me.sub);
     return readSprint(sprint.id);
   });
 

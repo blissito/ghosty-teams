@@ -1380,3 +1380,26 @@ export async function prFiles(sub: string, url: string): Promise<PrFile[]> {
 export async function prTouchesGithubDir(sub: string, url: string): Promise<boolean> {
   return classifyPrRisk(await prFiles(sub, url)).reasons.includes("github");
 }
+
+/**
+ * Si el pedido viene de un issue, su PR lo cierra al mezclarse: la plataforma agrega `Closes #N`
+ * a la descripción (no se le deja al modelo). Best-effort: nunca lanza.
+ */
+export async function ensurePrClosesIssue(runId: number, sub: string, url: string): Promise<void> {
+  try {
+    const rows = await dbq("SELECT issue_number FROM gt_factory_runs WHERE id = ?", [runId]);
+    const n = Number(rows[0]?.issue_number ?? 0);
+    const pr = parsePrUrl(url);
+    if (!n || !pr) return;
+    const { allTools, githubApi } = await import("../connectors/github.server");
+    const info = await githubApi(sub, `/repos/${pr.repo}/pulls/${pr.number}`);
+    if (!info || info.error) return;
+    const { withClosingRef } = await import("./factory-flow");
+    const body = withClosingRef(info.body, n);
+    if (body === String(info.body ?? "")) return;
+    const tool = allTools().find((t) => t.name === "github_update_pr");
+    await tool?.handler(sub, { repo: pr.repo, number: pr.number, body });
+  } catch (e) {
+    console.warn(`[factory] Closes #issue en el PR del pedido #${runId}: ${(e as Error).message}`);
+  }
+}

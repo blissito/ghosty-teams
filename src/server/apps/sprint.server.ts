@@ -21,6 +21,8 @@ export type SprintItemInput = {
   bodyMd: string;
   /** Pedido que este ticket CONTINÚA (su PR ya existe): no se abre otro, se le encarga a ése. */
   runId?: number | null;
+  /** Issue de GitHub que este ticket resuelve: su PR lleva `Closes #N`. */
+  issueNumber?: number | null;
 };
 export type ItemStatus = "pending" | "active" | "pr" | "merged" | "failed" | "skipped";
 
@@ -61,7 +63,8 @@ export function validateSprintItems(raw: unknown): SprintItemInput[] | string {
       (brief ? `## Qué y cómo\n${brief}\n\n` : "") +
       `## Criterios de aceptación\n${criteria}\n` +
       (files.length ? `\n## Archivos principales\n${files.map((f) => `- \`${f}\``).join("\n")}\n` : "");
-    out.push({ key, title, size: size as SprintSize, dependsOn, bodyMd });
+    const issue = Number(it?.issue);
+    out.push({ key, title, size: size as SprintSize, dependsOn, bodyMd, issueNumber: Number.isInteger(issue) && issue > 0 ? issue : null });
   }
   for (const it of out) {
     for (const d of it.dependsOn) {
@@ -177,6 +180,7 @@ export type SprintItemRow = {
   taskRef: string | null;
   runId: number | null;
   status: ItemStatus;
+  issueNumber: number | null;
 };
 
 const toSprint = (r: Record<string, any>): SprintRow => ({
@@ -212,6 +216,7 @@ const toItem = (r: Record<string, any>): SprintItemRow => ({
   taskRef: r.task_ref ?? null,
   runId: r.run_id != null ? Number(r.run_id) : null,
   status: r.status,
+  issueNumber: r.issue_number != null ? Number(r.issue_number) : null,
 });
 
 export async function getSprint(id: number): Promise<SprintRow | null> {
@@ -226,8 +231,8 @@ export async function getSprintItems(id: number): Promise<SprintItemRow[]> {
 async function insertItems(sprintId: number, items: SprintItemInput[]): Promise<void> {
   for (const [i, it] of items.entries()) {
     await dbq(
-      "INSERT INTO gt_factory_sprint_items (sprint_id, idx, key, title, size, depends_on, body_md, run_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-      [sprintId, i + 1, it.key, it.title, it.size, JSON.stringify(it.dependsOn), it.bodyMd, it.runId ?? null],
+      "INSERT INTO gt_factory_sprint_items (sprint_id, idx, key, title, size, depends_on, body_md, run_id, issue_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [sprintId, i + 1, it.key, it.title, it.size, JSON.stringify(it.dependsOn), it.bodyMd, it.runId ?? null, it.issueNumber ?? null],
     );
   }
 }
@@ -423,9 +428,9 @@ async function startItem(sprint: SprintRow, it: SprintItemRow, all: SprintItemRo
   if (rootMsg) bus.publish(bus.ch.room(await currentNamespace(), sprint.channelId), { t: "message:new", msg: rootMsg });
 
   const rows = await dbq(
-    `INSERT INTO gt_factory_runs (channel_id, root_msg_id, topic, title, status, repo, requested_by, kind, task_ref, sprint_item_id)
-     VALUES (?, ?, 'general', ?, 'planning', ?, ?, 'sprint', ?, ?) RETURNING id`,
-    [sprint.channelId, rootId, it.title, sprint.repo, sprint.createdBy, it.taskRef, it.id],
+    `INSERT INTO gt_factory_runs (channel_id, root_msg_id, topic, title, status, repo, requested_by, kind, task_ref, sprint_item_id, issue_number)
+     VALUES (?, ?, 'general', ?, 'planning', ?, ?, 'sprint', ?, ?, ?) RETURNING id`,
+    [sprint.channelId, rootId, it.title, sprint.repo, sprint.createdBy, it.taskRef, it.id, it.issueNumber],
   );
   let run = (await R.getRun(Number(rows[0].id)))!;
   await dbq("UPDATE gt_factory_sprint_items SET run_id = ? WHERE id = ?", [run.id, it.id]);
@@ -458,4 +463,28 @@ export async function resolveFailedItem(sprintId: number, itemId: number, action
   );
   if (!got.length) throw new Error("ese ticket no está esperando decisión");
   await advanceSprint(sprintId);
+}
+
+/**
+ * «Dejar como issue»: abre en GitHub el issue de un ticket (con su plan) y lo guarda en el ticket.
+ * Si después se incluye y se construye, su PR lleva `Closes #N`. Idempotente.
+ */
+export async function createItemIssue(sprintId: number, itemId: number, sub: string): Promise<number> {
+  const sprint = await getSprint(sprintId);
+  if (!sprint?.repo) throw new Error("el sprint no tiene repo");
+  const it = (await getSprintItems(sprintId)).find((i) => i.id === itemId);
+  if (!it) throw new Error("no existe ese ticket");
+  if (it.issueNumber) return it.issueNumber;
+  const { allTools } = await import("../connectors/github.server");
+  const tool = allTools().find((t) => t.name === "github_create_issue");
+  if (!tool) throw new Error("GitHub no está conectado");
+  const r = (await tool.handler(sub, {
+    repo: sprint.repo,
+    title: it.title,
+    body: it.bodyMd.replace(/^# .*\n+/, "") + `\n\n---\nDel sprint #${sprint.id} de la fábrica: ${sprint.title}`,
+  })) as { number?: number; error?: string } | null;
+  const n = Number(r?.number);
+  if (!Number.isInteger(n) || n <= 0) throw new Error(r?.error ? String(r.error) : "GitHub no abrió el issue");
+  await dbq("UPDATE gt_factory_sprint_items SET issue_number = ? WHERE id = ? AND sprint_id = ?", [n, it.id, sprint.id]);
+  return n;
 }

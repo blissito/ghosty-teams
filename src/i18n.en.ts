@@ -668,6 +668,8 @@ export const en: Record<string, string> = {
   "🔑 ": "🔑 ",
   "Faltan variables": "Variables missing",
   "Sin preview": "No preview",
+  "Issue": "Issue",
+  "Dejar como issue": "Keep as issue",
   "Preview apagada": "Preview off",
   "Apagada para todo el repo": "Off for the whole repo",
   "Encender": "Turn on",

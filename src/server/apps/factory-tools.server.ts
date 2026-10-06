@@ -198,6 +198,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           plan_md: { type: "string", description: "El plan completo en markdown" },
           repo: { type: "string", description: 'Repo "dueño/repo" (si el room tiene varios)' },
           runId: { type: "number", description: "Pedido existente (si no, se toma el del hilo)" },
+          issue: { type: "number", description: "Número del issue de GitHub que resuelve el pedido (si viene de uno). La plataforma pone `Closes #N` en el PR: no lo escribas tú." },
         },
         required: ["plan_md"],
       },
@@ -253,6 +254,8 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           );
           run = (await R.getRun(Number(rows[0].id)))!;
         }
+        const issue = Number(a.issue);
+        if (Number.isInteger(issue) && issue > 0) await dbq("UPDATE gt_factory_runs SET issue_number = ? WHERE id = ?", [issue, run.id]);
         const version = run.planVersion + 1;
         const firstPlan = run.planVersion === 0;
         // El título sigue al plan vigente: antes se congelaba con la primera versión y viajaba
@@ -350,6 +353,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           branch: a.branch ? String(a.branch) : run.branch,
           head_sha: head?.sha ?? null,
         }, { actor: "build", data: { pr: url, tests: String(a.tests ?? "").slice(0, 300) } });
+        await R.ensurePrClosesIssue(run.id, sub, url);
         const plan = await R.getPlan(run.id, run.planVersion);
         await R.handoff(
           next,
@@ -659,6 +663,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
                 criteria: { type: "string", description: "Criterios de aceptación verificables (lista markdown)" },
                 files: { type: "array", items: { type: "string" }, description: "Archivos principales que toca" },
                 continues_pr: { type: "string", description: "Número o URL del PR que este ticket CONTINÚA (misma rama, sin PR nuevo)" },
+                issue: { type: "number", description: "Issue de GitHub que resuelve el ticket (si viene de uno). La plataforma pone `Closes #N` en su PR." },
               },
               required: ["key", "title", "size", "criteria"],
             },

@@ -155,3 +155,13 @@ export function viewState(
       return { column: "closed", label: run.status === "done" ? "Terminado" : "Cancelado", stale: false, whoseTurn: open ? owner : null, primary: null };
   }
 }
+
+/**
+ * El cuerpo de un PR con `Closes #n` al final, salvo que ya lo cierre (`close[sd]`, `fix(es|ed)`,
+ * `resolve[sd]` + `#n`, como los lee GitHub). Lo pone la plataforma, no el modelo.
+ */
+export function withClosingRef(body: string | null | undefined, n: number): string {
+  const b = String(body ?? "");
+  if (new RegExp(`\\b(close[sd]?|fix(e[sd])?|resolve[sd]?)\\s*:?\\s+#${n}\\b`, "i").test(b)) return b;
+  return `${b.replace(/\s+$/, "")}${b.trim() ? "\n\n" : ""}Closes #${n}`;
+}
