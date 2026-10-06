@@ -95,6 +95,8 @@ function assign(spec: RoleSpec, key: string, value: string) {
  */
 export const ROLE_DEFAULT_MODEL: Partial<Record<string, { engine: string; model: string }>> = {
   plan: { engine: "claude", model: "claude-opus-5-5" },
+  // @check es la última puerta antes del merge: mismo modelo que @plan (decisión de bliss, 5-oct).
+  check: { engine: "claude", model: "claude-opus-5-5" },
 };
 
 export const MODEL_ALIASES: Record<string, Record<string, string>> = {
