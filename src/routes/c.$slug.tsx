@@ -129,7 +129,7 @@ import {
   expelMemberFn,
   stopTurnFn,
 } from "../server/chat";
-import { SmilePlus, Pencil, ArrowLeft, RotateCcw, Send, Bold, Italic, Strikethrough, List, ListOrdered, Quote, Code, Type, Reply, Square, Mic } from "lucide-react";
+import { CheckCheck, SmilePlus, Pencil, ArrowLeft, RotateCcw, Send, Bold, Italic, Strikethrough, List, ListOrdered, Quote, Code, Type, Reply, Square, Mic } from "lucide-react";
 import { useVoiceRecorder, canRecord } from "../lib/voice-recorder";
 import { getDeferredPrompt, onInstallable, clearDeferredPrompt, type BeforeInstallPromptEvent } from "../utils/pwa-install";
 import { useRtSubscribe } from "../utils/rt-bus";
@@ -1199,6 +1199,15 @@ function ChannelPage() {
     listMutesFn()
       .then((rows) => setMutes(new Set(rows.map((m) => `${m.scope}:${m.scope_id}`))))
       .catch(() => {});
+  // «Marcar como leído» sin abrir el room (rooms ruidosos como el del tablero de ventas).
+  const markRoomRead = (id: number) => {
+    setUnreadRooms((m) => {
+      const n = new Map(m);
+      n.delete(id);
+      return n;
+    });
+    markReadFn({ data: { scope: "room", scopeId: id } }).catch(() => {});
+  };
   const toggleMute = (scope: "room" | "dm", id: number) => {
     const key = `${scope}:${id}`;
     // Optimista (el badge del scope silenciado desaparece al instante).
@@ -2895,6 +2904,7 @@ function ChannelPage() {
         unreadDms={unreadDms}
         mutes={mutes}
         onToggleMute={toggleMute}
+        onMarkRoomRead={markRoomRead}
         activeView={view}
         onOpenView={openView}
         homeActive={homeOpen}
@@ -3831,6 +3841,7 @@ function Sidebar({
   unreadDms,
   mutes,
   onToggleMute,
+  onMarkRoomRead,
   activeView,
   onOpenView,
   homeActive,
@@ -3856,6 +3867,7 @@ function Sidebar({
   unreadDms: Map<number, number>;
   mutes: Set<string>;
   onToggleMute: (scope: "room" | "dm", id: number) => void;
+  onMarkRoomRead: (id: number) => void;
   activeView: null | "recent" | "mentions" | "starred";
   onOpenView: (v: "recent" | "mentions" | "starred") => void;
   homeActive: boolean;
@@ -4338,6 +4350,16 @@ function Sidebar({
                   {c.is_private ? <Lock size={13} className="text-muted" /> : null}
                 </span>
               </Link>
+              {!muted && (unreadRooms.get(c.id) ?? 0) > 0 ? (
+                <button
+                  onClick={() => onMarkRoomRead(c.id)}
+                  title={t("Marcar como leído")}
+                  aria-label={t("Marcar como leído")}
+                  className="p-1 text-muted opacity-100 transition hover:text-ink md:opacity-0 md:group-hover:opacity-100"
+                >
+                  <CheckCheck size={14} />
+                </button>
+              ) : null}
               <button
                 onClick={() => togglePinRoom(c.id)}
                 title={isPinned ? t("Quitar de fijados") : t("Fijar arriba")}

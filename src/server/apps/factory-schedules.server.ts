@@ -16,7 +16,7 @@ const TICK_MS = 30_000;
 
 const ENCARGO: Record<ScheduleKind, string> = {
   nightly:
-    "Revisión nocturna de la Software Factory. Mira lo que pasó hoy en el repo de este room: PRs mezclados, " +
+    "Revisión nocturna de la Software Factory. Mira lo que pasó hoy en el repo de este room: PRs con merge, " +
     "CI en rojo (github_workflow_runs), alertas de Sentry o del webhook de monitoreo en este canal, issues nuevos. " +
     "Si hay algo que atender, resúmelo en máximo 5 renglones. Si hay un arreglo claro y chico, propón UN plan con " +
     "factory_plan_submit (queda esperando firma: no construyas). Si no hay nada que atender, contesta exactamente: OK",

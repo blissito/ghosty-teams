@@ -13,6 +13,6 @@ describe("aviso de PR en el room", () => {
     }
   });
   it("dice quién mezcló", () => {
-    expect(prMessageBody({ ...ev, action: "merged" })).toContain("🟣 **PR #12 mezclado** por @oswaldo");
+    expect(prMessageBody({ ...ev, action: "merged" })).toContain("🟣 **PR #12 con merge** por @oswaldo");
   });
 });

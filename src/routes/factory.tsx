@@ -49,7 +49,7 @@ export const Route = createFileRoute("/factory")({
 /** Columnas del tablero, en orden: lo que espera a una persona arriba. Ver `viewState`. */
 const COLUMNS = [
   { key: "waiting", label: "Espera a una persona" },
-  { key: "ready", label: "Listo para mezclar" },
+  { key: "ready", label: "Listo para merge" },
   { key: "planning", label: "Planeando" },
   { key: "building", label: "Construyendo" },
   { key: "checking", label: "En revisión" },
@@ -176,7 +176,7 @@ function EvalButton({ runId, agents, roleAgentIds, onStarted }: { runId: number;
 const HINT: Record<string, string> = {
   "Se concretan": "Merged entre los pedidos ya cerrados (merged + cancelados).",
   "Correcciones de @check": "Cuántas veces, en promedio, @check le regresó el PR a @build para corregir algo antes de aprobarlo.",
-  "Pasan a la primera": "De los PRs que ya revisó una persona, cuántos aprobó sin pedir cambios (o mezcló directo). Es la métrica que importa: un PR que regresa cuesta más que uno que tarda.",
+  "Pasan a la primera": "De los PRs que ya revisó una persona, cuántos aprobó sin pedir cambios (o hizo merge directo). Es la métrica que importa: un PR que regresa cuesta más que uno que tarda.",
   "Tiempo de revisión": "Mediana desde que @check deja el PR listo hasta la primera revisión humana (o el merge).",
   "Del pedido al PR": "Mediana del tiempo desde que se pide hasta que @check deja el PR listo para tu revisión.",
 };
@@ -520,7 +520,7 @@ function FactoryPage() {
                 <RoomSwitcher rooms={data.rooms} current={currentRoom} onPick={(id) => void navigate({ search: { room: id, repo: undefined } })} />
               </>
             ) : (
-              t("@plan planea, @build construye, @check revisa. Tú firmas y mezclas.")
+              t("@plan planea, @build construye, @check revisa. Tú firmas y haces merge.")
             )}{" "}
             <AskAgentHint roomSlug={data?.room?.slug ?? null} handle="plan" question={t("¿cómo funciona la Fábrica Agéntica y cómo te pido algo?")} label={t("¿Cómo funciona?")} />
           </p>
@@ -681,7 +681,7 @@ function FactoryPage() {
           {data.evals.length > 0 && (
             <section className="mt-8">
               <h2 className="text-sm font-semibold text-ink">{t("Evals")}</h2>
-              <p className="mt-0.5 text-[11px] text-muted">{t("Se vuelve a correr un rol de un pedido mezclado; el juez califica del 1 al 5 contra lo que se hizo de verdad. Costo y tiempo: la mediana del rol evaluado.")}</p>
+              <p className="mt-0.5 text-[11px] text-muted">{t("Se vuelve a correr un rol de un pedido con merge; el juez califica del 1 al 5 contra lo que se hizo de verdad. Costo y tiempo: la mediana del rol evaluado.")}</p>
               <div className="mt-2 overflow-x-auto rounded-xl border border-border">
                 <table className="w-full text-left text-xs">
                   <thead className="bg-surface-2 text-muted">

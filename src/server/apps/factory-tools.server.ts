@@ -341,7 +341,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         }
         // Con choques contra la principal @check lo iba a regresar igual: se ahorra la vuelta.
         if ((await R.prConflicted(sub, url)) === true) {
-          return { ok: false, error: `el PR sigue con choques contra la rama principal. ${R.MERGE_FROM_HINT} Luego vuelve a cerrar.` };
+          return { ok: false, error: `el PR sigue con conflictos contra la rama principal. ${R.MERGE_FROM_HINT} Luego vuelve a cerrar.` };
         }
         // Un PR que toca `.github/` (CI, CODEOWNERS) sólo se espera en el pedido de CI: en
         // cualquier otro, es justo la vía clásica para que un agente se salte los controles.
@@ -554,7 +554,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           `@check regresó el PR ${run.prUrl ?? ""} (vuelta ${next.loops} de 3${counted ? "" : "; ésta no contó porque el PR no cambió desde la revisión anterior"}). ` +
             `Corrige en la MISMA rama, EMPUJA los commits y cierra otra vez con factory_build_done (runId ${run.id}).\n\n## Hallazgos\n${findings}` +
             (run.prUrl && (await R.prConflicted(next.approvedBy ?? next.requestedBy, run.prUrl)) === true
-              ? `\n\n## El PR tiene choques con la rama principal\n${R.MERGE_FROM_HINT}`
+              ? `\n\n## El PR tiene conflictos con la rama principal\n${R.MERGE_FROM_HINT}`
               : "") +
             (await R.takeNotes(run.id)),
           await origin(),
@@ -604,7 +604,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
     {
       name: "factory_close",
       description:
-        "Cierra el pedido de este hilo cuando una PERSONA lo pide o el PR ya se mezcló: outcome=merged (terminada) " +
+        "Cierra el pedido de este hilo cuando una PERSONA lo pide o el PR ya tiene merge: outcome=merged (terminada) " +
         "o cancelled (se abandona). Mueve la tarea a Done y libera el hilo para un pedido nuevo. Nunca la cierres por tu cuenta.",
       inputSchema: {
         type: "object",
@@ -856,7 +856,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
       name: "factory_preview",
       description:
         "La preview del PR del pedido: state ready|pending|failed|none, su URL y, si falló, por qué. " +
-        "Si el hosting del repo no las publica, la plataforma la construye en una caja propia. Úsala para probar el cambio como lo verá la persona antes de mezclar.",
+        "Si el hosting del repo no las publica, la plataforma la construye en una caja propia. Úsala para probar el cambio como lo verá la persona antes del merge.",
       inputSchema: { type: "object", properties: { runId: { type: "number" } } },
       handler: async (sub, a) => {
         const run = await runOf(dest, a.runId);

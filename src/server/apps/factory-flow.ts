@@ -148,7 +148,7 @@ export function viewState(
     case "checking":
       return { column: stale ? "waiting" : "checking", label: stale ? "Sin avanzar" : "En revisión", stale, whoseTurn: stale ? owner : { kind: "agent", handle: "check" }, primary: stale ? "resume" : "stop" };
     case "pr_review":
-      return { column: "ready", label: "Listo para mezclar", stale: false, whoseTurn: reviewer, primary: "merge" };
+      return { column: "ready", label: "Listo para merge", stale: false, whoseTurn: reviewer, primary: "merge" };
     case "escalated":
       return { column: "waiting", label: "Necesita tu decisión", stale: false, whoseTurn: owner, primary: "decide" };
     default:

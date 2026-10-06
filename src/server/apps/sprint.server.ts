@@ -517,7 +517,7 @@ export function ticketLine(st: ItemStatus, it: { idx: number; title: string }, n
   const head = `ticket ${it.idx} de ${n}`;
   const pedido = link ? ` · [ver pedido](${link})` : "";
   if (st === "pr") return `🔎 **Listo para revisar, ${head}:** ${it.title}${prUrl ? ` · [PR](${prUrl})` : ""}${pedido}`;
-  if (st === "merged") return `✅ **Mezclado, ${head}:** ${it.title}${pedido}`;
+  if (st === "merged") return `✅ **Merge hecho, ${head}:** ${it.title}${pedido}`;
   if (st === "failed") return `⚠️ **Se canceló el ${head}:** ${it.title}. Decide en la tarjeta: «Reintentar» o «Quitar del sprint».${pedido}`;
   return null;
 }

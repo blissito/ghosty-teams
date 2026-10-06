@@ -1352,14 +1352,14 @@ const ALL_TOOLS: ConnectorTool[] = [
     name: "github_push_files",
     description:
       "Varios archivos (crear, reemplazar o BORRAR) en UN solo commit sobre una rama de trabajo (nunca la principal). Prefiérela a github_write_file cuando el cambio toca más de un archivo: un commit por archivo deja la rama rota a medias. " +
-      "Con `mergeFrom` (p. ej. \"main\") el commit es un MERGE de esa rama en la tuya: así se resuelve un PR con choques. Lo que cambió allá y tú no tocaste entra solo; en `files` va el contenido FINAL de los archivos que chocan (si falta uno, te dice cuáles).",
+      "Con `mergeFrom` (p. ej. \"main\") el commit es un MERGE de esa rama en la tuya: así se resuelve un PR con conflictos. Lo que cambió allá y tú no tocaste entra solo; en `files` va el contenido FINAL de los archivos que chocan (si falta uno, te dice cuáles).",
     inputSchema: {
       type: "object",
       properties: {
         ...repoProp,
         branch: str("Rama de trabajo."),
         message: str("Mensaje del commit."),
-        mergeFrom: str("Opcional: rama (o commit) a fusionar en la tuya con este commit, para resolver choques. Normalmente la principal."),
+        mergeFrom: str("Opcional: rama (o commit) a fusionar en la tuya con este commit, para resolver conflictos. Normalmente la principal."),
         files: {
           type: "array",
           description: "Cambios. `content` para crear/reemplazar; `delete: true` para borrar.",
@@ -1443,7 +1443,7 @@ const ALL_TOOLS: ConnectorTool[] = [
         if (pendientes.length)
           return {
             error:
-              `Choques sin resolver: ${pendientes.join(", ")} cambiaron en ${fromRef} y en tu rama. Lee las dos versiones ` +
+              `Conflictos sin resolver: ${pendientes.join(", ")} cambiaron en ${fromRef} y en tu rama. Lee las dos versiones ` +
               `(github_read_file con ref) y manda en \`files\` el contenido final de cada uno (o \`delete: true\` si en tu rama ya no existe y su cambio se movió a otro archivo).`,
           };
         parents.push(fromSha);

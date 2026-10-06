@@ -27,7 +27,7 @@ const CRITERIA: Record<ReadinessKey, { label: string; detail: string }> = {
   codeowners: { label: "Una persona revisa los cambios al CI", detail: "CODEOWNERS que cubre .github/. OpenSSF Scorecard: Code-Review." },
   dependabot: { label: "Dependencias al día", detail: "dependabot.yml (o Renovate). OpenSSF Scorecard: Dependency-Update-Tool." },
   protected: { label: "Nada entra a main sin tu aprobación", detail: "Regla en la rama principal: PR, aprobación de una persona y CI en verde. OpenSSF Scorecard: Branch-Protection." },
-  preview: { label: "Cada cambio se ve antes de mezclar", detail: "Una preview por PR: la de tu hosting si la publica (Vercel, Netlify…) o una que la fábrica levanta en su propia caja. @check prueba ahí." },
+  preview: { label: "Cada cambio se ve antes del merge", detail: "Una preview por PR: la de tu hosting si la publica (Vercel, Netlify…) o una que la fábrica levanta en su propia caja. @check prueba ahí." },
 };
 
 export function RepoReadiness({ channelId, repo, compact = false, onLevel, autoOpenEnv = false }: {
@@ -333,7 +333,7 @@ export function RepoReadiness({ channelId, repo, compact = false, onLevel, autoO
         ) : fixable > 0 ? (
           <p className="text-xs text-muted">{t("Se prepara desde el room de la Software Factory.")}</p>
         ) : !protectedOk && r.facts.protectionPlanRequired ? (
-          <p className="text-xs text-muted">{t("Límite de GitHub, no de Ghosty: proteger la rama de un repo privado pide GitHub Pro o Team. Mientras, la fábrica nunca mezcla sin tu aprobación.")}</p>
+          <p className="text-xs text-muted">{t("Límite de GitHub, no de Ghosty: proteger la rama de un repo privado pide GitHub Pro o Team. Mientras, la fábrica nunca hace merge sin tu aprobación.")}</p>
         ) : !protectedOk ? (
           <p className="text-xs text-muted">{t("Sólo falta proteger la rama principal.")}</p>
         ) : null}

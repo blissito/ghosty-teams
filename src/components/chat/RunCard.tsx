@@ -248,7 +248,7 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
         )}
         {st.ci?.state === "none" && !st.ci.repoHasCi && (
           <p className="mt-2 flex flex-wrap items-center gap-2 text-xs font-semibold text-amber-700 dark:text-amber-300" role="status">
-            {t("Sin CI: nadie corrió las pruebas fuera de la caja de los agentes. Prepara el repo antes de mezclar.")}
+            {t("Sin CI: nadie corrió las pruebas fuera de la caja de los agentes. Prepara el repo antes del merge.")}
             {prepUrl ? (
               <a href={prepUrl} className="rounded-full border border-amber-600 px-3 py-1 text-xs font-bold hover:bg-amber-600/10">
                 {t("Ver preparación")} →

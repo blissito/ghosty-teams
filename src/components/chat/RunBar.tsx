@@ -84,7 +84,7 @@ export function RunBar({ channelId, threadId }: { channelId: number; threadId: n
     v.primary === "sign" && st.canSign
       ? { label: `${t("Firmar plan")} v${st.planVersion}`, run: () => factoryDecisionFn({ data: { runId: st.runId, version: st.planVersion, decision: "approve" } }) }
       : v.primary === "merge"
-        ? { label: t("Mezclar"), run: () => factoryMergeFn({ data: { runId: st.runId } }) }
+        ? { label: t("Merge"), run: () => factoryMergeFn({ data: { runId: st.runId } }) }
         : v.primary === "resume"
           ? { label: t("Retomar"), run: () => factoryRunActionFn({ data: { runId: st.runId, action: "resume" } }) }
           : v.primary === "stop" && st.liveTurnId

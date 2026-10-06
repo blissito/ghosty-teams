@@ -340,7 +340,7 @@ export function preparationPlan(r: Readiness): { title: string; planMd: string; 
     );
   if (miss("protected") && r.facts.protectionPlanRequired)
     later.push("- Proteger la rama principal: GitHub sólo lo permite en repos privados con GitHub Pro o Team (o si el repo es público).");
-  else if (miss("protected")) later.push("- Proteger la rama principal: lo activa el dueño con un clic en «Listo para agentes» cuando este PR se mezcle.");
+  else if (miss("protected")) later.push("- Proteger la rama principal: lo activa el dueño con un clic en «Listo para agentes» cuando este PR tenga merge.");
 
   const planMd = `# Preparar ${r.repo} para agentes
 

@@ -171,7 +171,7 @@ async function step(row: Row): Promise<void> {
     }),
   );
   if (fails.length) {
-    const deploy = verdict.kind === "green" ? "se desplegó" : "se mezcló";
+    const deploy = verdict.kind === "green" ? "se desplegó" : "entró con merge";
     await postThread(row, `⚠️ #${row.pr} ${deploy}, pero producción no responde bien: ${fails.join(", ")}`);
     return finish(row, "failed", `smoke: ${fails.join(", ")}`);
   }

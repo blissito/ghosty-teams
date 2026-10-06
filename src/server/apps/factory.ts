@@ -878,7 +878,7 @@ export const factoryRunCiFn = createServerFn({ method: "POST" })
     const up = await githubApi(me.sub, `/repos/${pr.repo}/pulls/${pr.number}/update-branch`, { method: "PUT", body: "{}" }).catch((e) => ({ error: String(e) }));
     if (up?.error) {
       // 422 = ya va al día: no hay commit nuevo que lo dispare.
-      throw new Error(/422|up to date|no new commits/i.test(String(up.error)) ? "el PR ya va al día con la principal: el CI corre con su siguiente commit" : `GitHub no lo puso al día (¿choques?): ${up.error}`);
+      throw new Error(/422|up to date|no new commits/i.test(String(up.error)) ? "el PR ya va al día con la principal: el CI corre con su siguiente commit" : `GitHub no lo puso al día (¿conflictos?): ${up.error}`);
     }
     await R.logEvent(run.id, "ci_requested", me.name || me.sub);
     ciCache.delete(run.prUrl!);

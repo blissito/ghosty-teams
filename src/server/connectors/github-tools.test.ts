@@ -76,7 +76,7 @@ describe("tools de GitHub para la fábrica", () => {
       repo: "acme/app", branch: "feat", message: "merge", mergeFrom: "main",
       files: [{ path: "src/app/[locale]/page.tsx", content: "con el correo nuevo" }],
     });
-    expect(sin.error).toMatch(/Choques sin resolver: src\/app\/page\.tsx/);
+    expect(sin.error).toMatch(/Conflictos sin resolver: src\/app\/page\.tsx/);
     expect(calls.some((c) => c.method !== "GET")).toBe(false);
     // Resuelto: README de la principal entra por su sha, page.tsx queda borrado, dos padres.
     fakeGithub(rutas);

@@ -74,7 +74,7 @@ describe("ticketLine (avisos del hilo del sprint)", () => {
   const it0 = { idx: 2, title: "SDK" };
   it("PR listo, mezclado y cancelado llevan sus ligas", () => {
     expect(ticketLine("pr", it0, 3, "https://github.com/o/r/pull/9", "/c/dev?thread=5")).toBe("🔎 **Listo para revisar, ticket 2 de 3:** SDK · [PR](https://github.com/o/r/pull/9) · [ver pedido](/c/dev?thread=5)");
-    expect(ticketLine("merged", it0, 3, null, "")).toBe("✅ **Mezclado, ticket 2 de 3:** SDK");
+    expect(ticketLine("merged", it0, 3, null, "")).toBe("✅ **Merge hecho, ticket 2 de 3:** SDK");
     expect(ticketLine("failed", it0, 3, null, "")).toContain("Reintentar");
   });
   it("activo o pendiente no se anuncian (el arranque lo avisa startItem)", () => {

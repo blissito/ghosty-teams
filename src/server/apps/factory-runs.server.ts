@@ -241,7 +241,7 @@ export async function notifyRunTurn(run: Run, from: RunStatus | null): Promise<v
   if (from === run.status) return;
   const copy: Partial<Record<RunStatus, string>> = {
     plan_review: "El plan está listo: falta tu firma.",
-    pr_review: "El PR está listo para que lo revises y lo mezcles.",
+    pr_review: "El PR está listo para que lo revises y le hagas merge.",
     escalated: "La fábrica necesita que decidas cómo seguir.",
     done: "Terminó.",
   };
@@ -844,14 +844,14 @@ export function mergedMessage(run: Run): string {
 }
 
 /**
- * Cómo se resuelve un PR con choques. Va en todo encargo a @build que lo necesite: el de
+ * Cómo se resuelve un PR con conflictos. Va en todo encargo a @build que lo necesite: el de
  * `onPrConflict` y el regreso de @check. Sin él, @build copiaba los archivos de la principal
  * encima SIN commit de merge y GitHub seguía marcando choques (PR #8 de palmera-legal, 3-oct).
  */
 export const MERGE_FROM_HINT =
   "Fusiona la rama principal en la tuya con github_push_files y `mergeFrom` = la rama principal: es un commit de MERGE de verdad (dos padres). " +
   "Lo que cambió allá y tú no tocaste entra solo, y en `files` va el contenido final de los archivos que chocan (resuélvelos SIN cambiar el alcance del plan). " +
-  "Copiar los archivos de la principal sin `mergeFrom` NO quita los choques: GitHub mira la historia, no el contenido.";
+  "Copiar los archivos de la principal sin `mergeFrom` NO quita los conflictos: GitHub mira la historia, no el contenido.";
 
 /** ¿GitHub marca el PR con choques contra su base? `null` si no se sabe (aún lo calcula). */
 export async function prConflicted(sub: string, url: string): Promise<boolean | null> {
@@ -983,7 +983,7 @@ async function onPrConflict(run: Run, headSha: string | null): Promise<void> {
     const ya = await dbq("SELECT 1 FROM gt_factory_events WHERE run_id = ? AND type = 'conflict_help' AND json_extract(data_json, '$.sha') IS ?", [run.id, headSha]).catch(() => []);
     if (ya.length) return;
     await logEvent(run.id, "conflict_help", null, { sha: headSha, por });
-    await postInThread(run, "build", `⚠️ El PR ${run.prUrl ?? ""} sigue con choques con la rama principal (${por}). Necesita que una persona lo resuelva o pida a @build que lo intente otra vez.`);
+    await postInThread(run, "build", `⚠️ El PR ${run.prUrl ?? ""} sigue con conflictos con la rama principal (${por}). Necesita que una persona lo resuelva o pida a @build que lo intente otra vez.`);
   };
   if (prevs.length >= 2) return pideAyuda("ya lo intenté dos veces");
   // El tick no tiene request: el origin sale del último encargo de este pedido.
@@ -994,13 +994,13 @@ async function onPrConflict(run: Run, headSha: string | null): Promise<void> {
   await dbq("UPDATE gt_factory_runs SET merge_asked = NULL WHERE id = ?", [run.id]).catch(() => {});
   const next = await applyEvent(run, "conflict", {}, { data: { sha: headSha } }).catch(() => null);
   if (!next) return;
-  await postInThread(next, "build", `🔀 Otro PR entró antes y éste ya no mezcla limpio con la rama principal. Lo pongo al día. ${run.prUrl ?? ""}`);
+  await postInThread(next, "build", `🔀 Otro PR entró antes y éste ya tiene conflictos con la rama principal. Lo pongo al día. ${run.prUrl ?? ""}`);
   await handoff(
     next,
     "build",
     run.approvedBy ?? run.requestedBy,
-    "PR con choques",
-    `El PR ${run.prUrl} tiene choques con la rama principal (otro PR se mezcló antes). ${MERGE_FROM_HINT} Corre las pruebas y cierra con factory_build_done.`,
+    "PR con conflictos",
+    `El PR ${run.prUrl} tiene conflictos con la rama principal (otro PR entró antes con merge). ${MERGE_FROM_HINT} Corre las pruebas y cierra con factory_build_done.`,
     origin,
   );
 }
@@ -1090,7 +1090,7 @@ export async function onPrEvent(run: Run, outcome: "merged" | "closed", role: "c
     return done;
   }
   const gone = await applyEvent(run, "cancel").catch(() => null);
-  if (gone) await postInThread(gone, role, `⏹️ El PR se cerró sin mezclar: pedido cancelado. ${run.prUrl}`);
+  if (gone) await postInThread(gone, role, `⏹️ El PR se cerró sin merge: pedido cancelado. ${run.prUrl}`);
   return gone;
 }
 
@@ -1306,7 +1306,7 @@ export async function maybeMergeReply(opts: { channelId: number; rootId: number;
     const asked = await dbq("SELECT merge_asked FROM gt_factory_runs WHERE id = ?", [run.id]);
     if (!asked[0]?.merge_asked) return false;
     const r = await mergeRun(run, opts.sub);
-    if (!r.ok) await postInThread(run, "build", `⚠️ No pude mezclarlo: ${r.error}. ${run.prUrl}`);
+    if (!r.ok) await postInThread(run, "build", `⚠️ No pude hacer el merge: ${r.error}. ${run.prUrl}`);
     return true;
   } catch (e) {
     console.error("[factory] mezclar desde el hilo", e);
@@ -1339,12 +1339,12 @@ export async function mergeRun(run: Run, sub: string): Promise<{ ok: true } | { 
         // pedido se quedaba en PR (MailMask #17, 5-oct); ahora va a @build como cualquier choque.
         if (up?.error && /conflict/i.test(String(up.error))) {
           await onPrConflict(run, head);
-          return { ok: false, error: `El PR tiene choques con ${base}: se lo regresé a Build para resolverlos; el merge se vuelve a ofrecer al terminar.` };
+          return { ok: false, error: `El PR tiene conflictos con ${base}: se lo regresé a Build para resolverlos; el merge se vuelve a ofrecer al terminar.` };
         }
         return {
           ok: false,
           error: up?.error
-            ? `El PR va ${cmp.behind_by} commit(s) atrás de ${base} y no lo pude poner al día (¿choques?): ${up.error}`
+            ? `El PR va ${cmp.behind_by} commit(s) atrás de ${base} y no lo pude poner al día (¿conflictos?): ${up.error}`
             : `El PR iba ${cmp.behind_by} commit(s) atrás de ${base}: lo puse al día y vuelvo a ofrecer el merge cuando su CI pase.`,
         };
       }
@@ -1353,7 +1353,7 @@ export async function mergeRun(run: Run, sub: string): Promise<{ ok: true } | { 
     // el chip de la tarjeta era la única señal y «Merge» entraba igual (MailMask #8, 4-oct).
     const ci = await prCi(sub, run.prUrl!);
     if (ci?.state === "failure")
-      return { ok: false, error: `El CI del PR está en rojo (${ci.failed.join(", ") || "ver checks"}): pídele el arreglo a @build antes de mezclar.` };
+      return { ok: false, error: `El CI del PR está en rojo (${ci.failed.join(", ") || "ver checks"}): pídele el arreglo a @build antes del merge.` };
     if (ci?.state === "pending") return { ok: false, error: "El CI del PR sigue corriendo: espera a que termine." };
     const tool = allTools().find((t) => t.name === "github_merge_pr");
     const r = (await tool?.handler(sub, { repo: pr.repo, number: pr.number })) as any;

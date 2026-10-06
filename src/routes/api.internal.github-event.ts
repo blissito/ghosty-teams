@@ -45,8 +45,8 @@ const LINE: Record<PrEvent["action"], (ev: PrEvent) => string> = {
   opened: (ev) => `🟢 **PR #${ev.number} abierto**${ev.author ? ` por @${ev.author}` : ""}`,
   ready_for_review: (ev) => `🟢 **PR #${ev.number} listo para revisión**${ev.by ? ` (@${ev.by})` : ""}`,
   reopened: (ev) => `🔄 **PR #${ev.number} reabierto**${ev.by ? ` por @${ev.by}` : ""}`,
-  merged: (ev) => `🟣 **PR #${ev.number} mezclado**${ev.by ? ` por @${ev.by}` : ""}`,
-  closed: (ev) => `⚪ **PR #${ev.number} cerrado sin mezclar**${ev.by ? ` por @${ev.by}` : ""}`,
+  merged: (ev) => `🟣 **PR #${ev.number} con merge**${ev.by ? ` por @${ev.by}` : ""}`,
+  closed: (ev) => `⚪ **PR #${ev.number} cerrado sin merge**${ev.by ? ` por @${ev.by}` : ""}`,
   // Una review no se anuncia en los rooms (se sale antes de avisar); sólo se mide.
   review: () => "",
   comment: () => "",

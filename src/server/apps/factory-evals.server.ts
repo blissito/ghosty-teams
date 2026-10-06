@@ -98,7 +98,7 @@ export async function startEval(opts: {
 }): Promise<{ runId: number } | { error: string }> {
   const R = await import("./factory-runs.server");
   const src = await R.getRun(opts.sourceRunId);
-  if (!src || src.status !== "done" || !src.prUrl || !src.repo) return { error: "sólo se evalúan pedidos mezclados, con su PR" };
+  if (!src || src.status !== "done" || !src.prUrl || !src.repo) return { error: "sólo se evalúan pedidos con merge, con su PR" };
   if (!opts.agent && !opts.model) return { error: `elige el agente o el modelo que quieres probar en @${opts.role}` };
   const pr = R.parsePrUrl(src.prUrl);
   if (!pr) return { error: "el PR del pedido no es de GitHub" };
@@ -203,7 +203,7 @@ export async function startEval(opts: {
       opts.sub,
       "eval",
       `🧪 Esto es un EVAL: revisa el PR ${src.prUrl} contra el plan firmado como si fuera un pedido real. ` +
-        `El PR ya se mezcló: NO comentes en GitHub ni edites nada. Lee el diff con github_pr_files; puedes correr pruebas en tu caja. ` +
+        `El PR ya tiene merge: NO comentes en GitHub ni edites nada. Lee el diff con github_pr_files; puedes correr pruebas en tu caja. ` +
         `Cierra con factory_check_verdict (runId ${run.id}): pass y hallazgos concretos (archivo:línea).\n\n## Plan firmado\n${plan.planMd}`,
       origin,
     );
@@ -268,10 +268,10 @@ export async function evalBuildDone(run: Run, meta: EvalMeta, sub: string, tests
     judgeHead(
       meta,
       `Dos implementaciones del MISMO plan firmado, desde el mismo commit base: la A la escribió ${configLabel(meta.config)} (rama \`${branch}\`); ` +
-        `la B es la que se mezcló de verdad (${meta.originalPr}). Puedes leer archivos completos con github_read_file (ref ${branch}). ` +
+        `la B es la que entró de verdad con merge (${meta.originalPr}). Puedes leer archivos completos con github_read_file (ref ${branch}). ` +
         `Resultado que reporta quien construyó: ${tests.slice(0, 400)}`,
     ) +
-      `## Plan firmado\n${plan?.planMd ?? "(sin plan)"}\n\n## A · ${configLabel(meta.config)}\n${diff}\n\n## B · el PR mezclado\n${origDiff ?? "(no pude leer su diff)"}\n\n` +
+      `## Plan firmado\n${plan?.planMd ?? "(sin plan)"}\n\n## A · ${configLabel(meta.config)}\n${diff}\n\n## B · el PR con merge\n${origDiff ?? "(no pude leer su diff)"}\n\n` +
       `Cierra con factory_eval_score (runId ${run.id}).`,
     origin,
   );
@@ -317,7 +317,7 @@ export async function evalCheckDone(run: Run, meta: EvalMeta, sub: string, pass:
   } catch {
     origFindings = "";
   }
-  const human = orig[0]?.first_review_state ? String(orig[0].first_review_state) : "sin review (se mezcló directo)";
+  const human = orig[0]?.first_review_state ? String(orig[0].first_review_state) : "sin review (merge directo)";
   await R.handoff(
     run,
     judge,
@@ -327,7 +327,7 @@ export async function evalCheckDone(run: Run, meta: EvalMeta, sub: string, pass:
       meta,
       `Dos revisiones del MISMO PR (${meta.originalPr}) contra el mismo plan: la A la hizo ${configLabel(meta.config)}; la B es la del @check original. ` +
         `Lo que pasó de verdad: @check le regresó el PR a @build ${orig[0]?.loops ?? src?.loops ?? 0} vez/veces antes de aprobarlo, ` +
-        `la primera revisión humana fue «${human}» y el PR se mezcló.`,
+        `la primera revisión humana fue «${human}» y el PR tuvo merge.`,
     ) +
       `## El PR\n${diff ?? "(no pude leer su diff)"}\n\n## A · ${configLabel(meta.config)}\n${output}\n\n## B · el @check original (al aprobar)\n${origFindings || "(sin hallazgos guardados)"}\n\n` +
       `Cierra con factory_eval_score (runId ${run.id}).`,
