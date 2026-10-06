@@ -62,6 +62,7 @@ import { Route as ApiFormTokenRouteImport } from './routes/api.form.$token'
 import { Route as ApiFormUploadTokenRouteImport } from './routes/api.form-upload.$token'
 import { Route as ApiFormFileIdRouteImport } from './routes/api.form-file.$id'
 import { Route as ApiFormDraftTokenRouteImport } from './routes/api.form-draft.$token'
+import { Route as ApiFactoryAvatarFileRouteImport } from './routes/api.factory-avatar.$file'
 import { Route as ApiDocXlsxIdRouteImport } from './routes/api.doc-xlsx.$id'
 import { Route as ApiDocTtsIdRouteImport } from './routes/api.doc-tts.$id'
 import { Route as ApiDocPdfIdRouteImport } from './routes/api.doc-pdf.$id'
@@ -351,6 +352,11 @@ const ApiFormDraftTokenRoute = ApiFormDraftTokenRouteImport.update({
   path: '/api/form-draft/$token',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiFactoryAvatarFileRoute = ApiFactoryAvatarFileRouteImport.update({
+  id: '/api/factory-avatar/$file',
+  path: '/api/factory-avatar/$file',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiDocXlsxIdRoute = ApiDocXlsxIdRouteImport.update({
   id: '/api/doc-xlsx/$id',
   path: '/api/doc-xlsx/$id',
@@ -503,6 +509,7 @@ export interface FileRoutesByFullPath {
   '/api/doc-pdf/$id': typeof ApiDocPdfIdRoute
   '/api/doc-tts/$id': typeof ApiDocTtsIdRoute
   '/api/doc-xlsx/$id': typeof ApiDocXlsxIdRoute
+  '/api/factory-avatar/$file': typeof ApiFactoryAvatarFileRoute
   '/api/form-draft/$token': typeof ApiFormDraftTokenRoute
   '/api/form-file/$id': typeof ApiFormFileIdRoute
   '/api/form-upload/$token': typeof ApiFormUploadTokenRoute
@@ -578,6 +585,7 @@ export interface FileRoutesByTo {
   '/api/doc-pdf/$id': typeof ApiDocPdfIdRoute
   '/api/doc-tts/$id': typeof ApiDocTtsIdRoute
   '/api/doc-xlsx/$id': typeof ApiDocXlsxIdRoute
+  '/api/factory-avatar/$file': typeof ApiFactoryAvatarFileRoute
   '/api/form-draft/$token': typeof ApiFormDraftTokenRoute
   '/api/form-file/$id': typeof ApiFormFileIdRoute
   '/api/form-upload/$token': typeof ApiFormUploadTokenRoute
@@ -655,6 +663,7 @@ export interface FileRoutesById {
   '/api/doc-pdf/$id': typeof ApiDocPdfIdRoute
   '/api/doc-tts/$id': typeof ApiDocTtsIdRoute
   '/api/doc-xlsx/$id': typeof ApiDocXlsxIdRoute
+  '/api/factory-avatar/$file': typeof ApiFactoryAvatarFileRoute
   '/api/form-draft/$token': typeof ApiFormDraftTokenRoute
   '/api/form-file/$id': typeof ApiFormFileIdRoute
   '/api/form-upload/$token': typeof ApiFormUploadTokenRoute
@@ -733,6 +742,7 @@ export interface FileRouteTypes {
     | '/api/doc-pdf/$id'
     | '/api/doc-tts/$id'
     | '/api/doc-xlsx/$id'
+    | '/api/factory-avatar/$file'
     | '/api/form-draft/$token'
     | '/api/form-file/$id'
     | '/api/form-upload/$token'
@@ -808,6 +818,7 @@ export interface FileRouteTypes {
     | '/api/doc-pdf/$id'
     | '/api/doc-tts/$id'
     | '/api/doc-xlsx/$id'
+    | '/api/factory-avatar/$file'
     | '/api/form-draft/$token'
     | '/api/form-file/$id'
     | '/api/form-upload/$token'
@@ -884,6 +895,7 @@ export interface FileRouteTypes {
     | '/api/doc-pdf/$id'
     | '/api/doc-tts/$id'
     | '/api/doc-xlsx/$id'
+    | '/api/factory-avatar/$file'
     | '/api/form-draft/$token'
     | '/api/form-file/$id'
     | '/api/form-upload/$token'
@@ -960,6 +972,7 @@ export interface RootRouteChildren {
   ApiDocPdfIdRoute: typeof ApiDocPdfIdRoute
   ApiDocTtsIdRoute: typeof ApiDocTtsIdRoute
   ApiDocXlsxIdRoute: typeof ApiDocXlsxIdRoute
+  ApiFactoryAvatarFileRoute: typeof ApiFactoryAvatarFileRoute
   ApiFormDraftTokenRoute: typeof ApiFormDraftTokenRoute
   ApiFormFileIdRoute: typeof ApiFormFileIdRoute
   ApiFormUploadTokenRoute: typeof ApiFormUploadTokenRoute
@@ -1362,6 +1375,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiFormDraftTokenRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/factory-avatar/$file': {
+      id: '/api/factory-avatar/$file'
+      path: '/api/factory-avatar/$file'
+      fullPath: '/api/factory-avatar/$file'
+      preLoaderRoute: typeof ApiFactoryAvatarFileRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/doc-xlsx/$id': {
       id: '/api/doc-xlsx/$id'
       path: '/api/doc-xlsx/$id'
@@ -1584,6 +1604,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiDocPdfIdRoute: ApiDocPdfIdRoute,
   ApiDocTtsIdRoute: ApiDocTtsIdRoute,
   ApiDocXlsxIdRoute: ApiDocXlsxIdRoute,
+  ApiFactoryAvatarFileRoute: ApiFactoryAvatarFileRoute,
   ApiFormDraftTokenRoute: ApiFormDraftTokenRoute,
   ApiFormFileIdRoute: ApiFormFileIdRoute,
   ApiFormUploadTokenRoute: ApiFormUploadTokenRoute,
@@ -1615,3 +1636,12 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { createStart } from '@tanstack/react-start'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+  }
+}

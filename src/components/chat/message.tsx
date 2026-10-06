@@ -1,4 +1,5 @@
 import { Component, createContext, type ReactNode, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { parseFactoryAvatar } from "../../utils/factory-avatar";
 import { createPortal } from "react-dom";
 import { FileGlyph } from "../../components/FileGlyph";
 import { motion} from "motion/react";
@@ -2731,7 +2732,10 @@ export function MessageRow({
   const isGuest = !isAgent && !!m.sender_sub?.startsWith("guest:");
   const dirUser = !isAgent && m.sender_sub ? users.get(m.sender_sub) : undefined;
   const displayName = isAgent && m.sender === "ghosty" ? "Ghosty" : (dirUser?.name || m.sender);
-  const avatarSrc = dirUser?.avatar || m.avatar;
+  // Flamita de un rol de la fábrica: el color lo elige el dueño y puede cambiar después del
+  // mensaje, así que se pinta la cara viva del agente (`agent:<handle>` en el directorio).
+  const liveRoleAvatar = isAgent && m.agent_handle && parseFactoryAvatar(m.avatar) ? users.get(`agent:${m.agent_handle}`)?.avatar : undefined;
+  const avatarSrc = dirUser?.avatar || liveRoleAvatar || m.avatar;
   const time = new Date(m.created_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   // Hora compacta (24h, sin am/pm) para el gutter angosto de mensajes agrupados: "18:47"
   // cabe en w-9 (36px) en UNA línea → no wrappea a 2 líneas (lo que inflaba el alto de la

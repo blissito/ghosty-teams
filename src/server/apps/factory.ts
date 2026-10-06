@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { summarizeEvals } from "./factory-evals";
 import { sessionUser } from "../chat";
 import { FACTORY_ENGINES, FACTORY_HANDLES as HANDLES, ROLE_NAMES, roleAvatar, type FactoryHandle } from "./factory-roles";
+import { keepRoleColor, recolorRoleAvatar } from "../../utils/factory-avatar";
 
 // Instalar / desinstalar la Software Factory en ESTE espacio (Ajustes → Apps).
 //
@@ -143,7 +144,7 @@ async function assignRoles(sub: string, roles: Partial<Record<FactoryHandle, str
       await dbq(
         `UPDATE gc_agents SET fleet_id = ?, kind = 'fleet', runtime = 'gs-native', runtime_url = NULL, fleet_token = NULL,
                               enabled = 1, name = ?, avatar = ?, group_ns = 1 WHERE handle = ?`,
-        [agent.id, ROLE_NAMES[h], roleAvatar(h), h],
+        [agent.id, ROLE_NAMES[h], keepRoleColor(h, row.avatar, roleAvatar(h)), h],
       );
       owned.add(h);
     } else {
@@ -340,13 +341,35 @@ export const setFactoryJudgeFn = createServerFn({ method: "POST" })
       await dbq(
         `UPDATE gc_agents SET fleet_id = ?, kind = 'fleet', runtime = 'gs-native', runtime_url = NULL, fleet_token = NULL,
                               enabled = 1, name = ?, avatar = ?, group_ns = 1 WHERE handle = ?`,
-        [agent.id, JUDGE_NAME, roleAvatar(JUDGE_HANDLE), JUDGE_HANDLE],
+        [agent.id, JUDGE_NAME, keepRoleColor(JUDGE_HANDLE, row.avatar, roleAvatar(JUDGE_HANDLE)), JUDGE_HANDLE],
       );
     }
     const { connectTeamsChannel } = await import("../agent-config");
     await connectTeamsChannel(agent.id, "", "gs-native").catch(() => {});
     if (!owned.has(JUDGE_HANDLE)) await recordInstall("factory", user.sub, { ...cfg, ownedHandles: [...owned, JUDGE_HANDLE] });
     return { ok: true as const };
+  });
+
+/**
+ * Color de la flamita de un rol (@plan, @build, @check, @eval), desde el Perfil del agente.
+ * Se guarda en `gc_agents.avatar` (la URL lleva el color) y se avisa a todo el espacio para
+ * que mensajes, barra lateral y perfil lo repinten sin recargar.
+ */
+export const setFactoryRoleColorFn = createServerFn({ method: "POST" })
+  .validator((d: { handle: string; color: string }) => ({ handle: String(d?.handle ?? ""), color: String(d?.color ?? "").toLowerCase() }))
+  .handler(async ({ data }) => {
+    const user = await sessionUser();
+    if (!user?.isOwner) throw new Error("sólo el dueño del espacio cambia el color de un rol");
+    const db = await import("../../db.server");
+    const row = await db.getAgentByHandle(data.handle);
+    if (!row) throw new Error(`@${data.handle} no existe en este espacio`);
+    const { roleAvatar: gsAvatar } = await import("./factory-roles");
+    const avatar = recolorRoleAvatar(data.handle, row.avatar, data.color, gsAvatar(data.handle as FactoryHandle));
+    await db.updateAgent(row.id, { avatar });
+    const { currentNamespace } = await import("../tenant.server");
+    const { publish, ch } = await import("../bus.server");
+    publish(ch.presence(await currentNamespace()), { t: "agents:changed" });
+    return { ok: true as const, avatar };
   });
 
 export const uninstallFactoryFn = createServerFn({ method: "POST" }).handler(async () => {

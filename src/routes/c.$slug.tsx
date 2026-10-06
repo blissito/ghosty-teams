@@ -75,7 +75,7 @@ import {
   ExternalLink,
   Brain,
 } from "lucide-react";
-import { factoryInstalledFn } from "../server/apps/factory";
+import { factoryInstalledFn, setFactoryRoleColorFn } from "../server/apps/factory";
 import { adsInstalledFn } from "../server/apps/ads";
 import { searchMessagesFn } from "../server/search";
 import {
@@ -141,7 +141,8 @@ import { Toggle } from "../components/Toggle";
 import { RepoReadiness } from "../components/RepoReadiness";
 import { repoReadinessFn } from "../server/apps/readiness";
 import { getTheme, subscribeTheme, resolveDark, presetById, paletteVars } from "../utils/theme";
-import { subscribeMentions } from "../utils/mentions-bus";
+import { bumpMentions, subscribeMentions } from "../utils/mentions-bus";
+import { FACTORY_AVATAR_PALETTE, parseFactoryAvatar } from "../utils/factory-avatar";
 import { subscribeEmojis } from "../utils/emojis-bus";
 import { subscribeUsers, bumpUsers } from "../utils/users-bus";
 import { clearMeCache } from "../server/auth";
@@ -2055,6 +2056,12 @@ function ChannelPage() {
       case "refresh":
         // Churn de agente/status (room o DM) → refetch del contexto activo (rev).
         if (ev.channelId === channel.id || ev.dmId != null) revalidate();
+        break;
+      case "agents:changed":
+        // Un agente cambió de cara (color de un rol de la fábrica): menciones, directorio
+        // (mensajes viejos incluidos) y barra lateral se releen.
+        bumpMentions();
+        revalidate();
         break;
       case "unread":
         // Otra pestaña/dispositivo cambió el read-state → reconcilia con el server.
@@ -4670,8 +4677,31 @@ function ProfileDrawer({
   const isSelf = !!me && !!target.sub && target.sub === me.sub;
   const isGhosty = target.handle === "ghosty";
   const name = dir?.name || target.name;
-  const avatar = dir?.avatar || target.avatar || undefined;
   const handle = dir?.handle || target.handle;
+  // Agente: su cara viva sale del directorio (`agent:<handle>`), no del mensaje en que se
+  // le dio clic — así un color recién cambiado se ve aquí aunque el mensaje sea viejo.
+  const agentDir = target.isAgent && handle ? users.get(`agent:${handle}`) : undefined;
+  const [roleAvatarEdit, setRoleAvatarEdit] = useState<string | null>(null);
+  const avatar = roleAvatarEdit || dir?.avatar || agentDir?.avatar || target.avatar || undefined;
+  // Flamita de un rol de la fábrica (@plan, @build, @check, @eval): el dueño le cambia el color.
+  const roleFlame = target.isAgent && handle ? parseFactoryAvatar(avatar) : null;
+  const canRecolor = isOwner && !!roleFlame && roleFlame.role === handle;
+  const [colorBusy, setColorBusy] = useState(false);
+  const [colorError, setColorError] = useState("");
+  async function pickRoleColor(color: string) {
+    if (!handle || colorBusy || color === roleFlame?.color) return;
+    setColorBusy(true);
+    setColorError("");
+    try {
+      const r = await setFactoryRoleColorFn({ data: { handle, color } });
+      setRoleAvatarEdit(r.avatar);
+      bumpMentions(); // esta pestaña no espera al evento: menciones + directorio al instante
+    } catch (e) {
+      setColorError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setColorBusy(false);
+    }
+  }
 
   const [editing, setEditing] = useState(false);
   const [sEmoji, setSEmoji] = useState(dir?.statusEmoji ?? "");
@@ -4793,6 +4823,29 @@ function ProfileDrawer({
             <Avatar name={name} avatar={avatar} className="h-24 w-24 !rounded-2xl text-2xl" />
           )}
           {!editing && <h2 className="mt-3 text-lg font-semibold">{name}</h2>}
+          {!editing && canRecolor && roleFlame && (
+            <div className="mt-2 flex flex-col items-center gap-1">
+              <div role="radiogroup" aria-label={t("Color del rol")} className="flex flex-wrap justify-center gap-1.5">
+                {FACTORY_AVATAR_PALETTE.map((c) => {
+                  const on = c === roleFlame.color;
+                  return (
+                    <button
+                      key={c}
+                      type="button"
+                      role="radio"
+                      aria-checked={on}
+                      disabled={colorBusy}
+                      onClick={() => void pickRoleColor(c)}
+                      title={t("Color del rol")}
+                      className={`h-6 w-6 rounded-full border border-black/15 transition hover:scale-110 disabled:opacity-60 ${on ? "ring-2 ring-ink ring-offset-2 ring-offset-surface-2" : ""}`}
+                      style={{ backgroundColor: c }}
+                    />
+                  );
+                })}
+              </div>
+              {colorError ? <p className="text-xs text-red-500">{colorError}</p> : null}
+            </div>
+          )}
           {!editing && (dir?.statusText || dir?.statusEmoji) && (
             <p className="mt-0.5 text-sm text-ink">{dir?.statusEmoji} {dir?.statusText}</p>
           )}

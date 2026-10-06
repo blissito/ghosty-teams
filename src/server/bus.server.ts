@@ -98,6 +98,9 @@ export type RtEvent =
   // usa el formulario recién creado: se pidió verlo aparecer, no tener que buscar la tarjeta.
   | { t: "artifact:open"; messageId: number }
   | { t: "refresh"; channelId: number | null; parentId: number | null; dmId?: number | null } // churn de agente/status
+  // Cambió el nombre/avatar de un agente (p. ej. el color de un rol de la fábrica): todo el
+  // espacio relee la lista de agentes. Viaja por `presence`, el canal de todo el espacio.
+  | { t: "agents:changed" }
   | { t: "unread"; scope: "room" | "dm"; scopeId: number } // hay algo nuevo en un scope no-activo → badge
   // `lastActiveAt` = última señal REAL de la persona (escribir, marcar leído, enviar),
   // no la última conexión. Con la pestaña abierta y quieta, envejece: es lo que separa

@@ -240,6 +240,7 @@ export const en: Record<string, string> = {
   "Configura tu Ghosty Teams": "Set up your Ghosty Teams",
   "Configurar": "Configure",
   "Configurar agente": "Configure agent",
+  "Color del rol": "Role color",
   "Continuar con Ghosty": "Continue with Ghosty",
   "Continuar →": "Continue →",
   "Contraer": "Collapse",
