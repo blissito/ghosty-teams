@@ -11,10 +11,14 @@
 import type { ToolDest, ToolScope } from "./connectors/tool-token.server";
 
 /**
- * TTL corto a propósito: el socket ACP es POR TURNO, así que la credencial no tiene por qué
- * sobrevivirlo. Los 15 min del default nativo son para sesiones persistentes de worker.
+ * Lo que dura la credencial: lo que puede durar el TURNO, igual que en el camino nativo. Con 5
+ * minutos un turno de la fábrica que esperaba al CI se quedaba sin tools a la mitad y no podía
+ * cerrar su paso («Tu sesión con el espacio ya no vale», mercadito-verde, 5-oct). El socket
+ * sigue siendo por turno; el token sólo vale para su conversación y su espacio.
  */
-export const ACP_TOOL_TTL_S = 300;
+export const ACP_TOOL_TTL_S = 900;
+/** Turno de un rol de la Software Factory: puede ir de horas, como en el nativo. */
+export const ACP_FACTORY_TOOL_TTL_S = 2 * 3600;
 
 export type AcpToolArgs = {
   /** Quién escribió el mensaje que disparó el turno. Sin invocador no hay a nombre de quién actuar. */
@@ -26,6 +30,8 @@ export type AcpToolArgs = {
   /** El origin de ESTE tenant: a dónde tiene que llamar la caja. */
   origin?: string | null;
   scope: ToolScope;
+  /** Turno de un rol de la fábrica (@plan, @build, @check…): credencial de 2 h. */
+  factory?: boolean;
 };
 
 /**
@@ -46,7 +52,7 @@ export async function acpToolToken(a: AcpToolArgs): Promise<string | undefined> 
   if (!a.invokerSub || a.publicChannel || !a.origin) return undefined;
   try {
     const { mintToolToken } = await import("./connectors/tool-token.server");
-    return mintToolToken(a.invokerSub, a.ns, a.dest ?? null, ACP_TOOL_TTL_S, {
+    return mintToolToken(a.invokerSub, a.ns, a.dest ?? null, a.factory ? ACP_FACTORY_TOOL_TTL_S : ACP_TOOL_TTL_S, {
       aud: `${a.origin.replace(/\/+$/, "")}/api/connectors/tools`,
       scope: a.scope,
     });

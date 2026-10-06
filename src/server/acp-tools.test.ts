@@ -60,4 +60,13 @@ describe("el token de tools de un turno ACP", () => {
   it("el scope del agente viaja tal cual: `completo` sólo si alguien lo eligió", async () => {
     expect(claims((await acpToolToken({ ...base, scope: parseScope("completo") }))!).scope).toBe("completo");
   });
+
+  it("dura lo que puede durar el turno: 15 min, y 2 h si es un rol de la fábrica", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const normal = claims((await acpToolToken(base))!).exp - now;
+    const factory = claims((await acpToolToken({ ...base, factory: true }))!).exp - now;
+    expect(normal).toBeGreaterThanOrEqual(899);
+    expect(normal).toBeLessThanOrEqual(900);
+    expect(factory).toBeGreaterThanOrEqual(2 * 3600 - 1);
+  });
 });

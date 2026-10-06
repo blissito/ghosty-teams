@@ -1770,6 +1770,12 @@ export async function callAgentBackendStream(
     // Se resuelve UNA vez: lo necesitan el tool-token (a dónde llama la caja) y el hint de
     // marca (la URL absoluta del logo — una relativa no la puede resolver render-svc).
     const turnOrigin = originOverride ?? (await reqOrigin().catch(() => null));
+    // Un rol de la fábrica en un room con repos trabaja por horas (espera CI, corrige): su
+    // credencial dura lo que el turno, como en el camino nativo (`factoryTurn`).
+    const { FACTORY_HANDLES, JUDGE_HANDLE } = await import("./server/apps/factory-roles");
+    const factoryRole = ([...FACTORY_HANDLES, JUDGE_HANDLE] as string[]).includes(agent.handle) && !!dest?.channelId
+      ? (await dbAcp.listRoomRepos(dest.channelId).catch(() => [])).length > 0
+      : false;
     const toolToken = await acpToolToken({
       invokerSub,
       publicChannel,
@@ -1777,6 +1783,7 @@ export async function callAgentBackendStream(
       dest,
       origin: turnOrigin,
       scope: agent.backend.scope,
+      factory: factoryRole,
     });
     /**
      * El servidor MCP de Teams, para el agente que NO tiene nuestro SDK.
