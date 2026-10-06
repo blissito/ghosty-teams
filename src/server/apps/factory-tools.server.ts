@@ -7,7 +7,7 @@
 import { notaNombres, type ConnectorTool, type ToolChannel } from "../connectors/impl";
 import type { ToolDest } from "../connectors/tool-token.server";
 import { isInstalled } from "./installed.server";
-import { countsLoop } from "./factory-flow";
+import { countsLoop, stageLabel } from "./factory-flow";
 
 export async function factoryTools(_sub: string, dest: ToolDest | null): Promise<ConnectorTool[]> {
   if (!(await isInstalled("factory").catch(() => false))) return [];
@@ -221,6 +221,17 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
             return { ok: true, runId: run.id, note: "Es un eval: el juez ya tiene tu plan. Tu paso terminó; no esperes firma." };
           }
         }
+        // Un plan sólo entra en planeación o en revisión del plan, y se revisa ANTES de escribir
+        // nada: desde el hilo de un pedido ya construido, «crear un pedido aparte» caía en ÉSTE,
+        // le cambiaba el título y luego `applyEvent` tronaba (MailMask #15 → «Página 404…», 6-oct).
+        if (run && run.status !== "planning" && run.status !== "plan_review") {
+          return {
+            ok: false,
+            error:
+              `Este hilo es del pedido #${run.id} «${run.title}» (etapa «${stageLabel(run.status)}»): ya no acepta plan y no se tocó. ` +
+              `Si es un cambio a ESE PR, usa factory_note; si es algo distinto, pide en el room que se abra un pedido nuevo (fuera de este hilo).`,
+          };
+        }
         if (!run) {
           // El repo del pedido: con un solo repo en el room es ése; con VARIOS es obligatorio.
           // Sin esto el pedido nacía con repo NULL y la preview, «Listo para agentes» y el
@@ -263,11 +274,9 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         // Sólo con título EXPLÍCITO: sin él, una v2 le cambiaba el nombre al pedido por su
         // primer encabezado («Historia»).
         const title = String(a.title ?? "").trim() ? planTitle(a.title, planMd) : "";
-        if (!firstPlan && title && title !== run.title) {
-          await dbq("UPDATE gt_factory_runs SET title = ? WHERE id = ?", [title, run.id]);
-          run = { ...run, title };
-        }
-        run = await R.applyEvent(run, "plan_submitted", { plan_version: version }, { actor: "plan", data: { version } });
+        // Va en el mismo UPDATE que la transición: si el estado no admite plan, el título no cambia.
+        const retitle = !firstPlan && title && title !== run.title ? { title } : {};
+        run = await R.applyEvent(run, "plan_submitted", { plan_version: version, ...retitle }, { actor: "plan", data: { version } });
         await dbq("INSERT INTO gt_factory_plans (run_id, version, plan_md) VALUES (?, ?, ?)", [run.id, version, planMd]);
         const msgId = await R.postInThread(run, "plan", R.planCardFence(run.id, version));
         if (msgId) await dbq("UPDATE gt_factory_plans SET msg_id = ? WHERE run_id = ? AND version = ?", [msgId, run.id, version]);

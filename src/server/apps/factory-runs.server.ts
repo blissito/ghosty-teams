@@ -603,7 +603,7 @@ export async function noteFromGithub(run: Run, by: string, ask: { text: string; 
  * esto una nota a media obra esperaba al siguiente encargo y @build terminaba con el alcance
  * viejo (MailMask, 4-oct). Nunca lanza.
  */
-export async function steerRole(run: Run, role: "build" | "check", text: string): Promise<boolean> {
+export async function steerRole(run: Run, role: "plan" | "build" | "check", text: string): Promise<boolean> {
   try {
     const { resolvedAgents, agentGroupId } = await import("../../agents.server");
     const agent = (await resolvedAgents()).find((a) => a.handle === role);

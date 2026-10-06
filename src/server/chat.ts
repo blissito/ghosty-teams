@@ -3,6 +3,7 @@ import type { RtEvent } from "./bus.server";
 import type { SessionUser } from "../users.server";
 import type { Channel } from "../db.server";
 import { notifyMentions, notificarMencionesDelAgente, mencionaAAlguienMas } from "./mentions.server";
+import { FACTORY_HANDLES } from "./apps/factory-roles";
 
 // Server functions — modelo Slack. El pool_ token nunca toca el browser.
 
@@ -947,6 +948,27 @@ export const postMessage = createServerFn({ method: "POST" })
       // Además así no hay que creerle un id al cliente.
       const { ackStart } = await import("./agent-ack.server");
       await ackStart(ns, id, r.handle);
+    }
+    // Un pedido, varios roles: si la persona le habla a uno (@build) mientras OTRO rol del mismo
+    // pedido trabaja (@plan), a ése le llega la línea por steer y decide con su contexto si es lo
+    // mismo y se detiene. Sin candados ni estado: `injectOnly` hace que gs conteste `not_live`
+    // si ese rol no está corriendo (6-oct, MailMask #15: @plan armaba la 404 que ya hacía @build).
+    if (me?.sub && data.parentId !== null && respondents.some((r) => (FACTORY_HANDLES as readonly string[]).includes(r.handle))) {
+      void (async () => {
+        const R = await import("./apps/factory-runs.server");
+        const run = await R.runOfThread(channel.id, data.parentId!).catch(() => null);
+        if (!run) return;
+        const to = respondents.map((r) => `@${r.handle}`).join(", ");
+        for (const other of FACTORY_HANDLES) {
+          if (respondents.some((r) => r.handle === other)) continue;
+          void R.steerRole(
+            run,
+            other,
+            `[Aviso de la plataforma] ${name} le escribió a ${to} en este hilo: «${body.slice(0, 1500)}». ` +
+              `Si es lo mismo que estás haciendo, detente sin entregar ni crear nada y dilo en una línea; si es otra cosa, sigue con lo tuyo.`,
+          );
+        }
+      })().catch(() => {});
     }
     return {
       ok: true as const,
