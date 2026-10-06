@@ -405,7 +405,7 @@ export async function handoff(
     // esperaba al siguiente tick (pedir cambios tardó ~30 s en arrancar a @plan, MailMask #15).
     dueAt: Math.floor(Date.now() / 1000),
   });
-  if (Date.now() - t0 > 3000) console.warn(`[factory] handoff a @${to} del #${run.id} tardó ${Date.now() - t0} ms en encolarse`);
+  console.log(`[lat] handoff #${run.id} → @${to} encolado en ${Date.now() - t0}ms`);
   // `kick`, no `arm`: con sólo armar, el relevo esperaba al siguiente tick (hasta 30 s) y la
   // persona veía «nada pasó» tras firmar (MailMask, 2026-10-01).
   if (ok) (await import("../wakeups.server")).kickWakeups(ns);
@@ -571,6 +571,8 @@ export async function decide(opts: {
   origin: string;
 }): Promise<Run> {
   const { run, version, decision, sub, who } = opts;
+  const t0 = Date.now();
+  const lap = (what: string) => console.log(`[lat] decide #${run.id} ${what} +${Date.now() - t0}ms`);
   if (version !== run.planVersion) throw new Error(`ese es el plan v${version}; el vigente es v${run.planVersion}`);
   const note = (opts.note ?? "").trim().slice(0, 2000);
   if (decision === "changes" && !note) throw new Error("di qué cambiar");
@@ -589,7 +591,9 @@ export async function decide(opts: {
     run.id,
     version,
   ]);
+  lap("evento+plan guardados");
   const plan = await getPlan(run.id, version);
+  lap("plan leído");
   if (decision === "approve") {
     // Desde `escalated` también se aprueba («otra vuelta»): el encargo lo dice.
     const again = run.status === "escalated";

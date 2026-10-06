@@ -119,7 +119,9 @@ export function armWakeups(ns: string): void {
 /** Barre YA en vez de esperar al tick: un relevo entre agentes no debe tardar 30 s. */
 export function kickWakeups(ns: string): void {
   armWakeups(ns);
-  void sweep();
+  // Sólo ESE espacio: `sweep()` recorre todos los tenants en serie (con sus consultas por red)
+  // antes de llegar a éste, y el relevo tardaba ~20 s en dispararse (MailMask #15, 5-oct).
+  void withNamespace(ns, () => sweepTenant(ns)).catch(() => {});
 }
 
 /**
@@ -236,6 +238,7 @@ async function sweepTenant(ns: string): Promise<void> {
 
 /** Abre el turno donde se pidió el trabajo, con un mensaje de PLATAFORMA (no de la persona). */
 export async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
+  const firedAt = Date.now();
   const db = await import("../db.server");
   const bus = await import("./bus.server");
   const { resolvedAgents, runAgentTurn } = await import("../agents.server");
@@ -292,6 +295,9 @@ export async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
   const register = (mid: number) => {
     if (registeredId === mid) return;
     registeredId = mid;
+    // Latencia del relevo: de vencido a disparado, y de disparado a la burbuja del agente.
+    if (w.key.startsWith("factory:"))
+      console.log(`[lat] ${w.key} vencido→disparo ${Math.round(firedAt / 1000) - w.dueAt}s · disparo→burbuja ${Date.now() - firedAt}ms`);
     // La clave del despertador viaja con el turno: si se adopta tras un reinicio, la fábrica
     // sigue reconociéndolo como su relevo (`afterFactoryTurn` lee la clave).
     void turns.setTurnDurable(mid, { wakeKey: w.key });
