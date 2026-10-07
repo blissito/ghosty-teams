@@ -326,6 +326,51 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
       },
     },
     {
+      name: "factory_git_remote",
+      description:
+        "SÓLO @build. Remote git para clonar el repo del pedido en tu caja de trabajo y EMPUJAR con `git push` (la forma " +
+        "normal de subir tus commits: cualquier tamaño, sin pasar archivos por JSON). La credencial es de esta sesión, " +
+        "caduca en 2 h y sólo empuja a la rama del pedido. Llámala otra vez si caducó.",
+      inputSchema: {
+        type: "object",
+        properties: { runId: { type: "number", description: "El pedido (si no, el del hilo)" } },
+      },
+      handler: async (sub, a) => {
+        if (dest?.handle && dest.handle !== "build") return { ok: false, error: "sólo @build empuja código" };
+        const run = await runOf(dest, a.runId);
+        if (!run) return { ok: false, error: "no encuentro el pedido de este hilo" };
+        if (!run.repo) return { ok: false, error: "el pedido no tiene repo" };
+        if (run.status === "done" || run.status === "cancelled") return { ok: false, error: `el pedido #${run.id} ya está cerrado` };
+        const G = await import("../connectors/github.server");
+        const w = await G.gitWriteToken(sub, run.repo);
+        if ("error" in w) return { ok: false, error: w.error };
+        const base = await origin();
+        if (!base) return { ok: false, error: "no pude resolver la dirección de este espacio" };
+        const { mintGitSession } = await import("./factory-git.server");
+        const token = await mintGitSession({ runId: run.id, repo: run.repo, sub, branch: run.branch });
+        const host = base.replace(/^https?:\/\//, "");
+        const remote = `${base.startsWith("http://") ? "http" : "https"}://x-access-token:${token}@${host}/api/git/${run.id}/${run.repo}.git`;
+        const botId = process.env.GITHUB_APP_BOT_USER_ID || "313045761";
+        return {
+          ok: true,
+          remote,
+          branch: run.branch,
+          expiresInMinutes: 120,
+          gitConfig: {
+            "user.name": "ghosty-studio[bot]",
+            "user.email": `${botId}+ghosty-studio[bot]@users.noreply.github.com`,
+          },
+          coAuthor: await G.coAuthorOf(sub),
+          rules:
+            "En tu caja de trabajo: `git clone <remote> repo` (o `git remote set-url origin <remote>` en un clon que ya tengas), " +
+            "pon user.name/user.email de gitConfig, termina cada mensaje de commit con una línea en blanco y coAuthor, y " +
+            "`git push -u origin <rama>`. Sólo una rama por push y nunca la principal" +
+            (run.branch ? ` (este pedido ya empuja a ${run.branch})` : "; la primera rama que empujes queda fija para el pedido") +
+            ". Si git contesta 403, el texto dice por qué. Archivos grandes: empújalos con git, nunca con github_push_files.",
+        };
+      },
+    },
+    {
       name: "factory_build_done",
       description:
         "SÓLO @build. Cierra tu paso cuando el PR en BORRADOR está abierto y las pruebas corrieron: la plataforma " +

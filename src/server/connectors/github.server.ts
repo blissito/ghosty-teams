@@ -240,6 +240,20 @@ async function writeToken(
   return botToken ? { token: botToken, bot: true } : { token: userToken, bot: false };
 }
 
+/** Trailer de co-autoría de la persona dueña de `sub` (el mismo que pone `github_push_files`). */
+export async function coAuthorOf(sub: string): Promise<string> {
+  const login = (await readMeta(sub))?.login;
+  return login ? coAuthorTrailer(login).trim() : "";
+}
+
+/**
+ * Token con el que el proxy git de la fábrica (`apps/factory-git.server.ts`) empuja por la caja.
+ * Es `writeToken` tal cual: re-impone el permiso de quien pidió. Nunca sale de Teams.
+ */
+export function gitWriteToken(sub: string, repoPath: string): Promise<{ token: string; bot: boolean } | { error: string }> {
+  return writeToken(sub, repoPath);
+}
+
 /**
  * Liga directa a la página donde el dueño ACEPTA los permisos nuevos de la App en su
  * instalación («Review request»). Cuenta personal → /settings/installations/<id>;

@@ -736,6 +736,17 @@ async function migrate(): Promise<void> {
   );
   await exec("CREATE INDEX IF NOT EXISTS gt_room_repos_chan ON gt_room_repos(channel_id)");
 
+  // Sesiones de push de la fábrica (`apps/factory-git.server.ts`): la caja de @build empuja con
+  // git a través del proxy con un token `gfp_` atado a un pedido y un repo. Sólo el hash.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_factory_git_sessions (
+    token_hash TEXT PRIMARY KEY,
+    run_id     INTEGER NOT NULL,
+    repo       TEXT NOT NULL,
+    sub        TEXT NOT NULL,
+    branch     TEXT,
+    expires_at INTEGER NOT NULL,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch())
+  )`);
   // Entregas del webhook de la GitHub App ya procesadas en ESTE espacio (por `X-GitHub-Delivery`).
   // gs reintenta con backoff y GitHub reenvía: sin esto un reintento repetiría el aviso en el room.
   await exec(`CREATE TABLE IF NOT EXISTS gt_github_deliveries (
