@@ -116,6 +116,8 @@ export async function applyEvent(
     // Y se olvida la liga: @plan la leía del pedido cerrado y la daba como «lista» (MailMask #11, 5-oct).
     void dbq("UPDATE gt_factory_runs SET preview_state = NULL, preview_url = NULL WHERE id = ?", [updated.id]).catch(() => {});
   }
+  // Pedido cerrado: su caja (y la preview que vive en ella) se destruye.
+  if (updated.status === "done" || updated.status === "cancelled") void gsRunBox("down", { runId: updated.id }).catch(() => {});
   void syncRunTask(updated, run.status).catch(() => {});
   void refreshRoom(updated.channelId);
   // Al cerrar o escalar: si el pedido no fue sano, gs dice por qué y lo dejamos en el hilo.
@@ -537,6 +539,99 @@ export async function onRoleStalled(groupId: string, ev: StalledFrame): Promise<
   }
 }
 
+// ── Caja por pedido ──────────────────────────────────────────────────────────
+
+/** Llamada firmada a gs `internal/workspace-runbox` (mismo esquema que `gsPreview`). */
+export async function gsRunBox(op: "up" | "status" | "down", body: Record<string, unknown>): Promise<{ status: number; json: any }> {
+  const { currentSlug } = await import("../tenant.server");
+  const slug = await currentSlug();
+  if (!slug) throw new Error("sin espacio");
+  const raw = JSON.stringify({ op, ...body });
+  const crypto = await import("node:crypto");
+  const ts = Math.floor(Date.now() / 1000);
+  const sig = crypto.createHmac("sha256", process.env.GHOSTY_PARTNER_SECRET!).update(`${ts}.${slug}.${raw}`).digest("hex");
+  const IDP = process.env.GHOSTY_IDENTITY_URL ?? "https://www.ghosty.studio";
+  const res = await fetch(`${IDP}/internal/workspace-runbox/${encodeURIComponent(slug)}?ts=${ts}&sig=${sig}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: raw,
+    signal: AbortSignal.timeout(120_000),
+  });
+  return { status: res.status, json: await res.json().catch(() => null) };
+}
+
+/** Los agentes de Studio que harán @build y @check en este pedido (los que podrán usar la caja). */
+async function runBoxAgents(run: Run): Promise<string[]> {
+  const { resolvedAgents } = await import("../../agents.server");
+  const { factoryTurnFor } = await import("./factory-team.server");
+  const agents = await resolvedAgents();
+  const ids: string[] = [];
+  for (const role of ["build", "check"] as const) {
+    const a = agents.find((x) => x.handle === role);
+    const def = a?.backend.kind === "fleet" ? a.backend.id : "";
+    const ft = await factoryTurnFor(role, { channelId: run.channelId, parentId: run.rootMsgId }, def).catch(() => null);
+    const id = ft?.fleetId ?? def;
+    if (id) ids.push(id);
+  }
+  return ids;
+}
+
+/**
+ * La caja del pedido (una `dev-box` de 4 GB en gs). `ready` = existe; `waiting` = el espacio ya
+ * tiene tantos pedidos en curso como su tier (F1 = 1) y éste espera; `off` = sin repo o gs no
+ * pudo, y el pedido sigue por el camino de antes (el agente pide su caja con `ensure`).
+ */
+export async function ensureRunBox(run: Run): Promise<"ready" | "waiting" | "off"> {
+  if (!run.repo) return "off";
+  try {
+    const r = await gsRunBox("up", { runId: run.id, repo: run.repo, agents: await runBoxAgents(run) });
+    if (r.status === 200 && r.json?.boxId) {
+      const [prev] = await dbq("SELECT box_state FROM gt_factory_runs WHERE id = ?", [run.id]).catch(() => []);
+      await dbq("UPDATE gt_factory_runs SET box_id = ?, box_state = 'ready' WHERE id = ?", [String(r.json.boxId), run.id]);
+      if (prev?.box_state === "waiting") await logEvent(run.id, "box_ready", null, { box: r.json.boxId });
+      return "ready";
+    }
+    if (r.status === 409 && r.json?.error === "no_slot") {
+      const [prev] = await dbq("SELECT box_state FROM gt_factory_runs WHERE id = ?", [run.id]).catch(() => []);
+      if (prev?.box_state !== "waiting") {
+        await dbq("UPDATE gt_factory_runs SET box_state = 'waiting' WHERE id = ?", [run.id]);
+        await logEvent(run.id, "box_waiting", null, { tier: r.json.tier, busy: r.json.busy });
+        const busy = (r.json.busy ?? []).map((n: number) => `#${n}`).join(", ");
+        await postInThread(run, "build", `⏳ En espera de lugar: tu plan ${r.json.tier} permite ${r.json.max} pedido(s) en curso${busy ? ` (ahora: ${busy})` : ""}. Arranco solo en cuanto se libere.`).catch(() => null);
+        void refreshRoom(run.channelId);
+      }
+      return "waiting";
+    }
+    console.warn(`[factory] caja del pedido #${run.id}: gs ${r.status} ${JSON.stringify(r.json).slice(0, 200)}`);
+  } catch (e) {
+    console.warn(`[factory] caja del pedido #${run.id}: ${(e as Error).message}`);
+  }
+  await dbq("UPDATE gt_factory_runs SET box_state = 'off' WHERE id = ?", [run.id]).catch(() => {});
+  return "off";
+}
+
+/** Tick: los pedidos en cola por caja vuelven a pedirla; el que la obtiene recibe su encargo. */
+export async function retryWaitingRunBoxes(): Promise<void> {
+  const rows = await dbq("SELECT * FROM gt_factory_runs WHERE box_state = 'waiting' AND status = 'building' ORDER BY updated_at ASC LIMIT 5").catch(() => []);
+  for (const r of rows) {
+    const run = toRun(r);
+    const st = await ensureRunBox(run);
+    if (st === "waiting") break; // el primero de la fila no cupo: los demás tampoco
+    let h: { sub: string; why: string; text: string; origin: string } | null = null;
+    try {
+      h = JSON.parse(String(r.box_handoff ?? "null"));
+    } catch {}
+    await dbq("UPDATE gt_factory_runs SET box_handoff = NULL WHERE id = ?", [run.id]);
+    if (h) await handoff(run, "build", h.sub, h.why, h.text, h.origin).catch((e) => console.warn(`[factory] encargo en cola #${run.id}: ${(e as Error).message}`));
+  }
+}
+
+/** El id de la caja del pedido de un hilo (null = sin caja). */
+export async function runBoxIdOf(runId: number): Promise<string | null> {
+  const [r] = await dbq("SELECT box_id, box_state FROM gt_factory_runs WHERE id = ?", [runId]).catch(() => []);
+  return r?.box_state === "ready" && r?.box_id ? String(r.box_id) : null;
+}
+
 // ── Publicar en el hilo ──────────────────────────────────────────────────────
 
 async function agentIdentity(handle: string) {
@@ -808,18 +903,21 @@ export async function decide(opts: {
   if (decision === "approve") {
     // Desde `escalated` también se aprueba («otra vuelta»): el encargo lo dice.
     const again = run.status === "escalated";
-    await handoff(
-      next,
-      "build",
-      sub,
-      again ? "otra vuelta tras escalar" : "construir el plan aprobado",
+    const why = again ? "otra vuelta tras escalar" : "construir el plan aprobado";
+    const text =
       (again
         ? `${who} pidió otra vuelta. Revisa los últimos hallazgos de @check en este hilo, corrige en la misma rama y cierra con factory_build_done.`
         : `${who} aprobó el plan v${version}. Constrúyelo: rama nueva, código, pruebas, PR en BORRADOR, y cierra con factory_build_done.`) +
-        (await takeNotes(run.id)) +
-        `\n\n## Plan aprobado (v${version})\n${plan?.planMd ?? ""}`,
-      opts.origin,
-    );
+      (await takeNotes(run.id)) +
+      `\n\n## Plan aprobado (v${version})\n${plan?.planMd ?? ""}`;
+    // La caja del pedido antes del encargo: sin lugar en el tier, el pedido espera en cola con el
+    // encargo guardado y el tick lo entrega en cuanto se libere uno.
+    if ((await ensureRunBox(next)) === "waiting") {
+      await dbq("UPDATE gt_factory_runs SET box_handoff = ? WHERE id = ?", [JSON.stringify({ sub, why, text, origin: opts.origin }), run.id]);
+      lap("en espera de caja");
+      return next;
+    }
+    await handoff(next, "build", sub, why, text, opts.origin);
   } else {
     await handoff(
       next,
@@ -1416,8 +1514,8 @@ export async function announcePreviews(): Promise<void> {
       try {
         // Pendiente del mismo commit: se pregunta cómo va; si la caja ya no existe, se vuelve a pedir.
         let b: import("./preview.server").BoxPreview | null =
-          sameSha && row.preview_state === "pending" ? (await P.gsPreview("status", { repo: pr.repo, pr: pr.number })).status : null;
-        if (!b) b = await P.gsPreview("up", { repo: pr.repo, pr: pr.number, sha: head.sha });
+          sameSha && row.preview_state === "pending" ? (await P.gsPreview("status", { repo: pr.repo, pr: pr.number, ...(row.box_id ? { runId: Number(row.id) } : {}) })).status : null;
+        if (!b) b = await P.gsPreview("up", { repo: pr.repo, pr: pr.number, sha: head.sha, ...(row.box_id ? { runId: Number(row.id) } : {}) });
         if (!b || b.sha !== head.sha) next = { state: "pending", url: null, provider: null, error: null };
         else if (b.phase === "ready") next = { state: "ready", url: b.url, provider: null, error: null };
         else if (b.phase === "failed") next = { state: "failed", url: null, provider: null, error: b.error };

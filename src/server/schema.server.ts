@@ -888,6 +888,12 @@ async function migrate(): Promise<void> {
   await addColumn("gt_factory_runs", "merged_at", "INTEGER");
   // Evals (kind = 'eval'): de qué pedido, con qué agente/modelo, commit base y la calificación.
   await addColumn("gt_factory_runs", "eval_json", "TEXT");
+  // Caja POR PEDIDO (7-oct): la `dev-box` de gs donde trabajan @build y @check y sale la preview.
+  // `box_state`: ready | waiting (sin lugar en el tier: el pedido espera) | off (sin caja, camino viejo).
+  // `box_handoff`: el encargo a @build que quedó pendiente mientras espera lugar.
+  await addColumn("gt_factory_runs", "box_id", "TEXT");
+  await addColumn("gt_factory_runs", "box_state", "TEXT");
+  await addColumn("gt_factory_runs", "box_handoff", "TEXT");
   // Sprints de la Fábrica: una épica con tickets ordenados y dependencias. Lo propone @plan
   // (borrador), una persona lo aprueba UNA vez y la plataforma arranca cada ticket como un
   // pedido cuando sus dependencias ya tienen merge (ver apps/sprint.server.ts).

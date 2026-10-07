@@ -1164,6 +1164,19 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
     // sólo necesita saber si ya existe para proponerlo cuando falta.
     if (ft?.repo && !critic) {
       const { setupLine } = await import("./factory-team");
+      // La caja del pedido: @build y @check trabajan en LA MISMA (no piden otra con ensure()).
+      if (h === "build" || h === "check") {
+        const R = await import("./factory-runs.server");
+        const root = threadRoot(dest);
+        const run = dest?.channelId && root ? await R.runOfThread(dest.channelId, root).catch(() => null) : null;
+        const boxId = run ? await R.runBoxIdOf(run.id) : null;
+        if (boxId)
+          parts.push(
+            h === "build"
+              ? `Caja de este pedido: \`${boxId}\` (dev-box 4 GB; la crea y la tira la plataforma). Trabaja en ella con exec/execLong/prepare de /opt/gs-sdk/sandbox.mjs usando ESE id, en /app/repo. No llames ensure() ni create(): ésta es tu caja. El puerto 4300 es de la preview; tu dev server, en el 3000.`
+              : `Caja de este pedido: \`${boxId}\` (la misma donde construyó @build). Prueba en un clon LIMPIO del PR, no en el árbol de @build: \`git -C /app/repo fetch origin <rama> && git -C /app/repo worktree add -f /app/check <sha del PR>\` (bórralo y recréalo en cada revisión) y corre prepare(...) antes de cada suite para recrear la base. No edites ni empujes desde ahí. Sigue leyendo el CI.`,
+          );
+      }
       if (ft.setup && (h === "build" || h === "check")) parts.push(setupLine(ft.repo, ft.setup));
       else if (!ft.setup && h === "plan")
         parts.push(`${ft.repo} no declara su entorno de pruebas (setup: en .ghosty/factory.md). Si el pedido toca pruebas que piden base de datos, Redis o variables de prueba, mira los services: y env: de .github/workflows/*.yml (o docker-compose) y agrega al plan un paso que proponga el bloque setup: en el mismo PR.`);
