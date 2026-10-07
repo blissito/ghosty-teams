@@ -792,6 +792,11 @@ export const resolveDocSuggestionFn = createServerFn({ method: "POST" })
       }
     }
     const fuera = new Set(elegidas.map((s) => s.id));
+    // Para medir si sirve (revisión con descti, 9-oct): cada decisión deja una línea.
+    console.log(
+      `[gt-sug] doc=${data.documentId} ${data.accept ? "aceptar" : "rechazar"} n=${elegidas.length} ` +
+        `de_nota=${elegidas.filter((x) => x.commentId).length}`,
+    );
     const md = serializeDocEnvelope({
       blocks,
       humanEdited: env.humanEdited,
@@ -884,6 +889,7 @@ export const resolveDocCommentFn = createServerFn({ method: "POST" })
     const comments = (env.comments ?? []).map((c) =>
       data.commentId === "*" || c.id === data.commentId ? { ...c, resolved: data.resolved } : c,
     );
+    console.log(`[gt-note] doc=${data.documentId} ${data.resolved ? "resolver" : "reabrir"} ${data.commentId}`);
     const md = serializeDocEnvelope({
       blocks: env.blocks,
       humanEdited: env.humanEdited,
