@@ -18,6 +18,11 @@ const WORKING: Record<string, string> = {
   checking: "@check está revisando el PR…",
 };
 
+// Un pedido cerrado se pinta en UN solo tono: morado «merged» de GitHub al terminar, gris al
+// cancelar. El verde de «paso hecho» junto al morado chocaba (#15 y #17, 7-oct).
+const DONE_CLS = "bg-violet-600/15 text-violet-700 dark:text-violet-300";
+const CANCELLED_DONE_CLS = "bg-surface-3 text-ink/70";
+
 const STEPS = [
   { key: "plan", label: "Plan", statuses: ["planning"] },
   { key: "sign", label: "Aprobación", statuses: ["plan_review"] },
@@ -146,7 +151,7 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
                   className={`flex-1 whitespace-nowrap rounded-full px-1.5 py-1 text-center text-[11px] font-semibold ${
                     // Mezclado = el morado «merged» de GitHub; en curso, verde por paso hecho.
                     prClosed
-                      ? "bg-red-600/15 text-red-700 dark:text-red-400"
+                      ? "bg-red-600/10 text-red-700/80 dark:text-red-400/80"
                       : deciding
                       ? "bg-amber-500 text-white"
                       : now
@@ -155,8 +160,10 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
                           ? "border border-dashed border-border text-muted"
                           : done
                           ? st.status === "done"
-                            ? "bg-violet-600/15 text-violet-700 dark:text-violet-300"
-                            : "bg-emerald-600/15 text-emerald-700"
+                            ? DONE_CLS
+                            : st.status === "cancelled"
+                              ? CANCELLED_DONE_CLS
+                              : "bg-emerald-600/15 text-emerald-700"
                           : "bg-surface-3 text-muted"
                   }`}
                 >
@@ -447,7 +454,7 @@ function ProdStep({ prod, t }: { prod: { state: string; url?: string | null }; t
   const base = "flex-1 whitespace-nowrap rounded-full px-1.5 py-1 text-center text-[11px] font-semibold inline-flex items-center justify-center gap-1.5";
   const look =
     prod.state === "success"
-      ? { cls: "bg-emerald-600/15 text-emerald-700", txt: `✓ ${t("Prod")}` }
+      ? { cls: DONE_CLS, txt: `✓ ${t("Prod")}` }
       : prod.state === "pending"
         ? { cls: "bg-brand text-white", txt: t("Desplegando"), spin: true }
         : prod.state === "failure"
@@ -498,8 +505,10 @@ function CiStep({ ci, status, busy, onRun, t }: {
     );
   const look =
     // Merged = el CI pasó; cancelado = como quedó (un CI que seguía corriendo ya no corre).
-    status === "done" || ci?.state === "success"
-      ? { cls: "bg-emerald-600/15 text-emerald-700", txt: `✓ ${t("CI")}` }
+    status === "done"
+      ? { cls: DONE_CLS, txt: `✓ ${t("CI")}` }
+      : ci?.state === "success"
+      ? { cls: status === "cancelled" ? CANCELLED_DONE_CLS : "bg-emerald-600/15 text-emerald-700", txt: `✓ ${t("CI")}` }
       : ci?.state === "pending"
         ? closed
           ? { cls: "border border-dashed border-border text-muted", txt: `⊘ ${t("CI")}` }

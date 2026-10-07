@@ -529,8 +529,10 @@ async function cancelledView(run: { id: number; prUrl: string | null; approvedBy
   const info = await R.cancelInfo(run.id);
   let prClosed = info?.reason === "pr_closed";
   if (!prClosed && run.prUrl) {
-    if (!prClosedCache.has(run.id)) {
-      const o = await R.prOutcome(run.approvedBy ?? run.requestedBy ?? meSub, run.prUrl).catch(() => null);
+    // Con el GitHub de quien aprobó, pidió o mira: el primero que pueda leer el PR.
+    for (const sub of new Set([run.approvedBy, run.requestedBy, meSub].filter(Boolean) as string[])) {
+      if (prClosedCache.has(run.id)) break;
+      const o = await R.prOutcome(sub, run.prUrl).catch(() => null);
       if (o) prClosedCache.set(run.id, o.outcome === "closed");
     }
     prClosed = prClosedCache.get(run.id) ?? false;
