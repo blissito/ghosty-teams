@@ -1624,7 +1624,8 @@ export const askAgent = createServerFn({ method: "POST" })
       // si NO aplica nada no se crea versión (el artefacto anterior sigue en pie) — una
       // capa de contención muda escondería que el modo patch está roto.
       // Observaciones ancladas (```eb-comment```): la revisión va AL documento, no al chat.
-      if (currentDoc?.kind === "doc" && currentDocId && reply.includes("```eb-comment")) {
+      const docsV2 = await (await import("./docs-v2.server")).docsV2On();
+      if (docsV2 && currentDoc?.kind === "doc" && currentDocId && reply.includes("```eb-comment")) {
         const { applyAgentComments } = await import("./artifacts");
         const { stripDocComments } = await import("../lib/doc-comments");
         const r = await applyAgentComments({ documentId: currentDocId, reply, by: data.handle });
@@ -1650,7 +1651,7 @@ export const askAgent = createServerFn({ method: "POST" })
           const { mdToBlocks, blocksToMd } = await import("./doc-blocks.server");
           const t0 = performance.now();
           // Lo que tocó una persona no se reescribe en silencio: queda como sugerencia.
-          const res = await applyPatchesGuarded(env.blocks, patches, env.humanIds, { parse: mdToBlocks });
+          const res = await applyPatchesGuarded(env.blocks, patches, docsV2 ? env.humanIds : [], { parse: mdToBlocks });
           console.log(
             `[gt-patch] doc msg=${id} pedidos=${patches.length} aplicados=${res.applied.length} ` +
               `fallidos=${res.failed.length} sugeridos=${res.suggestions.length} ${Math.round(performance.now() - t0)}ms` +

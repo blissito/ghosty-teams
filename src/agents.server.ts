@@ -1245,7 +1245,7 @@ async function artifactDocHint(currentDoc?: CurrentDoc | null): Promise<string> 
     const env = parseDocEnvelope(raw);
     if (env) {
       docBlocks = env.blocks;
-      docHumanIds = env.humanIds ?? [];
+      docHumanIds = (await (await import("./server/docs-v2.server")).docsV2On()) ? (env.humanIds ?? []) : [];
       const { docMarkdown } = await import("./server/doc-blocks.server");
       raw = await docMarkdown(currentDoc.md);
     }
@@ -1339,6 +1339,7 @@ async function artifactDocHint(currentDoc?: CurrentDoc | null): Promise<string> 
     // Un bloque son ~70 chars de índice (alias + tipo + 60 de texto), así que 250 son
     // ~17 KB en el peor caso — barato al lado de re-emitir el documento entero.
     const index = blockIndex(docBlocks, 250, 60, docHumanIds);
+    const docsV2 = await (await import("./server/docs-v2.server")).docsV2On();
     // El índice va COMPLETO aunque el cuerpo se recorte: es el techo de lo editable.
     const recortado = clampInline(md);
     return (
@@ -1363,11 +1364,11 @@ async function artifactDocHint(currentDoc?: CurrentDoc | null): Promise<string> 
           `Si un eb-patch toca uno, NO se aplica: le llega como sugerencia que ella acepta o rechaza, ` +
           `así que dilo en tu respuesta ("te dejé N sugerencias en tus párrafos") y explica por qué.`
         : "") +
-      `\n\nSi te piden REVISAR, señalar inconsistencias, errores o problemas del documento, NO ` +
+      (docsV2 ? `\n\nSi te piden REVISAR, señalar inconsistencias, errores o problemas del documento, NO ` +
       `los listes en el chat: deja cada observación anclada a su bloque con ` +
       `\`\`\`eb-comment <dirección>\n<qué pasa y qué propones, 1–3 frases>\n\`\`\` (uno por ` +
       `bloque; si el mismo problema está en varios, uno en cada uno). En el chat escribe sólo un ` +
-      `resumen de 2–3 líneas (cuántas y de qué tipo). No cambies el texto salvo que te lo pidan.` +
+      `resumen de 2–3 líneas (cuántas y de qué tipo). No cambies el texto salvo que te lo pidan.` : "") +
       (index ? `\n\nBloques direccionables:\n${index}` : "") +
       `\n\nContenido actual en ${lang}:\n\n\`\`\`\n${recortado ?? md}\n\`\`\`]\n\n`
     );
