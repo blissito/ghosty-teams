@@ -1508,7 +1508,10 @@ export async function announcePreviews(): Promise<void> {
     // seguía en verde con un 404 (MailMask #10, 4-oct). Se pregunta a gs si la caja sigue; si no,
     // se borra el estado y el siguiente tick la reconstruye.
     if (sameSha && row.preview_state === "ready" && !(await P.hostingHasPreviews(sub, pr.repo))) {
-      const st = await P.gsPreview("status", { repo: pr.repo, pr: pr.number }).catch(() => undefined);
+      // Con caja por pedido la preview vive en la caja del pedido: sin `runId` gs buscaba una caja de
+      // preview suelta, no la hallaba, se borraba el estado y el siguiente tick la «actualizaba» —
+      // un aviso cada 2 min (pedido #17, 7-oct).
+      const st = await P.gsPreview("status", { repo: pr.repo, pr: pr.number, ...(row.box_id ? { runId: Number(row.id) } : {}) }).catch(() => undefined);
       if (st !== undefined && (!st?.status || st.status.phase !== "ready" || st.status.sha !== head.sha)) {
         await dbq("UPDATE gt_factory_runs SET preview_state = NULL, preview_url = NULL WHERE id = ?", [run.id]).catch(() => {});
         lastPreviewCheck.delete(run.id);
