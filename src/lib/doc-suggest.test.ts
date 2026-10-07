@@ -43,6 +43,11 @@ describe("sugerencias por bloque", () => {
     expect(out.map((x) => x.id)).toEqual(["3"]);
   });
 
+  it("una reescritura se muestra como bloque, no como revoltijo", () => {
+    const d = wordDiff("Al término de la vigencia el bien se devuelve.", "El Comodatario entregará la laptop en su domicilio dentro de cinco días.");
+    expect(d.map((x) => x.t)).toEqual(["del", "eq", "ins"]);
+  });
+
   it("diff por palabras", () => {
     expect(wordDiff("seis meses", "doce meses").filter((d) => d.t !== "eq").map((d) => `${d.t}:${d.s}`)).toEqual(["del:seis", "ins:doce"]);
   });

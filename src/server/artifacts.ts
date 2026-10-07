@@ -85,6 +85,8 @@ export async function publishArtifactVersion(args: {
   humanIds?: string[];
   /** Sugerencias pendientes (`undefined` = se heredan). */
   suggestions?: import("../lib/doc-suggest").DocSuggestion[];
+  /** Observaciones ancladas (`undefined` = se heredan). */
+  comments?: import("../lib/doc-comments").DocComment[];
   /** Quiénes co-editaron en la sesión que dejó esta versión (`sub`). Sólo la co-edición. */
   authors?: string[];
   /**
@@ -151,6 +153,7 @@ export async function publishArtifactVersion(args: {
         unbranded: args.unbranded,
         humanIds: args.humanIds,
         suggestions: args.suggestions,
+        comments: args.comments,
         previo,
       });
     } else {
@@ -812,6 +815,23 @@ export const resolveDocSuggestionFn = createServerFn({ method: "POST" })
     // El sobre nuevo va de regreso: el panel abierto no se re-lee solo con una escritura en sitio.
     return { ok: true as const, changed: elegidas.length, md, changedIds };
   });
+
+/**
+ * Las observaciones (```eb-comment```) de una respuesta, ya resueltas contra el documento y
+ * mezcladas con las que tenía — SIN escribir. El turno las publica como versión de su mensaje
+ * (igual que un eb-patch): así el panel abierto se actualiza solo y, si el turno trae también un
+ * parche, las dos cosas salen en la MISMA versión y ninguna pisa a la otra.
+ */
+export async function buildAgentComments(args: {
+  env: import("../lib/doc-blocks").DocEnvelope;
+  reply: string;
+  by?: string;
+}): Promise<{ n: number; missing: string[]; comments: import("../lib/doc-comments").DocComment[] }> {
+  const { extractDocComments, attachComments, mergeComments } = await import("../lib/doc-comments");
+  const raw = extractDocComments(args.reply);
+  const { comments, missing } = attachComments(args.env.blocks, raw, args.by);
+  return { n: comments.length, missing, comments: mergeComments(args.env.comments, comments, args.env.blocks) };
+}
 
 /**
  * Guarda las observaciones (```eb-comment```) de una respuesta del agente sobre la ÚLTIMA versión

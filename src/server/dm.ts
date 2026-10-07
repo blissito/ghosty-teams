@@ -710,18 +710,46 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
       // vez del artefacto entero → se aplican por DOM sobre la versión actual. Fallo
       // VISIBLE: lo que no aplica se loguea con su nodeId y, si no aplica nada, no se
       // crea versión y el bubble lo dice.
-      // Observaciones ancladas (```eb-comment```): la revisión va AL documento, no al chat.
       const docsV2 = await (await import("./docs-v2.server")).docsV2On();
+      // Observaciones ancladas (```eb-comment```): la revisión va AL documento, no al chat.
+      // Se arman aquí y se publican abajo como versión de ESTE mensaje (con o sin parche).
+      let notas: import("../lib/doc-comments").DocComment[] | undefined;
       if (docsV2 && currentDoc?.kind === "doc" && currentDocId && reply.includes("```eb-comment")) {
-        const { applyAgentComments } = await import("./artifacts");
-        const { stripDocComments } = await import("../lib/doc-comments");
-        const r = await applyAgentComments({ documentId: currentDocId, reply, by: data.handle });
-        if (r.n) {
-          reply = stripDocComments(reply) +
-            `\n\n*Dejé ${r.n === 1 ? "1 observación" : `${r.n} observaciones`} en el documento, cada una en su párrafo.*`;
-          await db.setMessageBody(id, reply);
-          fanout({ t: "message:body", id, body: reply });
-          fanout({ t: "refresh", channelId: null, parentId: null, dmId: data.id });
+        const { parseDocEnvelope } = await import("../lib/doc-blocks");
+        const envNotas = parseDocEnvelope(currentDoc.md);
+        if (envNotas) {
+          const { buildAgentComments } = await import("./artifacts");
+          const { stripDocComments } = await import("../lib/doc-comments");
+          const r = await buildAgentComments({ env: envNotas, reply, by: data.handle });
+          console.log(`[gt-comment] doc=${currentDocId} observaciones=${r.n} sin_bloque=${r.missing.length}`);
+          if (r.n) {
+            notas = r.comments;
+            reply =
+              stripDocComments(reply) +
+              `\n\n*Dejé ${r.n === 1 ? "1 observación" : `${r.n} observaciones`} en el documento, cada una en su párrafo.*`;
+            await db.setMessageBody(id, reply);
+            fanout({ t: "message:body", id, body: reply });
+            // Sin parche en el turno: las notas salen solas como versión de este mensaje (el
+            // texto no cambia). Con parche, van en la versión del parche (más abajo).
+            if (!extractEbPatches(reply).length) {
+              const { publishArtifactVersion } = await import("./artifacts");
+              await publishArtifactVersion({
+                messageId: id,
+                documentId: currentDocId,
+                kind: "doc",
+                title: (await db.docTitle(currentDocId).catch(() => null)) ?? "Documento",
+                md: "",
+                blocks: envNotas.blocks,
+                humanEdited: envNotas.humanEdited,
+                comments: notas,
+                previo: envNotas,
+            visibility: "public",
+            ownerSub: me.sub,
+            setPointer: (docId) => db.setDmArtifact(data.id, docId),
+            notify: () => fanout({ t: "refresh", channelId: null, parentId: null, dmId: data.id }),
+              });
+            }
+          }
         }
       }
       const patches = extractEbPatches(reply);
@@ -762,11 +790,14 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
               messageId: id,
               documentId: currentDocId,
               kind: "doc",
-              title: draftTitle(nuevoMd, "doc"),
+              // El título es del DOCUMENTO: derivarlo del primer encabezado tras un parche lo
+              // renombraba a «Declaraciones» o «Portada» (visto en descti).
+              title: (await db.docTitle(currentDocId).catch(() => null)) ?? draftTitle(nuevoMd, "doc"),
               md: nuevoMd,
               blocks: res.blocks,
               changedIds: res.changedIds,
               suggestions: mergeSuggestions(env.suggestions, res.suggestions, res.blocks),
+              comments: notas,
               // El sobre ya está leído aquí (`env`): un patch cambia BLOQUES, nada más, así
               // que todo lo demás del documento —su marca— se arrastra tal cual.
               previo: env,

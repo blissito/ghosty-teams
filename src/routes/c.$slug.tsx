@@ -1538,7 +1538,9 @@ function ChannelPage() {
       // <doc>" se quedaba colgada para siempre después de entregar (2026-08-03).
       setHiddenDraft((d) => (d && "messageId" in d && d.messageId === id ? null : d));
       const patches = extractEbPatches(body);
-      if (!patches.length) return;
+      // Observaciones ancladas: también llegan como versión nueva del documento.
+      const notas = /```eb-comment[ \t]/.test(body);
+      if (!patches.length && !notas) return;
       if (!belongsToOpenConversation(findMessageInCaches(id), openDmId, channel.id)) return;
       // DOCUMENTO: no hay preview cliente que aplicar (los bloques los parchea el
       // server). Se espera la versión nueva y se abre el panel en ella.

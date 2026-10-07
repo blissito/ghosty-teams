@@ -791,6 +791,13 @@ export async function latestDocVersion(
   };
 }
 
+/** El título VIGENTE de un documento (el de su última versión). */
+export async function docTitle(documentId: string): Promise<string | null> {
+  const rows = await dbq(`SELECT title FROM gc_artifacts WHERE url = ? ORDER BY id DESC LIMIT 1`, [documentId]);
+  const t = rows[0]?.title;
+  return typeof t === "string" && t.trim() ? t : null;
+}
+
 /** Reescribe el contenido de UNA versión (guardado humano sobre la suya). */
 export async function overwriteArtifactMd(id: number, md: string): Promise<void> {
   await dbq(`UPDATE gc_artifacts SET md = ? WHERE id = ?`, [md, id]);

@@ -189,5 +189,12 @@ export function wordDiff(a: string, b: string): DiffPart[] {
   }
   while (i < A.length) push("del", A[i++]);
   while (j < B.length) push("ins", B[j++]);
+  // Si casi todo cambió (una reescritura), palabra por palabra queda un revoltijo de rojo y
+  // verde imposible de leer (visto con el agente real, 7-oct): mejor el bloque viejo tachado
+  // y el nuevo completo.
+  const iguales = out.filter((d) => d.t === "eq").reduce((n, d) => n + d.s.trim().length, 0);
+  if (iguales < 0.5 * Math.max(a.replace(/\s/g, "").length, b.replace(/\s/g, "").length)) {
+    return [{ t: "del", s: a }, { t: "eq", s: " " }, { t: "ins", s: b }];
+  }
   return out;
 }

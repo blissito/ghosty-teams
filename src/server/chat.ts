@@ -1623,18 +1623,46 @@ export const askAgent = createServerFn({ method: "POST" })
       // Fallo VISIBLE por diseño: lo que no aplica se loguea con su nodeId y su motivo, y
       // si NO aplica nada no se crea versión (el artefacto anterior sigue en pie) — una
       // capa de contención muda escondería que el modo patch está roto.
-      // Observaciones ancladas (```eb-comment```): la revisión va AL documento, no al chat.
       const docsV2 = await (await import("./docs-v2.server")).docsV2On();
+      // Observaciones ancladas (```eb-comment```): la revisión va AL documento, no al chat.
+      // Se arman aquí y se publican abajo como versión de ESTE mensaje (con o sin parche).
+      let notas: import("../lib/doc-comments").DocComment[] | undefined;
       if (docsV2 && currentDoc?.kind === "doc" && currentDocId && reply.includes("```eb-comment")) {
-        const { applyAgentComments } = await import("./artifacts");
-        const { stripDocComments } = await import("../lib/doc-comments");
-        const r = await applyAgentComments({ documentId: currentDocId, reply, by: data.handle });
-        if (r.n) {
-          reply = stripDocComments(reply) +
-            `\n\n*Dejé ${r.n === 1 ? "1 observación" : `${r.n} observaciones`} en el documento, cada una en su párrafo.*`;
-          await db.setMessageBody(id, reply);
-          bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: reply });
-          bus.publish(bus.ch.room(ns, channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId });
+        const { parseDocEnvelope } = await import("../lib/doc-blocks");
+        const envNotas = parseDocEnvelope(currentDoc.md);
+        if (envNotas) {
+          const { buildAgentComments } = await import("./artifacts");
+          const { stripDocComments } = await import("../lib/doc-comments");
+          const r = await buildAgentComments({ env: envNotas, reply, by: data.handle });
+          console.log(`[gt-comment] doc=${currentDocId} observaciones=${r.n} sin_bloque=${r.missing.length}`);
+          if (r.n) {
+            notas = r.comments;
+            reply =
+              stripDocComments(reply) +
+              `\n\n*Dejé ${r.n === 1 ? "1 observación" : `${r.n} observaciones`} en el documento, cada una en su párrafo.*`;
+            await db.setMessageBody(id, reply);
+            bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: reply });
+            // Sin parche en el turno: las notas salen solas como versión de este mensaje (el
+            // texto no cambia). Con parche, van en la versión del parche (más abajo).
+            if (!extractEbPatches(reply).length) {
+              const { publishArtifactVersion } = await import("./artifacts");
+              await publishArtifactVersion({
+                messageId: id,
+                documentId: currentDocId,
+                kind: "doc",
+                title: (await db.docTitle(currentDocId).catch(() => null)) ?? "Documento",
+                md: "",
+                blocks: envNotas.blocks,
+                humanEdited: envNotas.humanEdited,
+                comments: notas,
+                previo: envNotas,
+            ownerSub: poster?.sub ?? null,
+            setPointer: (docId) => db.setThreadArtifact(channel.id, data.parentId, docId),
+            notify: () =>
+              bus.publish(bus.ch.room(ns, channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId }),
+              });
+            }
+          }
         }
       }
       const patches = extractEbPatches(reply);
@@ -1675,11 +1703,14 @@ export const askAgent = createServerFn({ method: "POST" })
               messageId: id,
               documentId: currentDocId,
               kind: "doc",
-              title: draftTitle(nuevoMd, "doc"),
+              // El título es del DOCUMENTO: derivarlo del primer encabezado tras un parche lo
+              // renombraba a «Declaraciones» o «Portada» (visto en descti).
+              title: (await db.docTitle(currentDocId).catch(() => null)) ?? draftTitle(nuevoMd, "doc"),
               md: nuevoMd,
               blocks: res.blocks,
               changedIds: res.changedIds,
               suggestions: mergeSuggestions(env.suggestions, res.suggestions, res.blocks),
+              comments: notas,
               // El sobre ya está leído aquí (`env`): un patch cambia BLOQUES, nada más, así
               // que todo lo demás del documento —su marca— se arrastra tal cual.
               previo: env,
