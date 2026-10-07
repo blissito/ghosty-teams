@@ -66,7 +66,7 @@ const pktLine = (s: string) => (new TextEncoder().encode(s).length + 4).toString
  * Rechazo dentro del protocolo de git (`ng <ref> <razón>` y `remote: …`): git le enseña la razón
  * a quien empuja, en vez de un «HTTP 403» mudo.
  */
-export function receivePackRejection(ref: string, why: string, caps: string[]): Uint8Array {
+export function receivePackRejection(ref: string, why: string, caps: string[]): Uint8Array<ArrayBuffer> {
   const status = pktLine("unpack ok\n") + pktLine(`ng ${ref} ${why}\n`) + "0000";
   if (!caps.includes("side-band-64k") && !caps.includes("side-band")) return new TextEncoder().encode(status);
   return new TextEncoder().encode(pktLine(`\x02${why}\n`) + pktLine(`\x01${status}`) + "0000");

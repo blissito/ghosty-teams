@@ -135,6 +135,8 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
             const done = st.status === "done" || (current >= 0 && i < current);
             const now = !closed && i === current;
             const stopped = st.status === "cancelled" && i === cancelledAt;
+            // PR cerrado sin merge en GitHub: el paso PR lo dice, no sólo el pie.
+            const prClosed = s.key === "pr" && st.status === "cancelled" && !!st.cancelled?.prClosed;
             // Escalado: el paso actual ya no es de @check sino de la persona, en ámbar.
             const deciding = now && (st.status === "escalated" || boxWaiting);
             return (
@@ -143,7 +145,9 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
                 <span
                   className={`flex-1 whitespace-nowrap rounded-full px-1.5 py-1 text-center text-[11px] font-semibold ${
                     // Mezclado = el morado «merged» de GitHub; en curso, verde por paso hecho.
-                    deciding
+                    prClosed
+                      ? "bg-red-600/15 text-red-700 dark:text-red-400"
+                      : deciding
                       ? "bg-amber-500 text-white"
                       : now
                         ? "bg-brand text-white"
@@ -156,8 +160,12 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
                           : "bg-surface-3 text-muted"
                   }`}
                 >
-                  {done ? "✓ " : stopped ? "⊘ " : ""}
-                  {deciding ? t("Te toca decidir") : t(s.label)}
+                  {prClosed ? `✕ ${t("PR cerrado")}` : (
+                    <>
+                      {done ? "✓ " : stopped ? "⊘ " : ""}
+                      {deciding ? t("Te toca decidir") : t(s.label)}
+                    </>
+                  )}
                 </span>
               </li>
               {/* El CI es una etapa del camino: estado en vivo del PR; si el repo ya tiene CI y
@@ -226,7 +234,7 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
             : st.status === "escalated"
             ? escalationLine(st.loops, t)
             : st.status === "cancelled"
-              ? st.cancelled?.reason === "pr_closed"
+              ? st.cancelled?.prClosed
                 ? t("Cancelado: el PR se cerró en GitHub sin merge.")
                 : st.cancelled?.actor
                   ? t("Cancelado por {nombre}.").replace("{nombre}", st.cancelled.actor)

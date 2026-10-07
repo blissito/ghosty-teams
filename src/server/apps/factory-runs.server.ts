@@ -1223,7 +1223,7 @@ export async function prConflicted(sub: string, url: string): Promise<boolean | 
   return o?.outcome === "open" ? (o.conflicted ?? null) : null;
 }
 
-async function prOutcome(
+export async function prOutcome(
   sub: string,
   url: string,
 ): Promise<{ outcome: "merged" | "closed" | "open"; approved: boolean; conflicted?: boolean; headSha?: string } | null> {

@@ -513,10 +513,30 @@ export const factoryRunCardFn = createServerFn({ method: "POST" })
       // Firmado pero sin lugar en el tier: la tarjeta dice «En espera de lugar», no «Arrancando…».
       boxWaiting: !!run.boxWaiting && run.status === "building",
       // Cancelado: en qué etapa iba y por qué, para conservar las ✓ de lo que sí se hizo.
-      cancelled: run.status === "cancelled" ? await R.cancelInfo(run.id) : null,
+      cancelled: run.status === "cancelled" ? await cancelledView(run, me.sub) : null,
       ...(await runLive(run)),
     };
   });
+
+/**
+ * Pedido cancelado para su tarjeta: la etapa (bitácora) y si el PR quedó cerrado en GitHub. Lo
+ * segundo se pregunta a GitHub y no a la bitácora: los cancelados antes del 7-oct no guardaron el
+ * motivo y el chip «PR» no lo decía (#17 de MailMask). Cerrado es final: se cachea.
+ */
+const prClosedCache = new Map<number, boolean>();
+async function cancelledView(run: { id: number; prUrl: string | null; approvedBy?: string | null; requestedBy?: string | null }, meSub: string) {
+  const R = await import("./factory-runs.server");
+  const info = await R.cancelInfo(run.id);
+  let prClosed = info?.reason === "pr_closed";
+  if (!prClosed && run.prUrl) {
+    if (!prClosedCache.has(run.id)) {
+      const o = await R.prOutcome(run.approvedBy ?? run.requestedBy ?? meSub, run.prUrl).catch(() => null);
+      if (o) prClosedCache.set(run.id, o.outcome === "closed");
+    }
+    prClosed = prClosedCache.get(run.id) ?? false;
+  }
+  return { from: info?.from ?? null, actor: info?.actor ?? null, prClosed };
+}
 
 // La tarjeta se refresca con cada evento del room: GitHub se pregunta como mucho cada minuto por PR.
 const ciCache = new Map<string, { at: number; v: { state: string; repoHasCi: boolean } | null }>();

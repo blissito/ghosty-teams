@@ -1802,6 +1802,7 @@ export const en: Record<string, string> = {
   "Cancelado.": "Cancelled.",
   "Cancelado: el PR se cerró en GitHub sin merge.": "Cancelled: the PR was closed on GitHub without merging.",
   "Cancelado por {nombre}.": "Cancelled by {nombre}.",
+  "PR cerrado": "PR closed",
   "Terminado.": "Done.",
   "Vueltas de check": "Check rounds",
   "Otra vuelta": "Another round",
