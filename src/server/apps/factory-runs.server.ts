@@ -118,7 +118,33 @@ export async function applyEvent(
   }
   void syncRunTask(updated, run.status).catch(() => {});
   void refreshRoom(updated.channelId);
+  // Al cerrar o escalar: si el pedido no fue sano, gs dice por qué y lo dejamos en el hilo.
+  if (["done", "escalated", "cancelled"].includes(updated.status)) void postWhyIfUnhealthy(updated);
   return updated;
+}
+
+/**
+ * Le pide a gs el análisis del pedido (`/api/v2/factory/why`, firma de partner) y, si no fue sano
+ * (atascos, @build de más de 30 min, vueltas, CI rojo, escalado), deja sus 3 líneas en el hilo:
+ * qué pasó, el paso crítico y qué cambiar para la próxima. Patrón de Devin Session Insights, que
+ * sólo analiza las sesiones «unhealthy». Nunca lanza.
+ */
+export async function postWhyIfUnhealthy(run: Run): Promise<void> {
+  try {
+    const { nativeRuntimeBase, partnerHeaders } = await import("../ghosty-runtime.server");
+    const { currentNamespace } = await import("../tenant.server");
+    const base = await nativeRuntimeBase();
+    const ns = await currentNamespace();
+    if (!base || !ns) return;
+    const body = JSON.stringify({ runId: run.id });
+    const res = await fetch(`${base}/api/v2/factory/why`, { method: "POST", headers: partnerHeaders(body, ns), body, signal: AbortSignal.timeout(60_000) });
+    if (!res.ok) return;
+    const j = (await res.json()) as { healthy?: boolean; note?: string | null };
+    if (j.healthy || !j.note) return;
+    await postInThread(run, "check", j.note);
+  } catch (e) {
+    console.error("[factory] por qué", e);
+  }
 }
 
 // ── La tarjeta de Tasks sigue al pedido ──────────────────────────────────────
@@ -454,6 +480,60 @@ export async function sweepStaleRuns(isBusy: (run: Run) => boolean): Promise<voi
     await logEvent(run.id, "stale", null, { status: run.status });
     await notifyRun(run, [run.requestedBy], "Lleva 30 min sin avanzar. Ábrelo para retomarlo o detenerlo.", `factory:${run.id}:stale`);
     void refreshRoom(run.channelId);
+  }
+}
+
+// ── Atascos en vivo ──────────────────────────────────────────────────────────
+
+/** Frame `stalled` de gs: su vigilante vio un atasco en el turno de un rol (reglas deterministas). */
+export type StalledFrame = { rule?: string; detail?: string; count?: number; secs?: number | null; human?: string; steer?: string };
+
+/** Un mismo atasco (regla + comando) no se vuelve a avisar en este lapso. */
+const STUCK_REARM_SECONDS = 30 * 60;
+
+/**
+ * gs avisa que el turno de un rol de la fábrica está atascado (un comando de 8+ min, el mismo
+ * comando repetido, errores en fila, ir y venir, apt a mano). Escalera, sin matar ni abortar nada:
+ * aviso en el hilo + steer al rol (le llega con el siguiente resultado de tool, justo cuando decide
+ * si lo vuelve a esperar); desde el segundo atasco del pedido, push a quien lo pidió (una vez).
+ * Nació del #13 de mercadito-verde (6-oct): cinco esperas de ~10 min sin que nadie se enterara.
+ * Nunca lanza.
+ */
+export async function onRoleStalled(groupId: string, ev: StalledFrame): Promise<void> {
+  try {
+    const m = /-([a-z0-9_]+)-factory-(\d+)$/.exec(groupId);
+    const role = m?.[1];
+    if (!m || (role !== "plan" && role !== "build" && role !== "check")) return;
+    const run = await getRun(Number(m[2]));
+    if (!run || !["planning", "building", "checking"].includes(run.status)) return;
+    const rule = String(ev.rule ?? "");
+    const detail = String(ev.detail ?? "").slice(0, 240);
+    const now = Math.floor(Date.now() / 1000);
+    const prior = await dbq("SELECT at, data_json FROM gt_factory_events WHERE run_id = ? AND type = 'stuck' ORDER BY id", [run.id]).catch(() => []);
+    const same = prior.some((p: Record<string, unknown>) => {
+      try {
+        const d = JSON.parse(String(p.data_json ?? "{}"));
+        return d.rule === rule && d.detail === detail && now - Number(p.at) < STUCK_REARM_SECONDS;
+      } catch {
+        return false;
+      }
+    });
+    if (same) return;
+    const firstOfRun = prior.length === 0;
+    await logEvent(run.id, "stuck", null, { role, rule, detail, count: ev.count ?? null, secs: ev.secs ?? null });
+    const human = String(ev.human ?? `parece atascado (${rule}).`);
+    const steered = ev.steer ? await steerRole(run, role, String(ev.steer)) : false;
+    await postInThread(run, role, `⏳ @${role} ${human}${steered ? " Ya le pedí revisarlo en cuanto regrese el comando." : ""}`);
+    if (!firstOfRun) {
+      const [sent] = await dbq("SELECT 1 FROM gt_factory_events WHERE run_id = ? AND type = 'stuck_notified' LIMIT 1", [run.id]).catch(() => []);
+      if (!sent) {
+        await logEvent(run.id, "stuck_notified", null, { role });
+        await notifyRun(run, [run.requestedBy], `@${role} parece atascado: ${human}`, `factory:${run.id}:stuck`);
+      }
+    }
+    void refreshRoom(run.channelId);
+  } catch (e) {
+    console.error("[factory] atasco", e);
   }
 }
 

@@ -2586,6 +2586,11 @@ export async function callAgentBackendStream(
           } else if (ev.type === "progress") {
             // Latido de una tool abierta (gs, cada 20 s). No es actividad nueva: sólo el reloj.
             if (ev.id && typeof ev.elapsedMs === "number") await onTool?.({ id: ev.id, phase: "progress", elapsedMs: ev.elapsedMs });
+          } else if (ev.type === "stalled") {
+            // El vigilante de gs vio un atasco en este turno. Sólo importa en roles de la fábrica;
+            // se atiende aparte para no frenar el stream.
+            const st = ev as unknown as import("./server/apps/factory-runs.server").StalledFrame;
+            void import("./server/apps/factory-runs.server").then((m) => m.onRoleStalled(groupId, st)).catch(() => {});
           } else if (ev.type === "truncated") {
             // ⚠️ NO lanza. Sólo `error` lanza, y así debe seguir: un corte que tire el turno
             // perdería el trabajo parcial, que es justo lo que este aviso viene a conservar.
