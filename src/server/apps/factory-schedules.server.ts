@@ -103,6 +103,8 @@ export async function sweepTenant(ns: string): Promise<void> {
   await closeFinishedRuns().catch(() => {});
   const { announcePreviews, retryWaitingRunBoxes } = await import("./factory-runs.server");
   await retryWaitingRunBoxes().catch(() => {});
+  const { retryWaitingPrPreviews } = await import("./pr-preview.server");
+  await retryWaitingPrPreviews().catch(() => {});
   await announcePreviews().catch(() => {});
   const rows = await dbq(
     `SELECT * FROM gt_factory_schedules WHERE enabled = 1 AND next_at IS NOT NULL AND next_at <= unixepoch()`,

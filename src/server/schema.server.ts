@@ -1008,6 +1008,18 @@ async function migrate(): Promise<void> {
   await addColumn("gt_factory_plans", "critique_notes", "TEXT");
   await addColumn("gt_factory_plans", "auto_approve_by", "TEXT");
   await addColumn("gt_factory_plans", "auto_approve_who", "TEXT");
+  // Previews sueltas (PRs sin pedido) que no cupieron o que se soltaron (7-oct): gs reparte los
+  // lugares del tier entre cajas de pedido y previews sueltas. `waiting` = 409 no_slot, el tick
+  // la reintenta sola; `evicted` = un pedido u otra preview la desplazó. `busy` = JSON de runIds.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_pr_preview_state (
+    repo         TEXT NOT NULL,
+    pr           INTEGER NOT NULL,
+    state        TEXT NOT NULL,
+    requested_by TEXT,
+    busy         TEXT,
+    at           INTEGER NOT NULL DEFAULT (unixepoch()),
+    PRIMARY KEY (repo, pr)
+  )`);
 
   // Campañas de Ghosty Ads (2026-09-26): el #N de cada campaña de Meta que se propuso en un
   // room con @ads o que se importó. La credencial de Meta y la Marketing API viven en gs

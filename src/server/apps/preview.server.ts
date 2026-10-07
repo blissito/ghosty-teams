@@ -167,7 +167,14 @@ export async function gsPreview(op: "up" | "status" | "down" | "env-set" | "env-
     body: raw,
   });
   const out = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(String(out?.error ?? `gs ${res.status}`));
+  if (!res.ok) {
+    // `status` y `body` viajan en el Error: quien llama distingue un 409 `no_slot` (sin lugar)
+    // de un fallo de verdad sin cambiar el mensaje que ven los demás.
+    const err = new Error(String(out?.error ?? `gs ${res.status}`)) as Error & { status?: number; body?: any };
+    err.status = res.status;
+    err.body = out;
+    throw err;
+  }
   return out;
 }
 
