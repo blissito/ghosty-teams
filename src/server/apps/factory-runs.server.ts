@@ -592,6 +592,9 @@ export async function ensureRunBox(run: Run): Promise<"ready" | "waiting" | "off
   try {
     const r = await gsRunBox("up", { runId: run.id, repo: run.repo, agents: await runBoxAgents(run) });
     if (r.status === 200 && r.json?.boxId) {
+      // Un pedido desplaza previews sueltas: su botón dirá que se soltó para dar lugar.
+      if (Array.isArray(r.json.evicted) && r.json.evicted.length)
+        await (await import("./pr-preview.server")).recordEvictedPreviews(r.json.evicted).catch(() => {});
       const [prev] = await dbq("SELECT box_state FROM gt_factory_runs WHERE id = ?", [run.id]).catch(() => []);
       await dbq("UPDATE gt_factory_runs SET box_id = ?, box_state = 'ready' WHERE id = ?", [String(r.json.boxId), run.id]);
       if (prev?.box_state === "waiting") await logEvent(run.id, "box_ready", null, { box: r.json.boxId });
