@@ -74,6 +74,7 @@ import { SmilePlus, Pencil, ArrowLeft, Reply, Square, Ban, CircleHelp, ShieldAle
 import { useRtSubscribe } from "../../utils/rt-bus";
 import { PlanCard } from "./PlanCard";
 import { RunCard } from "./RunCard";
+import { PrPreviewButton } from "./PrPreviewButton";
 import { VerdictCard, PreviewErrorCard } from "./VerdictCard";
 import { AdsProposalCard } from "./AdsProposalCard";
 import { AdsVersionLink } from "./AdsVersionLink";
@@ -1643,15 +1644,20 @@ export function TaskCard({ task, channelId, parentId }: { task: TaskCardData; ch
  * Sin botones a propósito — no es una versión recortada de `PrCard`, es otra cosa. Un PR
  * abierto se aprueba o se mergea desde aquí; un issue creado sólo se mira. Ofrecer botones
  * que no hacen nada es peor que no ofrecerlos.
+ *
+ * Excepción (7-oct): un PR abierto SIN pedido de la fábrica lleva «Levantar preview» debajo,
+ * discreto y fuera de la liga. Ése sí hace algo de verdad; el servidor decide si aplica.
  */
-export function GhCard({ gh }: { gh: GhCardData }) {
+export function GhCard({ gh, channelId = 0 }: { gh: GhCardData; channelId?: number }) {
   const t = useT();
   const etiqueta =
     gh.kind === "issue" ? t("Issue") : gh.kind === "commit" ? t("Commit") : gh.kind === "pr" ? "PR" : t("Rama");
   // El `#` sólo para lo que se numera; un sha o una rama no lo llevan.
   const ref = gh.kind === "issue" || gh.kind === "pr" ? `#${gh.ref}` : gh.ref;
   const cerrado = gh.state === "closed" || gh.state === "merged";
+  const prNumber = gh.kind === "pr" ? Number(gh.ref) : 0;
   return (
+    <>
     <a
       href={gh.url}
       target="_blank"
@@ -1681,6 +1687,10 @@ export function GhCard({ gh }: { gh: GhCardData }) {
         </span>
       ) : null}
     </a>
+    {gh.kind === "pr" && gh.state === "open" && channelId > 0 && prNumber > 0 ? (
+      <PrPreviewButton channelId={channelId} repo={gh.repo} number={prNumber} />
+    ) : null}
+    </>
   );
 }
 
@@ -1970,6 +1980,8 @@ export function PrCard({ pr, channelId, parentId, prosa }: { pr: PrCardData; cha
             </a>
           ) : null}
         </div>
+        {/* Sin preview del agente y con el PR abierto: el botón a pedido (no aparece si es de un pedido). */}
+        {!pr.preview && st?.actionable ? <PrPreviewButton channelId={channelId} repo={pr.repo} number={pr.number} /> : null}
         {st?.connected === false ? (
           <p className="mt-2 text-[11.5px] text-muted">{t("Conecta tu GitHub en Ajustes para poder aprobar desde aquí.")}</p>
         ) : null}
@@ -3081,7 +3093,7 @@ export function MessageRow({
               {(() => {
                 // Las simples (issue, commit, rama): sin botones, porque no hay nada que
                 // accionar desde aquí. Ver `gt-gh` en lib/ebdoc.
-                return extractAllGh(m.body).map((gh) => <GhCard key={`${gh.kind}:${gh.repo}:${gh.ref}`} gh={gh} />);
+                return extractAllGh(m.body).map((gh) => <GhCard key={`${gh.kind}:${gh.repo}:${gh.ref}`} gh={gh} channelId={m.channel_id ?? 0} />);
               })()}
               {(() => {
                 const tk = extractTask(m.body);

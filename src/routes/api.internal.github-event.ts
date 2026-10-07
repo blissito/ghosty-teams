@@ -135,7 +135,14 @@ export const Route = createFileRoute("/api/internal/github-event")({
             return Response.json({ ok: true, recorded, asked });
           }
           const { enqueuePostMerge } = await import("../server/apps/post-merge.server");
-          for (const run of await runsByPr(ev.repo, ev.number)) {
+          const prRuns = await runsByPr(ev.repo, ev.number);
+          // PR sin pedido: si alguien le levantó preview con el botón de su tarjeta, su caja aparte
+          // se tira al mezclar o cerrar (la de un pedido la tira `onPrEvent`). Sin caja, gs no hace nada.
+          if ((ev.action === "merged" || ev.action === "closed") && !prRuns.length)
+            void import("../server/apps/preview.server")
+              .then((P) => P.gsPreview("down", { repo: ev.repo, pr: ev.number }))
+              .catch(() => {});
+          for (const run of prRuns) {
             runRooms.add(run.channelId);
             if (ev.action === "merged" || ev.action === "closed") await onPrEvent(run, ev.action);
             if (ev.action === "merged") {
