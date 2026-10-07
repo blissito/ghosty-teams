@@ -83,7 +83,8 @@ export function SprintCard({ card, channelId, expanded = false }: { card: { spri
   const byKey = new Map(st.items.map((i) => [i.key, i]));
   const working = included.filter((i) => i.status === "active" || i.status === "pr").length;
   const current = included.find((i) => i.status === "active" || i.status === "pr");
-  const stageLabel = (s: string | null) => (s === "you_review" ? t("te toca revisar el PR") : s === "you_decide" ? t("te toca decidir") : s ?? "");
+  const stageLabel = (s: string | null) =>
+    s === "you_review" ? t("te toca revisar el PR") : s === "you_decide" ? t("te toca decidir") : s === "box_wait" ? t("en espera de caja") : (s ?? "");
   const openPanel = () => onOpenArtifact?.({ kind: "sprint", title: st.title, sprintId: st.id, channelId });
 
   if (!expanded) {

@@ -127,10 +127,14 @@ export type RunView = {
 };
 
 export function viewState(
-  run: { status: RunStatus; requestedBy: string; approvedBy?: string | null },
+  run: { status: RunStatus; requestedBy: string; approvedBy?: string | null; boxWaiting?: boolean },
   opts: { lastActivityAt: number; now: number; busy: boolean; staleAfter?: number; waitingOn?: string | null },
 ): RunView {
   const open = !["done", "cancelled"].includes(run.status);
+  // Firmado pero sin lugar en el tier: espera su caja. No es «Construyendo» ni «Sin avanzar», y
+  // nadie tiene que hacer nada: arranca solo cuando se libere un lugar.
+  if (run.boxWaiting && run.status === "building")
+    return { column: "waiting", label: "En espera de lugar", stale: false, whoseTurn: null, primary: "stop" };
   // Un rol le preguntó algo a la persona: le toca a ella, no está «parado».
   if (opts.waitingOn && !opts.busy && ["planning", "building", "checking"].includes(run.status))
     return { column: "waiting", label: "Espera tu respuesta", stale: false, whoseTurn: { kind: "person", sub: run.requestedBy }, primary: null };

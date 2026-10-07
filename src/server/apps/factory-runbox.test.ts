@@ -62,11 +62,11 @@ describe("ensureRunBox", () => {
   });
 
   it("sin lugar: queda en espera y avisa en el hilo UNA vez", async () => {
-    gs = { status: 409, json: { error: "no_slot", tier: "F1", max: 1, busy: [15] } };
+    gs = { status: 409, json: { error: "no_slot", tier: "F1", max: 2, busy: [15, 14] } };
     expect(await ensureRunBox(run())).toBe("waiting");
     expect(await ensureRunBox(run())).toBe("waiting");
     expect(posts).toHaveLength(1);
-    expect(posts[0]).toMatch(/F1 permite 1 pedido\(s\) en curso \(ahora: #15\)/);
+    expect(posts[0]).toMatch(/F1 tiene 2 lugar\(es\) y están ocupados por pedidos en curso \(#15, #14\)/);
   });
 
   it("sin repo o con gs caído sigue el camino viejo", async () => {

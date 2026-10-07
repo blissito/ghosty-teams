@@ -509,6 +509,8 @@ export const factoryRunCardFn = createServerFn({ method: "POST" })
       })(),
       // Después del merge: lo que vio el vigilante en producción (paso «Prod»).
       prod: run.status === "done" ? await (await import("./post-merge.server")).runProd(run) : null,
+      // Firmado pero sin lugar en el tier: la tarjeta dice «En espera de lugar», no «Arrancando…».
+      boxWaiting: !!run.boxWaiting && run.status === "building",
       ...(await runLive(run)),
     };
   });
@@ -633,6 +635,12 @@ export const factoryRunActionFn = createServerFn({ method: "POST" })
     const role = ({ planning: "plan", building: "build", checking: "check" } as const)[run.status as "planning" | "building" | "checking"];
     if (!role) throw new Error("en esta etapa no hay nada que retomar");
     if (live.liveTurnId) throw new Error("ya hay alguien trabajando en este pedido");
+    // Esperando lugar: @build no tiene caja todavía. Retomar = volver a pedirla; si sigue sin lugar,
+    // se dice y no se despierta a nadie.
+    if (run.boxWaiting && role === "build") {
+      if ((await R.resumeWaitingRun(run)) === "waiting") throw new Error("sigue en espera de lugar: arranca solo en cuanto se libere uno");
+      return { ok: true as const, status: run.status };
+    }
     const { reqOrigin } = await import("../../origin.server");
     const ok = await R.handoff(
       run,
@@ -749,7 +757,7 @@ export const factoryOverviewFn = createServerFn({ method: "GET" })
   const { dbq } = await import("../../dbq.server");
   const rows = room
     ? await dbq(
-        `SELECT id, channel_id, root_msg_id, title, status, repo, loops, created_at, pr_ready_at, first_review_at, first_review_state, merged_at, pr_url, kind, requested_by, approved_by,
+        `SELECT id, channel_id, root_msg_id, title, status, repo, loops, created_at, pr_ready_at, first_review_at, first_review_state, merged_at, pr_url, kind, requested_by, approved_by, box_state,
                 MAX(COALESCE((SELECT MAX(at) FROM gt_factory_events e WHERE e.run_id = gt_factory_runs.id), 0),
                     COALESCE((SELECT MAX(created_at) FROM gc_messages m WHERE m.channel_id = gt_factory_runs.channel_id AND m.parent_id = gt_factory_runs.root_msg_id), 0),
                     updated_at) AS last_at
@@ -767,7 +775,7 @@ export const factoryOverviewFn = createServerFn({ method: "GET" })
   const viewOf = (r: Record<string, any>) => {
     if (["done", "cancelled"].includes(String(r.status))) return { column: null, label: null, turnSub: null };
     const v = viewState(
-      { status: r.status, requestedBy: String(r.requested_by), approvedBy: r.approved_by ?? null },
+      { status: r.status, requestedBy: String(r.requested_by), approvedBy: r.approved_by ?? null, boxWaiting: r.box_state === "waiting" },
       { lastActivityAt: Number(r.last_at ?? now), now, busy: live.some((t) => t.channelId === Number(r.channel_id) && t.parentId === Number(r.root_msg_id)) },
     );
     return { column: v.column, label: v.label, turnSub: v.whoseTurn?.kind === "person" ? v.whoseTurn.sub : null };
@@ -1000,7 +1008,7 @@ async function readSprint(sprintId: number) {
       issueUrl: it.issueNumber && sprint.repo ? `https://github.com/${sprint.repo}/issues/${it.issueNumber}` : null,
       issueNumber: it.issueNumber,
       // Quién lo tiene AHORA (para la tarjeta chica): un rol o la persona.
-      stage: !run ? null : ({ planning: "@plan", building: "@build", checking: "@check", pr_review: "you_review", escalated: "you_decide" } as Record<string, string>)[run.status] ?? null,
+      stage: !run ? null : run.boxWaiting && run.status === "building" ? "box_wait" : ({ planning: "@plan", building: "@build", checking: "@check", pr_review: "you_review", escalated: "you_decide" } as Record<string, string>)[run.status] ?? null,
       threadUrl: run ? `/c/${ch.slug}?thread=${run.rootMsgId}` : null,
     });
   }

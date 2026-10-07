@@ -27,6 +27,8 @@ export type Run = {
   approvedBy: string | null;
   /** La cabeza del PR que @check revisó en su último veredicto (ver `countsLoop`). */
   checkedSha?: string | null;
+  /** Firmado pero sin lugar en el tier: espera su caja (`box_state = 'waiting'`). */
+  boxWaiting?: boolean;
 };
 
 const toRun = (r: Record<string, any>): Run => ({
@@ -44,6 +46,7 @@ const toRun = (r: Record<string, any>): Run => ({
   headSha: r.head_sha ?? null,
   taskRef: r.task_ref ?? null,
   requestedBy: String(r.requested_by),
+  boxWaiting: r.box_state === "waiting",
   approvedBy: r.approved_by ?? null,
   checkedSha: r.checked_sha ?? null,
 });
@@ -159,6 +162,8 @@ const TASK_COLUMNS: Partial<Record<RunStatus, string[]>> = {
   pr_review: ["QA/Review", "Review", "In Review", "En revisión", "Revisión"],
   done: ["Done", "Hecho", "Terminado"],
 };
+/** Firmado pero esperando caja: todavía no se trabaja, la tarjeta se queda (o vuelve) a To Do. */
+const TASK_WAITING = ["To Do", "Todo", "Por hacer", "Pendiente", "Pendientes", "Backlog"];
 
 /** La tarea del pedido: `task_ref` (id numérico) o, si no hay, la que tenga ligado su PR. */
 async function runTaskId(run: Run): Promise<number | null> {
@@ -177,7 +182,7 @@ async function runTaskId(run: Run): Promise<number | null> {
  */
 export async function syncRunTask(run: Run, prevStatus: string): Promise<void> {
   if (run.status === prevStatus) return;
-  const wanted = TASK_COLUMNS[run.status];
+  const wanted = run.boxWaiting ? TASK_WAITING : TASK_COLUMNS[run.status];
   if (!wanted) return;
   const taskId = await runTaskId(run);
   if (!taskId) return;
@@ -442,7 +447,8 @@ export async function sweepStaleRuns(isBusy: (run: Run) => boolean): Promise<voi
             COALESCE((SELECT MAX(created_at) FROM gc_messages m WHERE m.parent_id = r.root_msg_id AND m.channel_id = r.channel_id), 0),
             r.updated_at) AS last_at
        FROM gt_factory_runs r
-      WHERE r.status IN ('planning','building','checking') AND r.stale_warned_at IS NULL AND (r.kind IS NULL OR r.kind != 'eval')`,
+      WHERE r.status IN ('planning','building','checking') AND r.stale_warned_at IS NULL AND (r.kind IS NULL OR r.kind != 'eval')
+        AND COALESCE(r.box_state, '') != 'waiting'`,
   ).catch(() => []);
   for (const r of rows) {
     if (now - Number(r.last_at ?? now) < STALE_SECONDS) continue;
@@ -597,7 +603,9 @@ export async function ensureRunBox(run: Run): Promise<"ready" | "waiting" | "off
         await dbq("UPDATE gt_factory_runs SET box_state = 'waiting' WHERE id = ?", [run.id]);
         await logEvent(run.id, "box_waiting", null, { tier: r.json.tier, busy: r.json.busy });
         const busy = (r.json.busy ?? []).map((n: number) => `#${n}`).join(", ");
-        await postInThread(run, "build", `⏳ En espera de lugar: tu plan ${r.json.tier} permite ${r.json.max} pedido(s) en curso${busy ? ` (ahora: ${busy})` : ""}. Arranco solo en cuanto se libere.`).catch(() => null);
+        void syncRunTask({ ...run, boxWaiting: true }, "waiting").catch(() => {});
+        void import("./sprint.server").then((S) => S.onSprintRunChanged(run.id)).catch(() => {});
+        await postInThread(run, "build", `⏳ En espera de lugar: tu plan ${r.json.tier} tiene ${r.json.max} lugar(es) y están ocupados por pedidos en curso${busy ? ` (${busy})` : ""}. Arranco solo en cuanto se libere uno.`).catch(() => null);
         void refreshRoom(run.channelId);
       }
       return "waiting";
@@ -610,19 +618,32 @@ export async function ensureRunBox(run: Run): Promise<"ready" | "waiting" | "off
   return "off";
 }
 
-/** Tick: los pedidos en cola por caja vuelven a pedirla; el que la obtiene recibe su encargo. */
+/**
+ * Un pedido en espera vuelve a pedir su caja; si la obtiene, recibe el encargo que quedó guardado y
+ * todas las vistas (tarjeta, barra, tablero, sprint, Tasks) se repintan. Lo usan el tick y «Retomar».
+ */
+export async function resumeWaitingRun(run: Run): Promise<"ready" | "waiting" | "off"> {
+  const st = await ensureRunBox(run);
+  if (st === "waiting") return st;
+  const [r] = await dbq("SELECT box_handoff FROM gt_factory_runs WHERE id = ?", [run.id]).catch(() => []);
+  let h: { sub: string; why: string; text: string; origin: string } | null = null;
+  try {
+    h = JSON.parse(String(r?.box_handoff ?? "null"));
+  } catch {}
+  await dbq("UPDATE gt_factory_runs SET box_handoff = NULL WHERE id = ?", [run.id]);
+  const fresh = (await getRun(run.id)) ?? run;
+  void syncRunTask(fresh, "plan_review").catch(() => {});
+  void import("./sprint.server").then((S) => S.onSprintRunChanged(run.id)).catch(() => {});
+  void refreshRoom(run.channelId);
+  if (h) await handoff(fresh, "build", h.sub, h.why, h.text, h.origin).catch((e) => console.warn(`[factory] encargo en cola #${run.id}: ${(e as Error).message}`));
+  return st;
+}
+
+/** Tick: los pedidos en cola por caja vuelven a pedirla, del más viejo al más nuevo. */
 export async function retryWaitingRunBoxes(): Promise<void> {
   const rows = await dbq("SELECT * FROM gt_factory_runs WHERE box_state = 'waiting' AND status = 'building' ORDER BY updated_at ASC LIMIT 5").catch(() => []);
   for (const r of rows) {
-    const run = toRun(r);
-    const st = await ensureRunBox(run);
-    if (st === "waiting") break; // el primero de la fila no cupo: los demás tampoco
-    let h: { sub: string; why: string; text: string; origin: string } | null = null;
-    try {
-      h = JSON.parse(String(r.box_handoff ?? "null"));
-    } catch {}
-    await dbq("UPDATE gt_factory_runs SET box_handoff = NULL WHERE id = ?", [run.id]);
-    if (h) await handoff(run, "build", h.sub, h.why, h.text, h.origin).catch((e) => console.warn(`[factory] encargo en cola #${run.id}: ${(e as Error).message}`));
+    if ((await resumeWaitingRun(toRun(r))) === "waiting") break; // el primero no cupo: los demás tampoco
   }
 }
 

@@ -107,3 +107,14 @@ describe("countsLoop", () => {
     expect(countsLoop({ checkedSha: "a", headSha: null, prevUncounted: false })).toBe(true);
   });
 });
+
+describe("pedido en espera de caja", () => {
+  it("dice «En espera de lugar», no «Construyendo» ni «Sin avanzar», aunque pasen horas", () => {
+    const v = viewState({ status: "building", requestedBy: "ana", boxWaiting: true }, { lastActivityAt: 0, now: 10 * 3600, busy: false });
+    expect(v.label).toBe("En espera de lugar");
+    expect(v.stale).toBe(false);
+    expect(v.whoseTurn).toBeNull();
+    const normal = viewState({ status: "building", requestedBy: "ana" }, { lastActivityAt: 0, now: 60, busy: true });
+    expect(normal.label).toBe("Construyendo");
+  });
+});

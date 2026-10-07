@@ -74,6 +74,8 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
   const stalled = !!WORKING[st.status] && !st.liveTurnId && st.view.stale;
   // Un rol le preguntó algo a la persona: ni «construyendo…» ni «Sin avanzar».
   const waiting = !!WORKING[st.status] && !st.liveTurnId && !!st.waitingOn;
+  // Firmado pero sin caja: el tier tiene todos sus lugares ocupados por otros pedidos.
+  const boxWaiting = !!st.boxWaiting;
   const closed = st.status === "done" || st.status === "cancelled";
   const runCi = async () => {
     setBusy(true);
@@ -129,7 +131,7 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
             const done = closed ? st.status === "done" : i < current;
             const now = !closed && i === current;
             // Escalado: el paso actual ya no es de @check sino de la persona, en ámbar.
-            const deciding = now && st.status === "escalated";
+            const deciding = now && (st.status === "escalated" || boxWaiting);
             return (
               <Fragment key={s.key}>
               <li className="flex flex-1 items-center gap-1">
@@ -193,7 +195,12 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
             💬 {t("@{rol} te hizo una pregunta en el hilo: contéstale ahí.").replace("{rol}", String(st.waitingOn))}
           </p>
         )}
-        {WORKING[st.status] && !stalled && !waiting && (
+        {boxWaiting && (
+          <p className="mt-2 text-xs font-semibold text-amber-700 dark:text-amber-300" role="status">
+            ⏳ {t("En espera de lugar: los lugares de tu plan están ocupados por otros pedidos. Arranca solo en cuanto se libere uno.")}
+          </p>
+        )}
+        {WORKING[st.status] && !stalled && !waiting && !boxWaiting && (
           <p className="mt-2 flex min-w-0 items-center gap-1.5 text-xs text-ink" role="status">
             <span className="relative flex h-2 w-2">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand opacity-60 motion-reduce:animate-none" />
