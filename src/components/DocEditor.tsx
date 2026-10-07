@@ -8,6 +8,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Loader2,
+  ListX,
   Pause,
   Pencil,
   Play,
@@ -38,6 +39,8 @@ import {
 import { reconcile } from "../lib/doc-reconcile";
 import { useReadAloud } from "../lib/read-aloud";
 import { useDocReview, type Hallazgo } from "../lib/doc-review";
+import CommentsLayer from "./DocComments";
+import DocProposals from "./DocProposals";
 import { rangoEnBloque } from "../lib/doc-dom-range";
 import { estaCerrando, observarCierre } from "../lib/panel-cerrando";
 
@@ -142,6 +145,13 @@ export default function DocEditor({
   documentId,
   getVersion,
   cerrando,
+  topInset = 0,
+  comments,
+  onResolveComment,
+  commentSuggestions,
+  onFixComment,
+  onCommentSuggestion,
+  proposals,
 }: {
   /** La verdad, ya en bloques (documento publicado con sobre `v:1`). */
   blocks?: DocBlock[];
@@ -199,8 +209,27 @@ export default function DocEditor({
    * no basta para detectarlo a tiempo; el panel lo sabe y lo dice.
    */
   cerrando?: boolean;
+  /** Alto de lo que va pegado arriba del documento (la barra de sugerencias): los controles flotantes bajan eso. */
+  topInset?: number;
+  /** Observaciones del agente ancladas a bloques (van al margen / chip, ver `DocComments`). */
+  comments?: import("../lib/doc-comments").DocComment[];
+  onResolveComment?: (id: string, resolved: boolean) => Promise<void>;
+  commentSuggestions?: import("../lib/doc-suggest").DocSuggestion[];
+  onFixComment?: (commentId: string) => Promise<void>;
+  onCommentSuggestion?: (suggestionId: string, accept: boolean) => Promise<void>;
+  /** Todas las propuestas pendientes: se pintan dentro de su párrafo (ver `DocProposals`). */
+  proposals?: import("../lib/doc-suggest").DocSuggestion[];
 }) {
   const t = useT();
+  const topInsetRef = useRef(topInset);
+  topInsetRef.current = topInset;
+  // El recálculo de los controles escucha scroll/tamaño; un cambio de la barra no es ninguno,
+  // así que se llama directo. (Un `resize` sintético a la ventana hacía que toda la app
+  // re-midiera y entraba en bucle con el alto de la barra.)
+  const recalcRef = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    recalcRef.current?.();
+  }, [topInset]);
   const editor = useCreateBlockNote({
     schema,
     dropCursor: multiColumnDropCursor,
@@ -220,6 +249,8 @@ export default function DocEditor({
   // cláusula anterior, arrastrarte al final en cada tick haría el documento
   // ilegible justo mientras se escribe — que es cuando más se quiere leer.
   const scroller = useRef<HTMLDivElement>(null);
+  // La hoja (contenedor relativo del <article>): ahí se cuelga la columna de observaciones.
+  const [hoja, setHoja] = useState<HTMLDivElement | null>(null);
   // El ref lo lee el efecto (sin re-render por tick); el state pinta el botón. Los dos,
   // porque leer el state dentro del efecto lo ataría a su closure.
   const pegado = useRef(true);
@@ -289,7 +320,7 @@ export default function DocEditor({
           left: Math.round(r.left + 16),
           right: Math.round(r.right - 150),
           top: Math.round(r.bottom - 52),
-          arriba: Math.round(r.top + 12),
+          arriba: Math.round(r.top + 12 + topInsetRef.current),
           // Nunca menos de 12px del borde de la VENTANA: con el panel pegado a la derecha
           // (o con la barra de scroll de por medio) el cálculo salía negativo y los
           // controles se cortaban por fuera de la pantalla.
@@ -317,6 +348,7 @@ export default function DocEditor({
       // que se ve fatal justo en el gesto de cerrar.
       ro = new ResizeObserver(on);
       ro.observe(box);
+      recalcRef.current = on;
       on();
     };
     enganchar();
@@ -1126,7 +1158,7 @@ export default function DocEditor({
         ref={scroller}
         className="gt-doc h-full overflow-auto bg-surface-3 p-4 thin-scroll sm:p-6"
       >
-        <div className="mx-auto max-w-[8.5in]">
+        <div ref={setHoja} className="relative mx-auto max-w-[8.5in]">
           <article className="min-h-[60vh] rounded-sm bg-white py-10 text-black shadow-md sm:py-14">
             <BlockNoteView
               editor={editor}
@@ -1283,7 +1315,25 @@ export default function DocEditor({
           style={{ position: "fixed", top: posBoton.arriba + 44, right: posBoton.derecha }}
           className="z-[70] flex items-center gap-1 rounded-full border border-border bg-surface/95 px-1.5 py-1 shadow-lg backdrop-blur"
         >
-          {!revision.revisando ? (
+          {!revision.revisando && revision.pospuestas > 0 && revision.estado !== "revisando" ? (
+            // Micro chip: quedaron sugerencias pospuestas con "Descartar todas". No grita
+            // (gris, pequeño), pero sigue ahí para retomarlas cuando quieras.
+            <button
+              type="button"
+              onClick={() => {
+                revision.olvidarPospuestas();
+                void revisarDoc();
+              }}
+              aria-label={t("Retomar correcciones de ortografía pospuestas")}
+              title={t("Retomar correcciones de ortografía pospuestas")}
+              className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] text-muted transition hover:text-brand"
+            >
+              <SpellCheck size={12} />
+              {estrecho
+                ? String(revision.pospuestas)
+                : t("{n} correcciones pospuestas").replace("{n}", String(revision.pospuestas))}
+            </button>
+          ) : !revision.revisando ? (
             <button
               type="button"
               onClick={() => void revisarDoc()}
@@ -1349,6 +1399,20 @@ export default function DocEditor({
                   </button>
                 </>
               ) : null}
+              {revision.total > 0 ? (
+                // "Descartar todas": el gemelo de aplicarlas todas. No las da por buenas
+                // (no van al diccionario); las pospone y deja el chip para después.
+                <button
+                  type="button"
+                  onClick={revision.descartarTodas}
+                  aria-label={t("Descartar todas")}
+                  title={t("Descartar todas (quedan pospuestas para revisarlas después)")}
+                  className="inline-flex items-center gap-1 rounded-full px-1.5 py-1 text-[11px] font-medium text-ink transition hover:text-brand"
+                >
+                  <ListX size={14} />
+                  {estrecho ? null : t("Descartar todas")}
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={revision.salir}
@@ -1368,6 +1432,23 @@ export default function DocEditor({
 
       {/* La tarjeta del hallazgo. Va anclada al panel y no flotando junto a la palabra:
           una tarjeta pegada al texto tapa justo lo que tienes que leer para decidir. */}
+      {proposals?.length && !streaming ? <DocProposals hoja={hoja} suggestions={proposals} /> : null}
+      {comments?.length && onResolveComment && posBoton && !streaming ? (
+        <CommentsLayer
+          comments={comments}
+          pos={posBoton}
+          estrecho={estrecho}
+          visible={hayPanel}
+          // Debajo del chip de ortografía; su tarjeta, debajo de él.
+          top={posBoton.arriba + 88}
+          hoja={hoja}
+          onResolve={onResolveComment}
+          onAbrir={revision.revisando ? revision.salir : undefined}
+          suggestions={commentSuggestions}
+          onFix={onFixComment}
+          onSuggestion={onCommentSuggestion}
+        />
+      ) : null}
       {revision.revisando && revision.actual && hayPanel ? (
         <div
           style={{

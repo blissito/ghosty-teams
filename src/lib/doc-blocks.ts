@@ -69,6 +69,16 @@ export interface DocEnvelope {
    * depende de `arrastra` — ver el aviso de `serializeDocEnvelope`.
    */
   unbranded?: boolean;
+  /**
+   * Bloques que escribió o cambió una PERSONA y que el agente todavía no ha reemplazado con
+   * su permiso. Un `eb-patch` sobre uno de estos no se aplica: queda en `suggestions`.
+   * Es del documento (se hereda): sigue siendo de ella aunque el agente publique otra versión.
+   */
+  humanIds?: string[];
+  /** Cambios del agente sobre bloques de la persona, pendientes de aceptar o rechazar. */
+  suggestions?: import("./doc-suggest").DocSuggestion[];
+  /** Observaciones ancladas a bloques (del agente o de una persona). Son del documento. */
+  comments?: import("./doc-comments").DocComment[];
 }
 
 /**
@@ -110,7 +120,7 @@ export function parseDocEnvelope(md: string | null | undefined): DocEnvelope | n
  * `changedIds` tampoco: son los bloques que cambiaron EN esta versión. Heredarlos pintaría
  * el resaltado de un cambio viejo sobre un documento que ya no cambió ahí.
  */
-type Heredable = Pick<DocEnvelope, "sourceMd" | "yUpdate" | "unbranded">;
+type Heredable = Pick<DocEnvelope, "sourceMd" | "yUpdate" | "unbranded" | "humanIds" | "suggestions" | "comments">;
 
 export function serializeDocEnvelope(e: {
   blocks: DocBlock[];
@@ -119,6 +129,9 @@ export function serializeDocEnvelope(e: {
   yUpdate?: string;
   changedIds?: string[];
   unbranded?: boolean;
+  humanIds?: string[];
+  suggestions?: import("./doc-suggest").DocSuggestion[];
+  comments?: import("./doc-comments").DocComment[];
   /**
    * El sobre ANTERIOR del documento, para no perder lo que esta escritura no menciona.
    *
@@ -147,6 +160,12 @@ export function serializeDocEnvelope(e: {
   if (yUpdate) out.yUpdate = yUpdate;
   if (e.changedIds?.length) out.changedIds = e.changedIds;
   if (unbranded) out.unbranded = true;
+  const humanIds = e.humanIds ?? h.humanIds;
+  const suggestions = e.suggestions ?? h.suggestions;
+  if (humanIds?.length) out.humanIds = humanIds;
+  if (suggestions?.length) out.suggestions = suggestions;
+  const comments = e.comments ?? h.comments;
+  if (comments?.length) out.comments = comments;
   return JSON.stringify(out);
 }
 
@@ -408,7 +427,14 @@ export function resolveBlockId(blocks: DocBlock[], ref: string): string | null {
  * de su texto. Es el equivalente de `nodeIndex()` del artefacto HTML — lo que hace
  * direccionable el documento sin volcárselo entero.
  */
-export function blockIndex(blocks: DocBlock[], max = 80, snippet = 60): string {
+export function blockIndex(
+  blocks: DocBlock[],
+  max = 80,
+  snippet = 60,
+  /** Bloques de la persona: se marcan para que el agente sepa que no son suyos. */
+  humanIds?: Iterable<string>,
+): string {
+  const humanos = new Set(humanIds ?? []);
   const table = aliasTable(blocks);
   const byId = new Map<string, DocBlock>();
   const collect = (list: DocBlock[]): void => {
@@ -429,7 +455,7 @@ export function blockIndex(blocks: DocBlock[], max = 80, snippet = 60): string {
     const cut = txt.length > snippet ? `${txt.slice(0, snippet)}…` : txt;
     // Un bloque sin texto (imagen, separador, tabla vacía) igual necesita su línea:
     // si no aparece, el modelo no puede insertar ni antes ni después de él.
-    lines.push(`${alias} ${b.type ?? "?"}${cut ? `: ${cut}` : ""}`);
+    lines.push(`${alias}${humanos.has(id) ? " ✍️" : ""} ${b.type ?? "?"}${cut ? `: ${cut}` : ""}`);
   }
   const total = table.size;
   if (total > max) lines.push(`… y ${total - max} bloques más`);

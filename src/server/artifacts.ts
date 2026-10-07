@@ -81,6 +81,10 @@ export async function publishArtifactVersion(args: {
   humanEdited?: boolean;
   /** Bloques que cambiaron en ESTA versión → el editor los señala al abrirse. */
   changedIds?: string[];
+  /** Bloques de la persona (`undefined` = se heredan del sobre anterior). */
+  humanIds?: string[];
+  /** Sugerencias pendientes (`undefined` = se heredan). */
+  suggestions?: import("../lib/doc-suggest").DocSuggestion[];
   /** Quiénes co-editaron en la sesión que dejó esta versión (`sub`). Sólo la co-edición. */
   authors?: string[];
   /**
@@ -145,6 +149,8 @@ export async function publishArtifactVersion(args: {
         humanEdited: args.humanEdited,
         changedIds: args.changedIds,
         unbranded: args.unbranded,
+        humanIds: args.humanIds,
+        suggestions: args.suggestions,
         previo,
       });
     } else {
@@ -698,14 +704,22 @@ export const updateDocBlocksFn = createServerFn({ method: "POST" })
         ultima?.humanEdited ?? "?"
       } rama=${ultima?.humanEdited ? "overwrite" : "publish"} ini=${JSON.stringify(md.slice(0, 90))}`,
     );
+    // Qué bloques son de la PERSONA: lo que este guardado cambió respecto de lo último que
+    // había, más lo que ya era suyo. Es lo que frena al agente de reescribirlos en silencio.
+    const { parseDocEnvelope: parseEnv } = await import("../lib/doc-blocks");
+    const { humanTouchedIds, mergeHumanIds, mergeSuggestions } = await import("../lib/doc-suggest");
+    const previoEnv = parseEnv(ultima?.md);
+    const humanIds = mergeHumanIds(previoEnv?.humanIds, humanTouchedIds(previoEnv?.blocks ?? [], blocks), blocks);
+    // Si la persona borró el bloque de una sugerencia, la sugerencia ya no tiene a qué aplicarse.
+    const suggestions = mergeSuggestions(previoEnv?.suggestions, [], blocks);
     if (ultima?.humanEdited) {
-      const { serializeDocEnvelope, parseDocEnvelope } = await import("../lib/doc-blocks");
+      const { serializeDocEnvelope } = await import("../lib/doc-blocks");
       // Hereda del sobre que está PISANDO. Sin esto, guardar en el editor tiraba `sourceMd`
       // y la marca del documento: el oficio sin membrete volvía a llevarlo en cuanto
       // alguien le corregía una coma.
       await db.overwriteArtifactMd(
         ultima.id,
-        serializeDocEnvelope({ blocks, humanEdited: true, previo: parseDocEnvelope(ultima.md) }),
+        serializeDocEnvelope({ blocks, humanEdited: true, humanIds, suggestions, previo: previoEnv }),
       );
       await avisar();
       return { ok: true as const, versionId: ultima.id };
@@ -719,6 +733,8 @@ export const updateDocBlocksFn = createServerFn({ method: "POST" })
       md,
       blocks,
       humanEdited: true,
+      humanIds,
+      suggestions,
       ownerSub: me.sub,
       setPointer,
       notify: () => void avisar(),
@@ -727,6 +743,213 @@ export const updateDocBlocksFn = createServerFn({ method: "POST" })
     // una publicación concurrente devolvería la fila de otro y el editor se fijaría a un
     // documento que no está mirando — justo el bug que esto viene a cerrar.
     return { ok: true as const, versionId };
+  });
+
+/**
+ * Aceptar o rechazar una sugerencia del agente sobre un bloque de la persona (o todas).
+ *
+ * Se escribe EN SITIO sobre la última versión, como el switch de la marca: decidir sobre una
+ * propuesta no es una edición nueva, y una fila por clic se comería las 20 versiones. Lo que
+ * se acepta deja de ser de la persona (`humanIds`), así que el agente ya puede volver a tocarlo.
+ */
+export const resolveDocSuggestionFn = createServerFn({ method: "POST" })
+  .validator((d: { documentId: string; suggestionId: string | "*"; accept: boolean }) => d)
+  .handler(async ({ data }) => {
+
+    const { sessionUser } = await import("./chat");
+    const me = await sessionUser();
+    if (!me) throw new Error("no autenticado");
+    await requireDocEdit(data.documentId, me.sub, !!me.isOwner);
+
+    const db = await import("../db.server");
+    const ultima = await db.latestDocVersion(data.documentId);
+    if (!ultima) throw new Error("ese documento no existe");
+    const { parseDocEnvelope, serializeDocEnvelope } = await import("../lib/doc-blocks");
+    const { acceptSuggestion } = await import("../lib/doc-suggest");
+    const env = parseDocEnvelope(ultima.md);
+    if (!env) throw new Error("este documento es de un formato viejo");
+    const pendientes = env.suggestions ?? [];
+    // "Todas" es la barra de arriba: no toca las propuestas que viven en una nota («Arreglar»).
+    const elegidas =
+      data.suggestionId === "*"
+        ? pendientes.filter((s) => !s.commentId)
+        : pendientes.filter((s) => s.id === data.suggestionId);
+    if (!elegidas.length) return { ok: true as const, changed: 0, md: ultima.md, changedIds: [] as string[] };
+
+    let blocks = env.blocks;
+    let humanIds = env.humanIds ?? [];
+    const changedIds: string[] = [];
+    if (data.accept) {
+      for (const sug of elegidas) {
+        const r = acceptSuggestion(blocks, sug);
+        if (!r) continue;
+        blocks = r.blocks;
+        changedIds.push(...r.changedIds);
+        humanIds = humanIds.filter((id) => id !== sug.targetId);
+      }
+    }
+    const fuera = new Set(elegidas.map((s) => s.id));
+    const md = serializeDocEnvelope({
+      blocks,
+      humanEdited: env.humanEdited,
+      // Aceptar cambia bloques: el `sourceMd` del agente ya no describe el documento.
+      sourceMd: data.accept ? "" : undefined,
+      // Lo aceptado se señala como "acaba de cambiar"; un rechazo no cambia nada a la vista.
+      changedIds: data.accept ? changedIds : env.changedIds,
+      humanIds,
+      suggestions: pendientes.filter((s) => !fuera.has(s.id)),
+      // Aceptar la propuesta de una nota la resuelve: ya se atendió.
+      comments: data.accept
+        ? (env.comments ?? []).map((c) =>
+            elegidas.some((x) => x.commentId === c.id) ? { ...c, resolved: true } : c,
+          )
+        : undefined,
+      previo: env,
+    });
+    await db.overwriteArtifactMd(ultima.id, md);
+    const { avisar } = await docSurface(data.documentId, undefined, me.sub);
+    await avisar();
+    // El sobre nuevo va de regreso: el panel abierto no se re-lee solo con una escritura en sitio.
+    return { ok: true as const, changed: elegidas.length, md, changedIds };
+  });
+
+/**
+ * Guarda las observaciones (```eb-comment```) de una respuesta del agente sobre la ÚLTIMA versión
+ * del documento, en sitio: comentar no cambia el texto, así que no es versión nueva.
+ * Lo llaman el room, el DM y el script del prototipo — un solo camino.
+ */
+export async function applyAgentComments(args: {
+  documentId: string;
+  reply: string;
+  by?: string;
+}): Promise<{ n: number; missing: string[] }> {
+  const { extractDocComments, attachComments, mergeComments } = await import("../lib/doc-comments");
+  const raw = extractDocComments(args.reply);
+  if (!raw.length) return { n: 0, missing: [] };
+  const db = await import("../db.server");
+  const ultima = await db.latestDocVersion(args.documentId);
+  const { parseDocEnvelope, serializeDocEnvelope } = await import("../lib/doc-blocks");
+  const env = parseDocEnvelope(ultima?.md);
+  if (!ultima || !env) return { n: 0, missing: raw.map((r) => r.ref) };
+  const { comments, missing } = attachComments(env.blocks, raw, args.by);
+  if (!comments.length) return { n: 0, missing };
+  await db.overwriteArtifactMd(
+    ultima.id,
+    serializeDocEnvelope({
+      blocks: env.blocks,
+      humanEdited: env.humanEdited,
+      changedIds: env.changedIds,
+      comments: mergeComments(env.comments, comments, env.blocks),
+      previo: env,
+    }),
+  );
+  console.log(`[gt-comment] doc=${args.documentId} observaciones=${comments.length} sin_bloque=${missing.length}`);
+  return { n: comments.length, missing };
+}
+
+/** Resolver (o reabrir) una observación; `*` las resuelve todas. Se escribe en sitio. */
+export const resolveDocCommentFn = createServerFn({ method: "POST" })
+  .validator((d: { documentId: string; commentId: string | "*"; resolved: boolean }) => d)
+  .handler(async ({ data }) => {
+    const { sessionUser } = await import("./chat");
+    const me = await sessionUser();
+    if (!me) throw new Error("no autenticado");
+    await requireDocEdit(data.documentId, me.sub, !!me.isOwner);
+    const db = await import("../db.server");
+    const ultima = await db.latestDocVersion(data.documentId);
+    if (!ultima) throw new Error("ese documento no existe");
+    const { parseDocEnvelope, serializeDocEnvelope } = await import("../lib/doc-blocks");
+    const env = parseDocEnvelope(ultima.md);
+    if (!env) throw new Error("este documento es de un formato viejo");
+    const comments = (env.comments ?? []).map((c) =>
+      data.commentId === "*" || c.id === data.commentId ? { ...c, resolved: data.resolved } : c,
+    );
+    const md = serializeDocEnvelope({
+      blocks: env.blocks,
+      humanEdited: env.humanEdited,
+      changedIds: env.changedIds,
+      comments,
+      previo: env,
+    });
+    await db.overwriteArtifactMd(ultima.id, md);
+    const { avisar } = await docSurface(data.documentId, undefined, me.sub);
+    await avisar();
+    return { ok: true as const, md };
+  });
+
+/**
+ * «Arreglar» una observación desde su tarjeta: un turno del agente que NO se publica en el hilo.
+ *
+ * Experimento (7-oct): la respuesta vive en la nota (mini hilo) y su cambio llega SIEMPRE como
+ * sugerencia ligada a la nota — como Gemini en Docs: nada se aplica sin que lo apruebes. La sesión
+ * es aparte por documento (`docfix-<id>`) para no meter el arreglo en la memoria del hilo.
+ */
+export const fixDocCommentFn = createServerFn({ method: "POST" })
+  .validator((d: { documentId: string; commentId: string }) => d)
+  .handler(async ({ data }) => {
+    const { sessionUser } = await import("./chat");
+    const me = await sessionUser();
+    if (!me) throw new Error("no autenticado");
+    await requireDocEdit(data.documentId, me.sub, !!me.isOwner);
+
+    const db = await import("../db.server");
+    const ultima = await db.latestDocVersion(data.documentId);
+    if (!ultima) throw new Error("ese documento no existe");
+    const { parseDocEnvelope, serializeDocEnvelope, blockIndex, aliasTable, blockText } = await import("../lib/doc-blocks");
+    const env = parseDocEnvelope(ultima.md);
+    if (!env) throw new Error("este documento es de un formato viejo");
+    const nota = (env.comments ?? []).find((c) => c.id === data.commentId);
+    if (!nota) throw new Error("esa observación ya no existe");
+    const alias = [...aliasTable(env.blocks)].find(([, id]) => id === nota.blockId)?.[0];
+    if (!alias) throw new Error("el párrafo de esa observación ya no existe");
+
+    const { resolvedAgents, callAgentBackend } = await import("../agents.server");
+    const agentes = await resolvedAgents();
+    const agent = agentes.find((a) => a.handle === nota.by) ?? agentes[0];
+    if (!agent) throw new Error("no hay agente que pueda arreglarlo");
+
+    const { docMarkdown } = await import("./doc-blocks.server");
+    const byId = new Map<string, import("../lib/doc-blocks").DocBlock>();
+    const walk = (l: import("../lib/doc-blocks").DocBlock[]) =>
+      l.forEach((b) => (b.id && byId.set(b.id, b), b.children?.length && walk(b.children)));
+    walk(env.blocks);
+    const prompt =
+      `[Arreglar una observación del documento]\n` +
+      `Observación que dejaste en el bloque ${alias}: «${nota.text}»\n` +
+      `Texto actual de ${alias}: «${blockText(byId.get(nota.blockId)!)}»\n\n` +
+      `Responde con 1–2 frases (qué cambias y por qué) y UN \`\`\`eb-patch ${alias} con ese bloque ` +
+      `completo ya corregido en Markdown. No toques otros bloques. Tu cambio llega como sugerencia ` +
+      `que la persona acepta o rechaza.\n\nBloques:\n${blockIndex(env.blocks, 250, 60, env.humanIds)}\n\n` +
+      `Documento:\n\`\`\`\n${await docMarkdown(ultima.md)}\n\`\`\``;
+    const reply = await callAgentBackend(agent, `docfix-${data.documentId}`, me.name ?? "persona", prompt);
+
+    const { extractEbPatches } = await import("../lib/ebdoc");
+    const { applyPatchesGuarded, mergeSuggestions } = await import("../lib/doc-suggest");
+    const { stripFences } = await import("../lib/doc-comments");
+    const { mdToBlocks } = await import("./doc-blocks.server");
+    // Sólo el bloque de la nota, y SIEMPRE como sugerencia (se marca como «de la persona»).
+    const patches = extractEbPatches(reply).filter((p) => p.closed && p.nodeId === alias);
+    const res = await applyPatchesGuarded(env.blocks, patches, [nota.blockId], { parse: mdToBlocks });
+    const nuevas = res.suggestions.map((s) => ({ ...s, commentId: nota.id }));
+    const explica = stripFences(reply) || (nuevas.length ? "Te dejé una propuesta." : "No encontré qué cambiar.");
+    const comments = (env.comments ?? []).map((c) =>
+      c.id === nota.id ? { ...c, replies: [...(c.replies ?? []), { by: agent.handle, text: explica, at: Date.now() }] } : c,
+    );
+    // Una propuesta nueva para la misma nota reemplaza la anterior.
+    const previas = (env.suggestions ?? []).filter((s) => !(nuevas.length && s.commentId === nota.id));
+    const md = serializeDocEnvelope({
+      blocks: env.blocks,
+      humanEdited: env.humanEdited,
+      changedIds: env.changedIds,
+      comments,
+      suggestions: mergeSuggestions(previas, nuevas, env.blocks),
+      previo: env,
+    });
+    await db.overwriteArtifactMd(ultima.id, md);
+    console.log(`[gt-fix] doc=${data.documentId} nota=${nota.id} propuestas=${nuevas.length}`);
+    const { avisar } = await docSurface(data.documentId, undefined, me.sub);
+    await avisar();
+    return { ok: true as const, md, propuestas: nuevas.length };
   });
 
 export const updateArtifactHtmlFn = createServerFn({ method: "POST" })

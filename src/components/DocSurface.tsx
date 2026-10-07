@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { parseDocEnvelope, type DocBlock } from "../lib/doc-blocks";
-import { updateDocBlocksFn } from "../server/artifacts";
+import { fixDocCommentFn, resolveDocCommentFn, resolveDocSuggestionFn, updateDocBlocksFn } from "../server/artifacts";
 
 // Frontera entre el panel y el editor. Hace cuatro cosas y ninguna más:
 //
@@ -19,6 +19,7 @@ import { updateDocBlocksFn } from "../server/artifacts";
 // del artefacto HTML, y sale gratis porque aquí no hay iframe que reiniciar.
 
 const DocEditor = lazy(() => import("./DocEditor"));
+const DocSuggestions = lazy(() => import("./DocSuggestions"));
 
 /** Coalescencia del stream. Suficiente para que se vea fluido sin re-parsear de más. */
 const STREAM_COALESCE_MS = 120;
@@ -31,6 +32,32 @@ const SAVE_IDLE_MS = 2500;
  * persona podía estar escribiendo un minuto entero sin ver una sola señal de guardado.
  */
 const SAVE_MIN_INTERVAL_MS = 8_000;
+
+/** Contenedor pegado arriba del documento; avisa su alto (los controles flotantes lo esquivan). */
+function BarraAgente({ children, onHeight }: { children: React.ReactNode; onHeight: (h: number) => void }) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    let ultimo = -1;
+    const ro = new ResizeObserver(() => {
+      const h = Math.round(el.offsetHeight);
+      if (Math.abs(h - ultimo) < 2) return;
+      ultimo = h;
+      onHeight(h);
+    });
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      onHeight(0);
+    };
+  }, [onHeight]);
+  return (
+    <div ref={ref} className="sticky top-0 z-20 shrink-0">
+      {children}
+    </div>
+  );
+}
 
 function Sheet({ children }: { children: React.ReactNode }) {
   return (
@@ -110,6 +137,44 @@ export default function DocSurface({
   // en cuanto el guardado termina, el valor nuevo pasa. El streaming del agente sí entra
   // siempre: ahí el documento no es editable y lo que llega es el trabajo que se espera.
   const [mdVisto, setMdVisto] = useState(md);
+  const [altoSugerencias, setAltoSugerencias] = useState(0);
+  const [iluminar, setIluminar] = useState<string[] | null>(null);
+  // Resolver/reabrir una observación: se escribe en sitio y el sobre nuevo entra directo
+  // (el panel abierto no se re-lee solo con una escritura en sitio).
+  const aplicarSobre = useCallback((m: string, ids?: string[]) => {
+    ultimoMd.current = m;
+    setMdVisto(m);
+    // Lo aceptado se ILUMINA con la misma marca que un patch del agente. Espera a que el
+    // editor reconcilie los bloques nuevos.
+    if (ids?.length) setTimeout(() => setIluminar([...ids]), 350);
+  }, []);
+  const resolverSugerencia = useCallback(
+    async (suggestionId: string, accept: boolean) => {
+      if (!documentId) return;
+      const r = await resolveDocSuggestionFn({ data: { documentId, suggestionId, accept } });
+      if (r?.md) aplicarSobre(r.md, r.changedIds);
+    },
+    [documentId, aplicarSobre],
+  );
+  const arreglarObservacion = useCallback(
+    async (commentId: string) => {
+      if (!documentId) return;
+      const r = await fixDocCommentFn({ data: { documentId, commentId } });
+      if (r?.md) aplicarSobre(r.md);
+    },
+    [documentId, aplicarSobre],
+  );
+  const resolverObservacion = useCallback(
+    async (commentId: string, resolved: boolean) => {
+      if (!documentId) return;
+      const r = await resolveDocCommentFn({ data: { documentId, commentId, resolved } });
+      if (r?.md) {
+        ultimoMd.current = r.md;
+        setMdVisto(r.md);
+      }
+    },
+    [documentId],
+  );
   const escribiendo = useRef(false);
   const ultimoMd = useRef(md);
   useEffect(() => {
@@ -127,6 +192,25 @@ export default function DocSurface({
   // El sobre se parsea en cada render, pero es sólo un JSON.parse del string que ya
   // tenemos, y `md` cambia poco cuando NO se está streameando.
   const envelope = useMemo(() => parseDocEnvelope(mdVisto), [mdVisto]);
+
+  // Las propuestas de «Arreglar» viven en su nota; la barra de arriba sólo lleva las sueltas.
+  const sugerenciasSueltas = useMemo(() => envelope?.suggestions?.filter((x) => !x.commentId) ?? [], [envelope]);
+  const sugerenciasDeNotas = useMemo(() => envelope?.suggestions?.filter((x) => !!x.commentId) ?? [], [envelope]);
+
+  // Numeradas por su lugar en el documento (no por el orden en que el agente las escribió):
+  // así el 1 está arriba y ‹ › recorre la hoja de arriba abajo.
+  const observacionesEnOrden = useMemo(() => {
+    const cs = envelope?.comments;
+    if (!cs?.length) return cs;
+    const orden = new Map<string, number>();
+    const walk = (l: DocBlock[]) => l.forEach((b) => (b.id && orden.set(b.id, orden.size), b.children?.length && walk(b.children)));
+    walk(envelope?.blocks ?? []);
+    // Una nota cuyo párrafo ya no existe (el agente re-emitió el documento entero) no tiene a
+    // dónde apuntar: no se cuenta ni se muestra.
+    return cs
+      .filter((c) => orden.has(c.blockId))
+      .sort((a, b) => (orden.get(a.blockId) ?? 0) - (orden.get(b.blockId) ?? 0));
+  }, [envelope]);
 
   // Markdown amortiguado: sólo se usa cuando no hay sobre. Durante el stream llegan
   // muchos ticks por segundo y cada uno costaría un parseo a bloques.
@@ -290,6 +374,14 @@ export default function DocSurface({
         </Sheet>
       }
     >
+      {/* Lo que el agente dejó para que la persona decida: sus cambios sobre lo de ella
+          (sugerencias) y su revisión (observaciones). Pegado arriba y medido, para que los
+          controles flotantes del editor bajen lo que mida. */}
+      {documentId && !readOnly && !streaming && sugerenciasSueltas.length ? (
+        <BarraAgente onHeight={setAltoSugerencias}>
+          <DocSuggestions documentId={documentId} suggestions={sugerenciasSueltas} onResolved={(m, ids) => aplicarSobre(m, ids)} />
+        </BarraAgente>
+      ) : null}
       <DocEditor
         {...source}
         // Editable en cuanto el agente suelta el turno. Un borrador (sin documentId)
@@ -298,11 +390,18 @@ export default function DocSurface({
         streaming={streaming}
         onChange={onChange}
         highlightIds={marcar}
-        patchRefs={patchRefs}
+        patchRefs={iluminar ?? patchRefs}
         // Si hay barra que lo pinte (`onGuardado`), el editor no repite el indicador
         // flotante: dos avisos del mismo hecho en la misma pantalla es ruido.
         guardado={onGuardado ? null : guardado}
         cerrando={cerrando}
+        topInset={sugerenciasSueltas.length ? altoSugerencias : 0}
+        comments={documentId && !readOnly ? observacionesEnOrden : undefined}
+        onResolveComment={resolverObservacion}
+        commentSuggestions={sugerenciasDeNotas}
+        onFixComment={arreglarObservacion}
+        onCommentSuggestion={resolverSugerencia}
+        proposals={documentId && !readOnly ? envelope?.suggestions : undefined}
         // Antes de leer en voz alta hay que guardar: si no, se escucha el texto anterior.
         guardarYa={flush}
         // Para el "leer en voz alta": el audio lo sintetiza el servidor desde ESTE

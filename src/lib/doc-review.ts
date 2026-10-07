@@ -105,6 +105,32 @@ export function useDocReview({ documentId, getVersion, bloques }: Opts) {
   const gen = useRef(0);
 
   /**
+   * Sugerencias POSPUESTAS con "Descartar todas": cuántas había al descartarlas.
+   *
+   * No van al diccionario —no es "estas palabras están bien", es "ahora no"—, así que la
+   * siguiente revisión las vuelve a traer. Se recuerda por documento para que el chip
+   * siga ahí al reabrirlo: es el recordatorio de que quedó algo por revisar.
+   */
+  const llavePospuestas = documentId ? `gt-pospuestas:${documentId}` : null;
+  const [pospuestas, setPospuestas] = useState<number>(() => {
+    try {
+      return llavePospuestas ? Number(localStorage.getItem(llavePospuestas)) || 0 : 0;
+    } catch {
+      return 0;
+    }
+  });
+  const guardarPospuestas = (n: number) => {
+    setPospuestas(n);
+    try {
+      if (!llavePospuestas) return;
+      if (n) localStorage.setItem(llavePospuestas, String(n));
+      else localStorage.removeItem(llavePospuestas);
+    } catch {
+      // sin almacenamiento: el chip vive lo que viva la pestaña
+    }
+  };
+
+  /**
    * Palabras que el usuario dio por buenas en esta sesión (`palabra|regla`).
    *
    * Sin esto, un nombre propio que aparece cinco veces —"Nüwa", "Perdix"— se pregunta
@@ -308,8 +334,23 @@ export function useDocReview({ documentId, getVersion, bloques }: Opts) {
     setEstado("parado");
   }, []);
 
+  /** Descarta TODAS las sugerencias de esta revisión y deja el chip de pospuestas. */
+  const descartarTodas = useCallback(() => {
+    gen.current++;
+    guardarPospuestas(hallazgos.length);
+    setHallazgos([]);
+    setActual(0);
+    setRevisando(false);
+    setEstado("parado");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hallazgos.length]);
+
   return {
     hallazgos,
+    pospuestas,
+    descartarTodas,
+    /** Retomar las pospuestas = revisar de nuevo (vuelven porque nunca se ignoraron). */
+    olvidarPospuestas: () => guardarPospuestas(0),
     actual: hallazgos[actual] ?? null,
     indice: actual,
     total: hallazgos.length,

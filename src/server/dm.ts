@@ -605,7 +605,8 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
       // Quién ejecuta, para que el servidor MCP pueda resolver su autoridad. Ver chat.ts.
       { ns, getId: () => registeredId, sinEspera: steer },
     ); // ← withGroupLock
-    const { id, reply } = turnResult;
+    const { id } = turnResult;
+    let { reply } = turnResult;
     // Turno con plan: la burbuja del turno se cierra autoritativa (ver chat.ts).
     if (turnResult.plan) {
       await db.setMessageBody(turnResult.plan.id, turnResult.plan.body);
@@ -709,6 +710,19 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
       // vez del artefacto entero → se aplican por DOM sobre la versión actual. Fallo
       // VISIBLE: lo que no aplica se loguea con su nodeId y, si no aplica nada, no se
       // crea versión y el bubble lo dice.
+      // Observaciones ancladas (```eb-comment```): la revisión va AL documento, no al chat.
+      if (currentDoc?.kind === "doc" && currentDocId && reply.includes("```eb-comment")) {
+        const { applyAgentComments } = await import("./artifacts");
+        const { stripDocComments } = await import("../lib/doc-comments");
+        const r = await applyAgentComments({ documentId: currentDocId, reply, by: data.handle });
+        if (r.n) {
+          reply = stripDocComments(reply) +
+            `\n\n*Dejé ${r.n === 1 ? "1 observación" : `${r.n} observaciones`} en el documento, cada una en su párrafo.*`;
+          await db.setMessageBody(id, reply);
+          fanout({ t: "message:body", id, body: reply });
+          fanout({ t: "refresh", channelId: null, parentId: null, dmId: data.id });
+        }
+      }
       const patches = extractEbPatches(reply);
 
       // DOCUMENTO parcheado por BLOQUES (gemelo de la rama del room en chat.ts). El
@@ -719,19 +733,23 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
         const { parseDocEnvelope } = await import("../lib/doc-blocks");
         const env = parseDocEnvelope(currentDoc.md);
         if (env) {
-          const { applyBlockPatches } = await import("../lib/doc-patch");
+          const { applyPatchesGuarded, mergeSuggestions } = await import("../lib/doc-suggest");
           const { mdToBlocks, blocksToMd } = await import("./doc-blocks.server");
           const t0 = performance.now();
-          const res = await applyBlockPatches(env.blocks, patches, { parse: mdToBlocks });
+          // Lo que tocó una persona no se reescribe en silencio: queda como sugerencia.
+          const res = await applyPatchesGuarded(env.blocks, patches, env.humanIds, { parse: mdToBlocks });
           console.log(
             `[gt-patch][dm] doc msg=${id} pedidos=${patches.length} aplicados=${res.applied.length} ` +
-              `fallidos=${res.failed.length} ${Math.round(performance.now() - t0)}ms` +
+              `fallidos=${res.failed.length} sugeridos=${res.suggestions.length} ${Math.round(performance.now() - t0)}ms` +
               (res.failed.length ? ` → ${res.failed.map((f) => `${f.ref}:${f.reason}`).join(",")}` : "")
           );
           const cleaned = bubbleWithoutEbDoc(reply, {
             applied: res.applied.length,
             failed: res.failed.map((f) => `${f.ref}: ${f.reason}`),
-          }, { keepStatus: true });
+          }, { keepStatus: true }) +
+            (res.suggestions.length
+              ? `\n\n*${res.suggestions.length === 1 ? "1 cambio quedó" : `${res.suggestions.length} cambios quedaron`} como sugerencia porque toca${res.suggestions.length === 1 ? "" : "n"} lo que editaste a mano: acéptalo o recházalo en el documento.*`
+              : "");
           await db.setMessageBody(id, cleaned);
           fanout({ t: "message:body", id, body: cleaned });
           if (res.applied.length) {
@@ -747,6 +765,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
               md: nuevoMd,
               blocks: res.blocks,
               changedIds: res.changedIds,
+              suggestions: mergeSuggestions(env.suggestions, res.suggestions, res.blocks),
               // El sobre ya está leído aquí (`env`): un patch cambia BLOQUES, nada más, así
               // que todo lo demás del documento —su marca— se arrastra tal cual.
               previo: env,

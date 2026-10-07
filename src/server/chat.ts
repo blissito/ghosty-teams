@@ -1528,7 +1528,7 @@ export const askAgent = createServerFn({ method: "POST" })
             invokerSub: poster?.sub ?? "", origin: origenDelTurno,
           }))
           .catch(() => "");
-    const reply = [replyDelTurno, mencionesAgente, relevo].filter(Boolean).join("\n\n").trim();
+    let reply = [replyDelTurno, mencionesAgente, relevo].filter(Boolean).join("\n\n").trim();
 
     const finalBody = reply.trim() ? reply : "(sin respuesta)";
     await db.setMessageBody(id, finalBody);
@@ -1623,6 +1623,19 @@ export const askAgent = createServerFn({ method: "POST" })
       // Fallo VISIBLE por diseño: lo que no aplica se loguea con su nodeId y su motivo, y
       // si NO aplica nada no se crea versión (el artefacto anterior sigue en pie) — una
       // capa de contención muda escondería que el modo patch está roto.
+      // Observaciones ancladas (```eb-comment```): la revisión va AL documento, no al chat.
+      if (currentDoc?.kind === "doc" && currentDocId && reply.includes("```eb-comment")) {
+        const { applyAgentComments } = await import("./artifacts");
+        const { stripDocComments } = await import("../lib/doc-comments");
+        const r = await applyAgentComments({ documentId: currentDocId, reply, by: data.handle });
+        if (r.n) {
+          reply = stripDocComments(reply) +
+            `\n\n*Dejé ${r.n === 1 ? "1 observación" : `${r.n} observaciones`} en el documento, cada una en su párrafo.*`;
+          await db.setMessageBody(id, reply);
+          bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: reply });
+          bus.publish(bus.ch.room(ns, channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId });
+        }
+      }
       const patches = extractEbPatches(reply);
 
       // DOCUMENTO parcheado por BLOQUES. Mismo protocolo (```eb-patch``` por dirección) y
@@ -1633,19 +1646,23 @@ export const askAgent = createServerFn({ method: "POST" })
         const { parseDocEnvelope } = await import("../lib/doc-blocks");
         const env = parseDocEnvelope(currentDoc.md);
         if (env) {
-          const { applyBlockPatches } = await import("../lib/doc-patch");
+          const { applyPatchesGuarded, mergeSuggestions } = await import("../lib/doc-suggest");
           const { mdToBlocks, blocksToMd } = await import("./doc-blocks.server");
           const t0 = performance.now();
-          const res = await applyBlockPatches(env.blocks, patches, { parse: mdToBlocks });
+          // Lo que tocó una persona no se reescribe en silencio: queda como sugerencia.
+          const res = await applyPatchesGuarded(env.blocks, patches, env.humanIds, { parse: mdToBlocks });
           console.log(
             `[gt-patch] doc msg=${id} pedidos=${patches.length} aplicados=${res.applied.length} ` +
-              `fallidos=${res.failed.length} ${Math.round(performance.now() - t0)}ms` +
+              `fallidos=${res.failed.length} sugeridos=${res.suggestions.length} ${Math.round(performance.now() - t0)}ms` +
               (res.failed.length ? ` → ${res.failed.map((f) => `${f.ref}:${f.reason}`).join(",")}` : "")
           );
           const cleaned = bubbleWithoutEbDoc(reply, {
             applied: res.applied.length,
             failed: res.failed.map((f) => `${f.ref}: ${f.reason}`),
-          }, { keepStatus: true });
+          }, { keepStatus: true }) +
+            (res.suggestions.length
+              ? `\n\n*${res.suggestions.length === 1 ? "1 cambio quedó" : `${res.suggestions.length} cambios quedaron`} como sugerencia porque toca${res.suggestions.length === 1 ? "" : "n"} lo que editaste a mano: acéptalo o recházalo en el documento.*`
+              : "");
           await db.setMessageBody(id, cleaned);
           bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: cleaned });
           if (res.applied.length) {
@@ -1661,6 +1678,7 @@ export const askAgent = createServerFn({ method: "POST" })
               md: nuevoMd,
               blocks: res.blocks,
               changedIds: res.changedIds,
+              suggestions: mergeSuggestions(env.suggestions, res.suggestions, res.blocks),
               // El sobre ya está leído aquí (`env`): un patch cambia BLOQUES, nada más, así
               // que todo lo demás del documento —su marca— se arrastra tal cual.
               previo: env,

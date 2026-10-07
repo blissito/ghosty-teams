@@ -1238,12 +1238,14 @@ async function artifactDocHint(currentDoc?: CurrentDoc | null): Promise<string> 
   // mientras nadie lo haya editado a mano: derivarlo de los bloques en cada turno serían
   // dos saltos lossy por turno, con deriva acumulada.
   let docBlocks: import("./lib/doc-blocks").DocBlock[] = [];
+  let docHumanIds: string[] = [];
   let raw = currentDoc?.md ?? "";
   if (currentDoc?.kind === "doc" && raw) {
     const { parseDocEnvelope } = await import("./lib/doc-blocks");
     const env = parseDocEnvelope(raw);
     if (env) {
       docBlocks = env.blocks;
+      docHumanIds = env.humanIds ?? [];
       const { docMarkdown } = await import("./server/doc-blocks.server");
       raw = await docMarkdown(currentDoc.md);
     }
@@ -1336,7 +1338,7 @@ async function artifactDocHint(currentDoc?: CurrentDoc | null): Promise<string> 
     // que el tope no es una optimización: es el techo de lo que se puede editar.
     // Un bloque son ~70 chars de índice (alias + tipo + 60 de texto), así que 250 son
     // ~17 KB en el peor caso — barato al lado de re-emitir el documento entero.
-    const index = blockIndex(docBlocks, 250);
+    const index = blockIndex(docBlocks, 250, 60, docHumanIds);
     // El índice va COMPLETO aunque el cuerpo se recorte: es el techo de lo editable.
     const recortado = clampInline(md);
     return (
@@ -1355,6 +1357,17 @@ async function artifactDocHint(currentDoc?: CurrentDoc | null): Promise<string> 
       extentRule +
       imagenesRotas +
       (recortado ? TRUNCATED_RULE : "") +
+      (docHumanIds.length
+        ? `\n\nLos bloques marcados con ✍️ los escribió o editó la PERSONA a mano. Respétalos: ` +
+          `no los reescribas para pulir estilo ni coherencia salvo que te lo pida explícitamente. ` +
+          `Si un eb-patch toca uno, NO se aplica: le llega como sugerencia que ella acepta o rechaza, ` +
+          `así que dilo en tu respuesta ("te dejé N sugerencias en tus párrafos") y explica por qué.`
+        : "") +
+      `\n\nSi te piden REVISAR, señalar inconsistencias, errores o problemas del documento, NO ` +
+      `los listes en el chat: deja cada observación anclada a su bloque con ` +
+      `\`\`\`eb-comment <dirección>\n<qué pasa y qué propones, 1–3 frases>\n\`\`\` (uno por ` +
+      `bloque; si el mismo problema está en varios, uno en cada uno). En el chat escribe sólo un ` +
+      `resumen de 2–3 líneas (cuántas y de qué tipo). No cambies el texto salvo que te lo pidan.` +
       (index ? `\n\nBloques direccionables:\n${index}` : "") +
       `\n\nContenido actual en ${lang}:\n\n\`\`\`\n${recortado ?? md}\n\`\`\`]\n\n`
     );
