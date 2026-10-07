@@ -146,10 +146,14 @@ export const stopTurnFn = createServerFn({ method: "POST" })
   .validator((d: { messageId: number }) => d)
   .handler(async ({ data }) => {
     const me = await sessionUser();
-    const { stopTurn } = await import("./turns.server");
+    const { stopTurn, turnOwnedByOther } = await import("./turns.server");
     const { currentNamespace } = await import("./tenant.server");
     const ns = await currentNamespace();
-    if (stopTurn(ns, data.messageId, me?.sub ?? null)) return { ok: true as const };
+    // El dueño del espacio detiene cualquier turno; los demás, sólo los suyos.
+    if (stopTurn(ns, data.messageId, me?.sub ?? null, { force: !!me?.isOwner })) return { ok: true as const };
+    // Antes esto volvía `false` sin decir nada: la burbuja se quitaba y el siguiente latido la
+    // repintaba, y desde fuera «Detener no detiene» (7-oct).
+    if (turnOwnedByOther(ns, data.messageId, me?.sub ?? null)) return { ok: false as const, reason: "ajeno" as const };
 
     // No hay turno vivo con ese id. Puede ser una carrera normal (el clic llegó cuando ya
     // terminaba) o una cáscara HUÉRFANA: el registro vive en memoria, así que un reinicio

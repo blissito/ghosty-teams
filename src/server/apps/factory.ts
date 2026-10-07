@@ -627,7 +627,7 @@ export const factoryRunActionFn = createServerFn({ method: "POST" })
       if (!live.liveTurnId) throw new Error("no hay nadie trabajando en este pedido ahora");
       const turns = await import("../turns.server");
       const { currentNamespace } = await import("../tenant.server");
-      if (!turns.stopTurn(await currentNamespace(), live.liveTurnId, me.sub)) throw new Error("no pude detenerlo (sólo quien lo pidió puede)");
+      if (!turns.stopTurn(await currentNamespace(), live.liveTurnId, me.sub, { force: me.isOwner })) throw new Error("no pude detenerlo (sólo quien lo pidió o el dueño del espacio pueden)");
       await R.logEvent(run.id, "stopped", me.name || me.sub);
       return { ok: true as const, status: run.status };
     }

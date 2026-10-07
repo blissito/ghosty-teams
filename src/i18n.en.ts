@@ -1680,6 +1680,7 @@ export const en: Record<string, string> = {
   "El CI falló en este PR.": "CI failed on this PR.",
   "Pedir arreglo a @build": "Ask @build to fix it",
   "Sólo quien pidió este turno puede retomarlo.": "Only whoever asked for this turn can resume it.",
+  "Sólo quien pidió este turno o el dueño del espacio pueden detenerlo.": "Only whoever asked for this turn or the workspace owner can stop it.",
   "Este turno ya no se puede retomar. Vuelve a mencionar al agente.": "This turn can no longer be resumed. Mention the agent again.",
   "No se pudo retomar. Intenta de nuevo.": "Could not resume. Try again.",
   "Se cortó por una falla nuestra, no por tu petición.": "This stopped because of a failure on our side, not your request.",

@@ -473,7 +473,7 @@ export async function recentDoneTurns(ns: string, desdeMs = 10 * 60 * 1000): Pro
  */
 const STALE_TURN_MS = 15 * 60 * 1000;
 
-export function stopTurn(ns: string, messageId: number, bySub?: string | null): boolean {
+export function stopTurn(ns: string, messageId: number, bySub?: string | null, opts: { force?: boolean } = {}): boolean {
   const t = live.get(claveDe(ns, messageId));
   if (!t) return false;
   // Sólo quien lo pidió lo detiene. En un canal cualquiera ve la burbuja, y cortar el
@@ -482,8 +482,10 @@ export function stopTurn(ns: string, messageId: number, bySub?: string | null): 
   // atorada que todos ven (goose en descti, 325 min, 2026-09-18: el turno lo pidió otra
   // persona y el ■ de bliss devolvía false en silencio — el cliente lo quitaba del mapa y el
   // siguiente latido lo volvía a pintar). Pasado ese umbral, cualquiera del workspace lo cierra.
+  // `force`: el dueño del espacio. Oswaldo no podía parar el turno que pidió Iris en su propio
+  // espacio y el ■ fallaba en silencio hasta los 15 min (palmera-legal, 7-oct).
   const atorado = Date.now() - t.startedAt > STALE_TURN_MS;
-  if (t.invokerSub && bySub && t.invokerSub !== bySub && !atorado) return false;
+  if (t.invokerSub && bySub && t.invokerSub !== bySub && !atorado && !opts.force) return false;
   t.stopped = true;
   t.controller.abort();
   t.announce?.(stateOf(t));
@@ -502,6 +504,12 @@ export function stopTurn(ns: string, messageId: number, bySub?: string | null): 
     }
   }, 5000).unref?.();
   return true;
+}
+
+/** ¿Hay turno vivo con ese id y lo pidió OTRA persona? Para decir por qué no se detuvo. */
+export function turnOwnedByOther(ns: string, messageId: number, bySub?: string | null): boolean {
+  const t = live.get(claveDe(ns, messageId));
+  return !!t && !t.stopped && !!t.invokerSub && !!bySub && t.invokerSub !== bySub;
 }
 
 /**

@@ -1375,6 +1375,18 @@ function ChannelPage() {
     setLiveTurns((prev) => prev.filter((x) => x.id !== messageId));
     liveTurnsRef.current = liveTurnsRef.current.filter((x) => x.id !== messageId);
     void stopTurnFn({ data: { messageId } })
+      .then((r) => {
+        // El turno lo pidió otra persona: se dice por qué no se detuvo (antes la burbuja se
+        // quitaba y el siguiente latido la repintaba, y «Detener» parecía roto, 7-oct).
+        if (!r.ok && "reason" in r && r.reason === "ajeno")
+          pushToast({
+            sender: t("Detener"),
+            avatar: "",
+            preview: t("Sólo quien pidió este turno o el dueño del espacio pueden detenerlo."),
+            kind: "room",
+            onOpen: () => {},
+          });
+      })
       .catch(() => {})
       .finally(() => refreshLiveTurns());
   };
