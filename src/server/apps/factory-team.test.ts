@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { knowledgeLine, parseTeamFile, parseMessageOverrides, resolveModel, teamFileTemplate } from "./factory-team";
+import { knowledgeLine, parseTeamFile, parseMessageOverrides, resolveModel, setupLine, teamFileTemplate } from "./factory-team";
 
 describe("parseTeamFile", () => {
   it("lee las dos formas del frontmatter y el cuerpo", () => {
@@ -69,5 +69,52 @@ describe("reglas por rol en .ghosty/factory.md", () => {
     const f = parseTeamFile("## plan\nPlanes de 5 pasos máx.\n");
     expect(f.roleNotes.plan).toBe("Planes de 5 pasos máx.");
     expect(f.notes).toBe("");
+  });
+});
+
+describe("setup: en .ghosty/factory.md", () => {
+  const file = `---
+build: { agent: Constructor }
+setup:
+  services: [postgres, redis, mongo]   # mongo no viene en la caja: se ignora
+  db: fruteria
+  script: ./.ghosty/setup.sh
+  env:
+    JWT_SECRET: test-actions-jwt-secret
+    ADMIN_SECRET: "test admin"
+    bad-key: x
+check: { model: flash }
+---
+Convenciones.
+`;
+
+  it("lee servicios, base, script y variables sin romper los roles de alrededor", () => {
+    const t = parseTeamFile(file);
+    expect(t.setup).toEqual({
+      services: ["postgres", "redis"],
+      db: "fruteria",
+      script: ".ghosty/setup.sh",
+      env: { JWT_SECRET: "test-actions-jwt-secret", ADMIN_SECRET: "test admin" },
+    });
+    expect(t.roles.build?.agent).toBe("Constructor");
+    expect(t.roles.check?.model).toBe("flash");
+    expect(t.notes).toBe("Convenciones.");
+  });
+
+  it("acepta la lista sin corchetes y descarta nombres peligrosos", () => {
+    const t = parseTeamFile("---\nsetup:\n  services: postgres\n  db: x; rm -rf /\n  script: ../../etc/passwd\n---\n");
+    expect(t.setup).toEqual({ services: ["postgres"], env: {} });
+  });
+
+  it("sin setup: no aparece, y la plantilla lo trae comentado dentro del frontmatter", () => {
+    expect(parseTeamFile("---\nplan: { agent: P }\n---\nx").setup).toBeUndefined();
+    const tpl = teamFileTemplate({});
+    expect(parseTeamFile(tpl).setup).toBeUndefined();
+    expect(tpl.indexOf("# setup:")).toBeLessThan(tpl.lastIndexOf("---"));
+  });
+
+  it("la línea para @build trae la llamada exacta", () => {
+    const line = setupLine("o/r", { services: ["postgres"], db: "app", env: { A: "1" } });
+    expect(line).toContain('await prepare(box.id, {"services":["postgres"],"db":"app","env":{"A":"1"}})');
   });
 });

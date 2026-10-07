@@ -1160,6 +1160,14 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
     const ft = await factoryTurnFor(h, dest, "").catch(() => null);
     if (ft?.notes) parts.push(`Convenciones del repo ${ft.repo} (.ghosty/factory.md, las escribió el equipo; le ganan a lo general): ${ft.notes}`);
     if (ft?.roleNotes) parts.push(`Reglas de @${h} en ${ft.repo} (sección «## @${h}» de .ghosty/factory.md; le ganan a lo general): ${ft.roleNotes}`);
+    // El entorno de pruebas declarado: @build y @check lo aplican con una llamada exacta; @plan
+    // sólo necesita saber si ya existe para proponerlo cuando falta.
+    if (ft?.repo && !critic) {
+      const { setupLine } = await import("./factory-team");
+      if (ft.setup && (h === "build" || h === "check")) parts.push(setupLine(ft.repo, ft.setup));
+      else if (!ft.setup && h === "plan")
+        parts.push(`${ft.repo} no declara su entorno de pruebas (setup: en .ghosty/factory.md). Si el pedido toca pruebas que piden base de datos, Redis o variables de prueba, mira los services: y env: de .github/workflows/*.yml (o docker-compose) y agrega al plan un paso que proponga el bloque setup: en el mismo PR.`);
+    }
     if (ft?.repo && !ft.refusal) {
       const { knowledgeLine } = await import("./factory-team");
       parts.push(knowledgeLine(ft.repo, ft.knowledge));

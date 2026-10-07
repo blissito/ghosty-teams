@@ -36,8 +36,30 @@ export function knowledgeLine(repo: string, files: string[]): string {
 }
 
 export type RoleSpec = { agent?: string; model?: string };
+
+/** Servicios que la caja de trabajo `dev` trae instalados y apagados. */
+export const SETUP_SERVICES = ["postgres", "redis"] as const;
+export type SetupService = (typeof SETUP_SERVICES)[number];
+
+/**
+ * El entorno de pruebas del repo (`setup:` en el frontmatter de `.ghosty/factory.md`). @build y
+ * @check lo aplican con `prepare(box.id, setup)` del SDK: servicios arriba, base de prueba LIMPIA,
+ * variables de prueba y el script del repo. Nació del #13 de mercadito-verde (6-oct): @build pasó
+ * ~50 min instalando Postgres a mano y adivinando los secretos de prueba que ya estaban en el CI.
+ */
+export type RepoSetup = {
+  services: SetupService[];
+  /** Nombre de la base y de su usuario (contraseña = nombre). Default `app`. */
+  db?: string;
+  /** Variables de PRUEBA (las del CI), nunca secretos reales: van al `.env.test` de la caja. */
+  env: Record<string, string>;
+  /** Script del repo que deja todo listo (migraciones, semillas), relativo a la raíz. */
+  script?: string;
+};
+
 export type TeamFile = {
   roles: Partial<Record<FactoryHandle, RoleSpec>>;
+  setup?: RepoSetup;
   notes: string;
   /** Lo que va bajo `## @plan`, `## @build` o `## @check` en el cuerpo: sólo para ese rol. */
   roleNotes: Partial<Record<FactoryHandle, string>>;
@@ -60,9 +82,22 @@ export function parseTeamFile(raw: string): TeamFile {
   if (!m) return { roles: {}, ...splitRoleNotes(text) };
   const roles: TeamFile["roles"] = {};
   let current: FactoryHandle | null = null;
+  // `setup:` es otro bloque (con lista y un mapa anidado): sus renglones se juntan aparte.
+  let inSetup = false;
+  const setupLines: string[] = [];
   for (const line of m[1].split(/\r?\n/)) {
     if (!line.trim() || line.trim().startsWith("#")) continue;
+    if (inSetup && /^\s/.test(line)) {
+      setupLines.push(line);
+      continue;
+    }
+    inSetup = false;
     const top = line.match(/^([a-z]+)\s*:\s*(.*)$/i);
+    if (top && !/^\s/.test(line) && top[1].toLowerCase() === "setup") {
+      inSetup = true;
+      current = null;
+      continue;
+    }
     if (top && !/^\s/.test(line)) {
       const h = top[1].toLowerCase() as FactoryHandle;
       current = (FACTORY_HANDLES as readonly string[]).includes(h) ? h : null;
@@ -81,7 +116,75 @@ export function parseTeamFile(raw: string): TeamFile {
     const nested = line.match(/^\s+([a-z]+)\s*:\s*(.+)$/i);
     if (nested && current) assign((roles[current] ??= {}), nested[1], nested[2]);
   }
-  return { roles, ...splitRoleNotes(m[2]) };
+  const setup = setupLines.length ? parseSetup(setupLines) : undefined;
+  return { roles, ...(setup ? { setup } : {}), ...splitRoleNotes(m[2]) };
+}
+
+const SAFE_DB = /^[a-z_][a-z0-9_]{0,40}$/i;
+const SAFE_ENV_KEY = /^[A-Z_][A-Z0-9_]{0,63}$/;
+const SAFE_SCRIPT = /^[\w./-]{1,120}$/;
+
+/**
+ * El bloque `setup:` (renglones ya indentados):
+ *
+ *   setup:
+ *     services: [postgres, redis]     # o «postgres, redis»
+ *     db: fruteria
+ *     script: .ghosty/setup.sh
+ *     env:
+ *       JWT_SECRET: test-jwt-secret
+ *
+ * Lo que no se entiende se ignora (un servicio que la caja no trae, un nombre raro): nunca rompe
+ * la lectura del resto del archivo. Devuelve undefined si no queda nada útil.
+ */
+export function parseSetup(lines: string[]): RepoSetup | undefined {
+  const out: RepoSetup = { services: [], env: {} };
+  const baseIndent = Math.min(...lines.map((l) => l.match(/^\s*/)![0].length));
+  let inEnv = false;
+  for (const line of lines) {
+    const indent = line.match(/^\s*/)![0].length;
+    const kv = line.trim().match(/^([A-Za-z0-9_]+)\s*:\s*(.*)$/);
+    if (!kv) continue;
+    const [, rawKey, rawVal] = kv;
+    if (inEnv && indent > baseIndent) {
+      const v = unquote(rawVal.replace(/\s+#.*$/, ""));
+      if (SAFE_ENV_KEY.test(rawKey) && Object.keys(out.env).length < 40) out.env[rawKey] = v.slice(0, 500);
+      continue;
+    }
+    inEnv = false;
+    const key = rawKey.toLowerCase();
+    const val = rawVal.replace(/\s+#.*$/, "").trim();
+    if (key === "env") {
+      inEnv = true;
+      continue;
+    }
+    if (key === "services") {
+      out.services = val
+        .replace(/^\[|\]$/g, "")
+        .split(",")
+        .map((s) => unquote(s).toLowerCase().replace(/@.*$/, ""))
+        .filter((s): s is SetupService => (SETUP_SERVICES as readonly string[]).includes(s));
+      out.services = [...new Set(out.services)];
+    } else if (key === "db") {
+      const v = unquote(val);
+      if (SAFE_DB.test(v)) out.db = v;
+    } else if (key === "script") {
+      const v = unquote(val).replace(/^\.\//, "");
+      if (SAFE_SCRIPT.test(v) && !v.includes("..")) out.script = v;
+    }
+  }
+  return out.services.length || out.db || out.script || Object.keys(out.env).length ? out : undefined;
+}
+
+/** La línea de contexto para @build y @check: la llamada exacta que prepara la caja de trabajo. */
+export function setupLine(repo: string, setup: RepoSetup): string {
+  const call = `await prepare(box.id, ${JSON.stringify(setup)})`;
+  return (
+    `Entorno de pruebas de ${repo} (setup: de .ghosty/factory.md): en la caja de trabajo, después del checkout en /app/repo, corre TAL CUAL ` +
+    `\`${call}\` (import { prepare } from "/opt/gs-sdk/sandbox.mjs"). Arranca ${setup.services.join(" y ") || "lo declarado"}, deja la base de prueba vacía, ` +
+    `escribe /app/repo/.env.test con las variables de prueba y corre el script del repo. Vuelve a llamarla antes de cada corrida de la suite. ` +
+    `No instales servicios con apt ni inventes variables: si falta algo, dilo y propón el cambio a setup:.`
+  );
 }
 
 /**
@@ -200,7 +303,10 @@ export function teamFileTemplate(team: Partial<Record<FactoryHandle, { name: str
     return a ? `${h}: { agent: ${a.name}${a.model ? `, model: ${a.model}` : ""} }` : `# ${h}: { agent: …, model: … }`;
   });
   return (
-    `---\n${lines.join("\n")}\n---\n` +
+    `---\n${lines.join("\n")}\n` +
+    "# setup:                          # entorno de pruebas de la caja de trabajo (ver /docs/fabrica/equipo-por-repo)\n" +
+    "#   services: [postgres, redis]\n#   db: app\n#   env:\n#     JWT_SECRET: test-secret\n" +
+    "---\n" +
     "Convenciones de este repo que deben saber @plan, @build y @check:\n" +
     "- Cómo se corren las pruebas:\n- Qué no se toca:\n"
   );
