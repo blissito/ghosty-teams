@@ -25,7 +25,7 @@ vi.mock("../connectors/github.server", () => ({
   },
 }));
 
-import { buildCiStarter, protectMain, hasWorkflows, deployWorkflowOf } from "./ci-starter.server";
+import { buildCiStarter, protectMain, hasWorkflows, deployWorkflowOf, uncoveredScripts } from "./ci-starter.server";
 
 describe("CI starter", () => {
   beforeEach(() => {
@@ -47,6 +47,15 @@ describe("CI starter", () => {
     expect(await hasWorkflows("u", "acme/app", listing)).toBe(true);
     expect(await hasWorkflows("u", "acme/app", { error: "404" })).toBe(false);
     spy.mockImplementation(orig);
+  });
+
+  it("CI que sólo prueba no cubre tipos ni build (#17, 7-oct)", () => {
+    const scripts = { typecheck: "tsc --noEmit", test: "vitest run", build: "vite build", "build:css": "x", dev: "vite" };
+    const onlyTest = "on: pull_request\njobs:\n  t:\n    steps:\n      - run: npm ci\n      - run: npm test\n      - run: npm run build:css\n";
+    expect(uncoveredScripts([onlyTest], scripts)).toEqual(["typecheck", "build"]);
+    const full = onlyTest + "      - run: npx tsc --noEmit\n      - run: pnpm run --if-present build\n";
+    expect(uncoveredScripts([full], scripts)).toEqual([]);
+    expect(uncoveredScripts([onlyTest], {})).toEqual([]);
   });
 
   it("dependency-review sólo en repo público (en privado sin GHAS falla siempre)", async () => {

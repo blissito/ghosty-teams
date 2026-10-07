@@ -65,6 +65,9 @@ export type RepoFacts = {
   protectionPlanRequired: boolean;
   /** Workflow que despliega a producción en cada push (null = el repo no despliega por Actions). */
   deployWorkflow?: string | null;
+  /** El workflow de PR que ya existe (null = sin CI) y los scripts del repo que no corre. */
+  ciPath?: string | null;
+  ciMissing?: string[];
 };
 
 export const LEVELS: Record<1 | 2 | 3, ReadinessKey[]> = {
@@ -163,7 +166,8 @@ export async function repoReadiness(sub: string, repo: string, opts: { fresh?: b
   const codeowners = coPath ? decode(await githubApi(sub, `/repos/${repo}/contents/${coPath}`)) : null;
 
   // Protegida = el ruleset de la fábrica, o cualquier protección que GitHub reporte en la rama.
-  const { protectionState, hasWorkflows: hasPrCi, deployWorkflow } = await import("./ci-starter.server");
+  const { protectionState, ciCoverage, deployWorkflow } = await import("./ci-starter.server");
+  const ci = await ciCoverage(sub, repo, scripts, workflows).catch(() => ({ onPr: false, path: null, missing: [] as string[] }));
   const deploy = await deployWorkflow(sub, repo, workflows).catch(() => null);
   const protection = await protectionState(sub, repo).catch(() => "error" as const);
   const P = await import("./preview.server");
@@ -189,7 +193,7 @@ export async function repoReadiness(sub: string, repo: string, opts: { fresh?: b
     lockfile: !!pm,
     scripts: missingScripts.length === 0,
     agents_md: has("AGENTS.md"),
-    ci: await hasPrCi(sub, repo, workflows),
+    ci: ci.onPr && ci.missing.length === 0,
     codeowners: codeownersCoversGithub(codeowners),
     dependabot: ghFiles.some((n) => /^dependabot\.ya?ml$/i.test(n)) || has("renovate.json"),
     protected: protection === "protected" || branch?.protected === true,
@@ -219,6 +223,8 @@ export async function repoReadiness(sub: string, repo: string, opts: { fresh?: b
       envSavedKeys,
       protectionPlanRequired: protection === "plan_required",
       deployWorkflow: deploy?.path ?? null,
+      ciPath: ci.path,
+      ciMissing: ci.missing,
     },
     checkedAt: Date.now(),
   };
@@ -329,7 +335,12 @@ export function preparationPlan(r: Readiness): { title: string; planMd: string; 
   const miss = (k: ReadinessKey) => r.checks.some((c) => c.key === k && !c.ok);
   const fixes = r.checks.filter((c) => !c.ok && c.fixable).map((c) => c.key);
   const steps: string[] = [];
-  if (miss("ci")) steps.push("- `.github/workflows/ci.yml` — las pruebas corren solas en cada PR (tipos, lint, pruebas, build, secretos y dependencias).");
+  // Con CI propio se completa el suyo: nunca se le pone uno al lado ni se le pisa.
+  if (miss("ci") && r.facts.ciPath)
+    steps.push(
+      `- \`${r.facts.ciPath}\` — agrega los pasos que faltan (${(r.facts.ciMissing ?? []).map((s) => `\`${runCmd(r.facts.pm, s)}\``).join(", ")}) en el job que ya corre en los PR, con su mismo instalador y runner. No cambies nada más.`,
+    );
+  else if (miss("ci")) steps.push("- `.github/workflows/ci.yml` — las pruebas corren solas en cada PR (tipos, lint, pruebas, build, secretos y dependencias).");
   if (miss("codeowners")) steps.push("- `.github/CODEOWNERS` — los cambios a `.github/` los revisa una persona.");
   if (miss("dependabot")) steps.push("- `.github/dependabot.yml` — dependencias al día, agrupadas y semanales.");
   if (miss("agents_md"))
@@ -367,7 +378,7 @@ ${steps.join("\n")}
 3. Abre el PR en borrador y cierra con \`factory_build_done\`.
 
 ## Criterios de aceptación
-- El PR sólo agrega esos archivos; no toca código de la app.
+- El PR sólo agrega o completa esos archivos; no toca código de la app.
 - El CI nuevo corre en el PR y queda en verde (o el hallazgo dice qué script falla).
 - \`AGENTS.md\` lista comandos que existen en \`package.json\`.
 ${later.length ? `\n## Fuera de este PR\n${later.join("\n")}\n` : ""}`;
@@ -388,7 +399,7 @@ export async function preparationFiles(
     const ci = await buildCiStarter(sub, r.repo, runnerLabel);
     if ("error" in ci) return ci;
     for (const f of ci.files) {
-      if (f.path.endsWith("ci.yml") && !miss("ci")) continue;
+      if (f.path.endsWith("ci.yml") && (!miss("ci") || r.facts.ciPath)) continue;
       if (f.path.endsWith("CODEOWNERS") && !miss("codeowners")) continue;
       files.push(f);
     }

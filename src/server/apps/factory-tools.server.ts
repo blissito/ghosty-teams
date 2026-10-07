@@ -862,10 +862,11 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
     {
       name: "factory_ci_starter",
       description:
-        "El CI estándar de la Software Factory para un repo SIN CI: devuelve los archivos listos (.github/workflows/ci.yml con " +
-        "typecheck/lint/test/build, escaneo de secretos y revisión de dependencias, actions fijadas por SHA; y .github/CODEOWNERS). " +
-        "@plan lo propone como pedido «Agregar CI»; @build escribe esos archivos TAL CUAL con github_write_file en una rama y abre el PR. " +
-        "No lo edites a mano: la protección de la rama exige exactamente esos checks.",
+        "El CI de un repo, en cualquier momento. SIN CI: devuelve los archivos listos (.github/workflows/ci.yml con " +
+        "typecheck/lint/test/build, escaneo de secretos y revisión de dependencias, actions fijadas por SHA; y .github/CODEOWNERS); " +
+        "@build los escribe TAL CUAL (la protección de la rama exige esos checks). CON CI: devuelve { path, missing } = el workflow " +
+        "que ya corre en los PR y los scripts de package.json que no corre; @build los agrega a ESE workflow, sin crear otro. " +
+        "@plan lo propone como pedido «Agregar CI» o «Completar CI».",
       inputSchema: {
         type: "object",
         properties: { repo: { type: "string", description: '"dueño/repo" (si no, el del room)' } },
@@ -878,6 +879,11 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         if (!repo || !repos.includes(repo)) return { ok: false, error: "di cuál repo del room" };
         const { getAppConfig } = await import("./installed.server");
         const cfg = await getAppConfig<{ ciLabel?: string }>("factory");
+        const { repoReadiness } = await import("./readiness.server");
+        const r = await repoReadiness(sub, repo, { fresh: true });
+        if ("error" in r) return { ok: false, error: r.error };
+        if (r.facts.ciPath)
+          return { ok: true, path: r.facts.ciPath, missing: r.facts.ciMissing ?? [], note: r.facts.ciMissing?.length ? "Completa ese workflow con esos scripts." : "El CI ya corre todos los scripts del repo." };
         const { buildCiStarter } = await import("./ci-starter.server");
         return buildCiStarter(sub, repo, cfg?.ciLabel ?? null);
       },
@@ -905,7 +911,9 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         if ("error" in r) return { ok: false, error: r.error };
         const out = await preparationFiles(sub, r, cfg?.ciLabel ?? null);
         if ("error" in out) return { ok: false, error: out.error };
-        return { ok: true, repo, ...out };
+        // CI propio incompleto: no hay archivo nuevo, se completa el suyo con estos scripts.
+        const ciToComplete = r.facts.ciPath && r.facts.ciMissing?.length ? { path: r.facts.ciPath, missing: r.facts.ciMissing } : undefined;
+        return { ok: true, repo, ...out, ...(ciToComplete ? { ciToComplete } : {}) };
       },
     },
     {

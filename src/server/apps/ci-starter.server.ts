@@ -36,24 +36,58 @@ async function exists(sub: string, repo: string, path: string): Promise<boolean>
   return !!r && !r.error;
 }
 
-/** ¿El repo ya tiene workflows de CI? */
 /**
- * ¿El repo corre CI en los PR? Tener un `.yml` no basta: MailMask sólo tenía `deploy.yml` (push a
- * main), «Preparar repo» lo dio por CI y sus PR llegaban a @check sin un solo check (4-oct).
+ * Los workflows que corren en los PR. Tener un `.yml` no basta: MailMask sólo tenía `deploy.yml`
+ * (push a main), «Preparar repo» lo dio por CI y sus PR llegaban a @check sin un solo check (4-oct).
  * `listing` = lo que ya devolvió `contents/.github/workflows`, para no pedirlo dos veces.
  */
-export async function hasWorkflows(sub: string, repo: string, listing?: unknown): Promise<boolean> {
+async function prWorkflows(sub: string, repo: string, listing?: unknown): Promise<{ path: string; text: string }[]> {
   const r = listing ?? (await githubApi(sub, `/repos/${repo}/contents/.github/workflows`));
-  if (!Array.isArray(r)) return false;
+  if (!Array.isArray(r)) return [];
   const files = r.filter((f: any) => /\.ya?ml$/i.test(String(f?.name ?? ""))).slice(0, 10);
   const texts = await Promise.all(
     files.map((f: any) =>
       githubApi(sub, `/repos/${repo}/contents/${String(f.path)}`)
-        .then((c: any) => (typeof c?.content === "string" ? Buffer.from(c.content, "base64").toString("utf8") : ""))
-        .catch(() => ""),
+        .then((c: any) => ({ path: String(f.path), text: typeof c?.content === "string" ? Buffer.from(c.content, "base64").toString("utf8") : "" }))
+        .catch(() => ({ path: String(f.path), text: "" })),
     ),
   );
-  return texts.some((t) => /\bpull_request(_target)?\b/.test(t));
+  return texts.filter((t) => /\bpull_request(_target)?\b/.test(t.text));
+}
+
+/** ¿El repo corre CI en los PR? */
+export async function hasWorkflows(sub: string, repo: string, listing?: unknown): Promise<boolean> {
+  return (await prWorkflows(sub, repo, listing)).length > 0;
+}
+
+/** Los scripts que el CI tiene que correr si el repo los trae. */
+export const CI_SCRIPTS = ["typecheck", "lint", "test", "build"] as const;
+
+/**
+ * Qué scripts del repo no corre ningún workflow de PR. Tener CI no basta: el #17 existió porque
+ * el CI del chat sólo probaba y nadie vio que no revisaba tipos ni compilaba (7-oct).
+ * Cuenta como cubierto `<pm> [run] [--if-present] <script>` o el comando del script tal cual.
+ */
+export function uncoveredScripts(texts: string[], scripts: Record<string, string>): string[] {
+  const all = texts.join("\n");
+  return CI_SCRIPTS.filter((s) => {
+    const cmd = scripts[s]?.trim();
+    if (!cmd) return false;
+    const viaPm = new RegExp(`\\b(npm|pnpm|yarn|bun)\\b[^\\n]*?\\s${s}(?![\\w:-])`).test(all);
+    return !viaPm && !all.includes(cmd);
+  });
+}
+
+/** Cobertura del CI de PR: si existe, cuál es y qué scripts del repo le faltan. */
+export async function ciCoverage(
+  sub: string,
+  repo: string,
+  scripts: Record<string, string>,
+  listing?: unknown,
+): Promise<{ onPr: boolean; path: string | null; missing: string[] }> {
+  const wf = await prWorkflows(sub, repo, listing);
+  if (!wf.length) return { onPr: false, path: null, missing: CI_SCRIPTS.filter((s) => !!scripts[s]) };
+  return { onPr: true, path: wf[0].path, missing: uncoveredScripts(wf.map((w) => w.text), scripts) };
 }
 
 /**

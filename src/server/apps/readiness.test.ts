@@ -4,6 +4,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 let root: string[] = [];
 let gh: string[] = [];
 let workflows: string[] = [];
+const CI_FULL = "on:\n  pull_request:\njobs:\n  v:\n    steps:\n      - run: pnpm test\n      - run: pnpm typecheck\n";
+let ciYml = CI_FULL;
 let contents: Record<string, string> = {};
 let rulesets: { name: string }[] = [];
 let branchProtected = false;
@@ -25,7 +27,7 @@ vi.mock("../connectors/github.server", () => ({
     if (/\/commits\/[^/]+\/statuses/.test(path)) return [];
     const f = path.replace("/repos/acme/app/contents/", "");
     if (contents[f] !== undefined) return { content: b64(contents[f]) };
-    if (f.startsWith(".github/workflows/")) return { content: b64("on:\n  pull_request:\n") };
+    if (f.startsWith(".github/workflows/")) return { content: b64(ciYml) };
     const m = /\/commits\/(v\d+)$/.exec(path);
     if (m) return { sha: `sha-${m[1]}` };
     return { error: "404" };
@@ -53,6 +55,7 @@ function bare() {
   root = ["package.json", "src"];
   gh = [];
   workflows = [];
+  ciYml = CI_FULL;
   contents = { "package.json": JSON.stringify({ scripts: { dev: "vite", build: "vite build" } }) };
   rulesets = [];
   branchProtected = false;
@@ -195,6 +198,20 @@ describe("Listo para agentes", () => {
     const out = await preparationFiles("u", await check(), null);
     if ("error" in out) throw new Error(out.error);
     expect(out.files.map((f) => f.path)).toEqual([".github/dependabot.yml"]);
+  });
+
+  it("CI que no corre todos los scripts: se completa el suyo, sin ci.yml nuevo (#17, 7-oct)", async () => {
+    complete();
+    ciYml = "on:\n  pull_request:\njobs:\n  v:\n    steps:\n      - run: pnpm test\n";
+    const r = await check();
+    expect(r.checks.find((c) => c.key === "ci")!.ok).toBe(false);
+    expect(r.facts.ciMissing).toEqual(["typecheck"]);
+    const { planMd, fixes } = preparationPlan(r);
+    expect(fixes).toEqual(["ci"]);
+    expect(planMd).toContain("`.github/workflows/ci.yml` — agrega los pasos que faltan (`pnpm typecheck`)");
+    const out = await preparationFiles("u", r, null);
+    if ("error" in out) throw new Error(out.error);
+    expect(out.files).toEqual([]);
   });
 
   it("AGENTS.md lista sólo comandos que existen y remite a CLAUDE.md", () => {
