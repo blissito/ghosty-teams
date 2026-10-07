@@ -1800,6 +1800,8 @@ export const en: Record<string, string> = {
   "{n} vueltas sin cerrar: ¿otra vuelta o replanear?": "{n} rounds without closing: another round or re-plan?",
   "@build no puede resolverlo con sus herramientas: ¿otra vuelta o replanear?": "@build can't solve it with its tools: another round or re-plan?",
   "Cancelado.": "Cancelled.",
+  "Cancelado: el PR se cerró en GitHub sin merge.": "Cancelled: the PR was closed on GitHub without merging.",
+  "Cancelado por {nombre}.": "Cancelled by {nombre}.",
   "Terminado.": "Done.",
   "Vueltas de check": "Check rounds",
   "Otra vuelta": "Another round",

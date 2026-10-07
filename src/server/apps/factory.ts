@@ -500,7 +500,8 @@ export const factoryRunCardFn = createServerFn({ method: "POST" })
       // El CI del PR EN VIVO (no el del veredicto): tras preparar el repo, el aviso seguía pidiendo
       // «Prepara el repo» con el CI ya en main (MailMask #10, 4-oct).
       // Con el GitHub de quien aprobó/pidió (como el tick): quien mira sin GitHub conectado también ve el paso.
-      ci: run.prUrl && !["done", "cancelled"].includes(run.status) ? await liveCi(run.approvedBy ?? run.requestedBy ?? me.sub, run.prUrl, run.repo, me.sub) : null,
+      // Cancelado: el CI como quedó (no un ✓ regalado por estar cerrado).
+      ci: run.prUrl && run.status !== "done" ? await liveCi(run.approvedBy ?? run.requestedBy ?? me.sub, run.prUrl, run.repo, me.sub) : null,
       canPrep: !!me.isOwner && !!run.repo,
       // Escalado: lo que @check pide decidir, para pintarlo arriba (y aprobar con un 2º clic).
       escalation: await (async () => {
@@ -511,6 +512,8 @@ export const factoryRunCardFn = createServerFn({ method: "POST" })
       prod: run.status === "done" ? await (await import("./post-merge.server")).runProd(run) : null,
       // Firmado pero sin lugar en el tier: la tarjeta dice «En espera de lugar», no «Arrancando…».
       boxWaiting: !!run.boxWaiting && run.status === "building",
+      // Cancelado: en qué etapa iba y por qué, para conservar las ✓ de lo que sí se hizo.
+      cancelled: run.status === "cancelled" ? await R.cancelInfo(run.id) : null,
       ...(await runLive(run)),
     };
   });

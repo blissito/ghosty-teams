@@ -220,6 +220,20 @@ export async function logEvent(runId: number, type: string, actor: string | null
   ]).catch((e) => console.error("[factory] bitácora", e));
 }
 
+/**
+ * Pedido cancelado: en qué etapa iba (el `from` del evento `cancel`) y por qué. La tarjeta lo usa
+ * para dejar con ✓ lo que sí se hizo, como una corrida cancelada de GitHub Actions.
+ */
+export async function cancelInfo(runId: number): Promise<{ from: string | null; reason: "pr_closed" | "manual"; actor: string | null } | null> {
+  const [row] = await dbq("SELECT actor, data_json FROM gt_factory_events WHERE run_id = ? AND type = 'cancel' ORDER BY id DESC LIMIT 1", [runId]).catch(() => []);
+  if (!row) return null;
+  let data: { from?: string; reason?: string } = {};
+  try {
+    data = row.data_json ? JSON.parse(String(row.data_json)) : {};
+  } catch {}
+  return { from: data.from ?? null, reason: data.reason === "pr_closed" ? "pr_closed" : "manual", actor: row.actor ? String(row.actor) : null };
+}
+
 /** ¿El último `check_fail` del pedido fue una vuelta NO contada? (bitácora, `counted: false`) */
 export async function lastFailUncounted(runId: number): Promise<boolean> {
   const [row] = await dbq("SELECT data_json FROM gt_factory_events WHERE run_id = ? AND type = 'check_fail' ORDER BY id DESC LIMIT 1", [runId]).catch(() => []);
@@ -1447,7 +1461,7 @@ export async function onPrEvent(run: Run, outcome: "merged" | "closed", role: "c
     if (done) await postInThread(done, role, mergedMessage(run));
     return done;
   }
-  const gone = await applyEvent(run, "cancel").catch(() => null);
+  const gone = await applyEvent(run, "cancel", {}, { data: { reason: "pr_closed" } }).catch(() => null);
   if (gone) await postInThread(gone, role, `⏹️ El PR se cerró sin merge: pedido cancelado. ${run.prUrl}`);
   return gone;
 }

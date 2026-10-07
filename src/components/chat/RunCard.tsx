@@ -68,7 +68,11 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
   });
   if (!st) return null;
 
-  const current = STEPS.findIndex((s) => (s.statuses as readonly string[]).includes(st.status));
+  // Cancelado: se pinta la etapa en la que iba (bitácora), no ninguna; lo hecho conserva su ✓.
+  const cancelledAt = st.status === "cancelled" && st.cancelled?.from
+    ? STEPS.findIndex((s) => (s.statuses as readonly string[]).includes(st.cancelled!.from!))
+    : -1;
+  const current = cancelledAt >= 0 ? cancelledAt : STEPS.findIndex((s) => (s.statuses as readonly string[]).includes(st.status));
   // «Construyendo…» sólo si alguien trabaja de verdad. Parado = se dice y se ofrece «Retomar»
   // aquí mismo: la persona no tiene por qué saber que existe la barra del hilo (MailMask, 4-oct).
   const stalled = !!WORKING[st.status] && !st.liveTurnId && st.view.stale;
@@ -128,8 +132,9 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
         {/* Los pasos: el actual resaltado; los hechos, llenos. */}
         <ol className="flex items-center gap-1">
           {STEPS.map((s, i) => {
-            const done = closed ? st.status === "done" : i < current;
+            const done = st.status === "done" || (current >= 0 && i < current);
             const now = !closed && i === current;
+            const stopped = st.status === "cancelled" && i === cancelledAt;
             // Escalado: el paso actual ya no es de @check sino de la persona, en ámbar.
             const deciding = now && (st.status === "escalated" || boxWaiting);
             return (
@@ -142,20 +147,22 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
                       ? "bg-amber-500 text-white"
                       : now
                         ? "bg-brand text-white"
-                        : done
+                        : stopped
+                          ? "border border-dashed border-border text-muted"
+                          : done
                           ? st.status === "done"
                             ? "bg-violet-600/15 text-violet-700 dark:text-violet-300"
                             : "bg-emerald-600/15 text-emerald-700"
                           : "bg-surface-3 text-muted"
                   }`}
                 >
-                  {done ? "✓ " : ""}
+                  {done ? "✓ " : stopped ? "⊘ " : ""}
                   {deciding ? t("Te toca decidir") : t(s.label)}
                 </span>
               </li>
               {/* El CI es una etapa del camino: estado en vivo del PR; si el repo ya tiene CI y
                   este PR no lo ha corrido, el paso mismo lo dispara (MailMask #10, 4-oct). */}
-              {s.key === "build" && <CiStep ci={st.ci} closed={closed} busy={busy} onRun={runCi} t={t} />}
+              {s.key === "build" && <CiStep ci={st.ci} status={st.status} busy={busy} onRun={runCi} t={t} />}
               {s.key === "pr" && st.prod && <ProdStep prod={st.prod} t={t} />}
               </Fragment>
             );
@@ -219,7 +226,11 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
             : st.status === "escalated"
             ? escalationLine(st.loops, t)
             : st.status === "cancelled"
-              ? t("Cancelado.")
+              ? st.cancelled?.reason === "pr_closed"
+                ? t("Cancelado: el PR se cerró en GitHub sin merge.")
+                : st.cancelled?.actor
+                  ? t("Cancelado por {nombre}.").replace("{nombre}", st.cancelled.actor)
+                  : t("Cancelado.")
               : st.status === "done"
                 ? ""
                 : st.status === "pr_review"
@@ -460,14 +471,15 @@ function ProdStep({ prod, t }: { prod: { state: string; url?: string | null }; t
 }
 
 /** El paso «CI» entre Build y Check: lo que dice GitHub del PR, no lo que declaró un rol. */
-function CiStep({ ci, closed, busy, onRun, t }: {
+function CiStep({ ci, status, busy, onRun, t }: {
   ci: { state: string; repoHasCi: boolean } | null | undefined;
-  closed: boolean;
+  status: string;
   busy: boolean;
   onRun: () => void;
   t: (s: string) => string;
 }) {
   const base = "flex-1 whitespace-nowrap rounded-full px-1.5 py-1 text-center text-[11px] font-semibold";
+  const closed = status === "done" || status === "cancelled";
   if (!closed && ci?.state === "none" && ci.repoHasCi)
     return (
       <li className="flex flex-1 items-center gap-1">
@@ -477,10 +489,13 @@ function CiStep({ ci, closed, busy, onRun, t }: {
       </li>
     );
   const look =
-    closed || ci?.state === "success"
+    // Merged = el CI pasó; cancelado = como quedó (un CI que seguía corriendo ya no corre).
+    status === "done" || ci?.state === "success"
       ? { cls: "bg-emerald-600/15 text-emerald-700", txt: `✓ ${t("CI")}` }
       : ci?.state === "pending"
-        ? { cls: "bg-brand text-white", txt: t("CI corriendo"), spin: true }
+        ? closed
+          ? { cls: "border border-dashed border-border text-muted", txt: `⊘ ${t("CI")}` }
+          : { cls: "bg-brand text-white", txt: t("CI corriendo"), spin: true }
         : ci?.state === "failure"
           ? { cls: "bg-red-600/15 text-red-700 dark:text-red-400", txt: `✗ ${t("CI")}` }
           : ci?.state === "none"
