@@ -2610,6 +2610,13 @@ function useAgentMeta(handle: string): AgentMeta | null {
   return meta;
 }
 
+// Lo que publica la plataforma con la cara de un rol (tarjetas, avisos del sprint) no corrió en
+// ningún modelo: sin turno no hay pie. Antes salía «Plan · claude-haiku-5-5» en la tarjeta (8-oct).
+const PLATFORM_POST = /^\s*(```gt-(run|sprint|plan|relay|pr)\b|🚀|▶️|🧩|🔎|🎉)/u;
+function platformPost(m: { turn_model?: string | null; body?: string | null }): boolean {
+  return !m.turn_model && PLATFORM_POST.test(String(m.body ?? ""));
+}
+
 export function AgentFooter({ handle, turnModel }: { handle: string; turnModel?: string | null }) {
   const tr = useT();
   const meta = useAgentMeta(handle);
@@ -3204,7 +3211,7 @@ export function MessageRow({
                   a la vista (ver TurnLiveFooter). */}
               {isAgent ? <TurnLiveFooter id={m.id} /> : null}
               {isAgent ? <TurnFailedFooter id={m.id} body={m.body} /> : null}
-              {isAgent && m.agent_handle && !turns.has(m.id) ? <AgentFooter handle={m.agent_handle} turnModel={m.turn_model} /> : null}
+              {isAgent && m.agent_handle && !turns.has(m.id) && !platformPost(m) ? <AgentFooter handle={m.agent_handle} turnModel={m.turn_model} /> : null}
             </div>
           ) : isAgent && !m.attachments?.length && !m.artifact ? (
             // Caja caliente: cáscara del agente aún sin texto → indicador inline (la fila

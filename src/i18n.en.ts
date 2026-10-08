@@ -1822,6 +1822,8 @@ export const en: Record<string, string> = {
   "Aprobar plan": "Approve plan",
   "Replanear": "Re-plan",
   "Ver PR": "See PR",
+  "Ver plan": "View plan",
+  "Ocultar plan": "Hide plan",
   "Ver hilo": "See thread",
   "Poco usados": "Less used",
   "Quitar de fijados": "Unpin",

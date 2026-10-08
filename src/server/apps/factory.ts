@@ -498,6 +498,8 @@ export const factoryRunCardFn = createServerFn({ method: "POST" })
       threadUrl: `/c/${ch.slug}?thread=${run.rootMsgId}`,
       // Firmable desde la tarjeta: el plan vigente espera firma (o hay que decidir tras escalar).
       canSign: (run.status === "plan_review" && !!plan && !plan.decision) || run.status === "escalated",
+      // El plan se lee desde la tarjeta: sin esto, para firmar había que abrir el hilo (8-oct).
+      planMd: run.status === "plan_review" && plan ? plan.planMd : null,
       // El CI del PR EN VIVO (no el del veredicto): tras preparar el repo, el aviso seguía pidiendo
       // «Prepara el repo» con el CI ya en main (MailMask #10, 4-oct).
       // Con el GitHub de quien aprobó/pidió (como el tick): quien mira sin GitHub conectado también ve el paso.
