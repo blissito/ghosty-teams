@@ -331,10 +331,13 @@ export async function approveSprint(id: number, sub: string, origin: string): Pr
   // Tickets que continúan un pedido vivo: el alcance nuevo le llega a @build como nota, y si
   // su PR ya estaba listo se reabre en la misma rama.
   const R = await import("./factory-runs.server");
+  const continued: string[] = [];
   for (const it of items) {
     if (!it.runId) continue;
     const run = await R.getRun(it.runId);
     if (!run || run.status === "done" || run.status === "cancelled") continue;
+    const pr = /\/pull\/(\d+)/.exec(run.prUrl ?? "")?.[1];
+    continued.push(`▶️ **El ticket ${it.idx} sigue en el pedido #${run.id}**${pr ? ` (PR #${pr})` : ""}: ${it.title} · [ver pedido](${await threadLink(run.channelId, run.rootMsgId)})`);
     await R.addNote(run.id, "@plan", `Nuevo alcance de este PR (sprint «${claimed[0].title}», ticket ${it.key}). Haz SÓLO esto; lo demás va en otros tickets:\n${it.bodyMd}`);
     if (run.status === "pr_review") await R.reopenWithNotes(run, "@plan", "", origin, { sprint: id, ticket: it.key });
     else await R.postInThread(run, "plan", `🧩 Este pedido ahora es el ticket ${it.key} del sprint «${claimed[0].title}»: @build recibe el alcance nuevo en su siguiente encargo.`);
@@ -345,6 +348,9 @@ export async function approveSprint(id: number, sub: string, origin: string): Pr
     toSprint(claimed[0]),
     `🚀 **Sprint lanzado:** ${items.length} ${items.length === 1 ? "ticket" : "tickets"}, uno a la vez (en orden y según sus dependencias). Aquí aviso cuando arranca, queda listo para revisar o se mezcla cada uno.`,
   ).catch(() => {});
+  // Un ticket que continúa un pedido no pasa por `startItem`: sin este renglón, el hilo del
+  // sprint no enseñaba ni el pedido ni su PR (MailMask, ticket P → #24, 8-oct).
+  for (const line of continued) await announce(toSprint(claimed[0]), line).catch(() => {});
   // El sprint vive en gt_factory_sprint_items: la tarjeta y /factory lo pintan de ahí (sin Tasks desde 30-sep).
   await advanceSprint(id);
   return (await getSprint(id))!;
