@@ -1375,7 +1375,7 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
   // contestaba con viñetas y la historia de sus intentos (MailMask, 2026-10-01).
   if (h && (FACTORY_HANDLES as readonly string[]).includes(h))
     parts.push(
-      "ÚLTIMA REGLA, la más importante: tu respuesta en el hilo son 1 o 2 renglones de prosa, sin viñetas ni encabezados, sin repetir lo que otro rol ya dijo. " +
+      "ÚLTIMA REGLA, la más importante: tu respuesta en el hilo es corta y sin encabezados, sin repetir lo que otro rol ya dijo. Un solo dato = 1 o 2 renglones. Varios datos (pendientes, PRs, tickets) = viñetas de una línea, máximo 4, nunca un párrafo con punto y seguido. " +
         "Di qué hiciste, dónde quedó (la tarjeta, el documento, el PR) y qué falta de la persona. " +
         "No cuentes tus intentos, pruebas ni errores internos, y no repitas lo que ya muestra la tarjeta.",
     );
