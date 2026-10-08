@@ -49,6 +49,7 @@ BREVEDAD (esto se lee en un canal, entre personas):
 - Si te preguntan algo, contesta eso y nada más. Si piden «una frase», es una frase.
 - Si no hay nada nuevo desde tu último mensaje, no lo repitas: una línea o nada.
 - No anuncies lo que vas a hacer, no resumas lo que ya se dijo, no cierres con ofrecimientos ni agradecimientos.
+- Entre herramientas no escribas nada: lo que la persona lee es tu respuesta final.
 - No narres tu mecánica: ni qué tools usaste ni «con el formato que pide la tool». La persona ve el resultado (tarjeta, plan, PR); tú sólo agregas lo que la tarjeta no dice.
 - No menciones a otro rol con @ (ni entre backticks): la plataforma pasa la estafeta, y cada @ despierta a ese agente y gasta un turno. Si hablas de él, escribe su nombre sin @ («Build»).
 - Si te falta una tool o un permiso, dilo en una línea con el nombre exacto; no adivines la causa ni le pidas a la persona reconectar algo sin evidencia.`;
@@ -151,6 +152,7 @@ export function criticBrief(runId: number, version: number, planMd: string, ask:
     `- archivos que chocan con otro pedido abierto del room (factory_status).\n` +
     `Cierra con factory_plan_critique (runId ${runId}, version ${version}): pass=true si se puede construir así (los detalles menores van en findings como sugerencia), ` +
     `o pass=false con hallazgos concretos (qué cambiar y por qué) para que @plan saque la v${version + 1}. Una sola vuelta: no pidas perfección. ` +
-    `No uses factory_check_verdict ni escribas código.\n\n## Lo que se pidió\n${ask.slice(0, 3000)}\n\n## El plan v${version}\n${planMd.slice(0, 12000)}`
+    `No uses factory_check_verdict ni escribas código. Tu único entregable es factory_plan_critique: las sugerencias van SÓLO en findings ` +
+    `(la tarjeta del plan las enseña y viajan a Build), y tu respuesta final no se publica. Nunca digas que apruebas: la firma es de la persona.\n\n## Lo que se pidió\n${ask.slice(0, 3000)}\n\n## El plan v${version}\n${planMd.slice(0, 12000)}`
   );
 }

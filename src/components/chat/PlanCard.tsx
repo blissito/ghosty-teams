@@ -46,6 +46,11 @@ export function PlanCard({ card, channelId, expanded = false }: { card: PlanCard
   });
 
   if (!st) return null;
+  // «Sugerencia: a,Sugerencia: b» o viñetas: una por renglón/viñeta, sin el prefijo repetido.
+  const suggestions = String(st.critiqueNotes ?? "")
+    .split(/\n+|,(?=\s*Sugerencia)/)
+    .map((x) => x.replace(/^\s*(?:[-*•]|\d+[.)])?\s*(?:Sugerencia(?:\s*\([^)]*\))?:\s*)?/i, "").trim())
+    .filter(Boolean);
 
   const decide = async (decision: "approve" | "changes") => {
     if (busy) return;
@@ -99,13 +104,28 @@ export function PlanCard({ card, channelId, expanded = false }: { card: PlanCard
           </p>
         )}
         {!superseded && st.critique && st.status === "plan_review" && !st.decision && (
-          <p className="mt-2 text-xs text-muted" role="status">
-            {st.critique === "pending"
-              ? `🔎 ${t("@check está revisando el plan antes de construir. Puedes firmar sin esperarlo.")}`
-              : st.critique === "pass"
-                ? `🔎 ${t("Revisado por @check: se puede construir así.")}`
-                : ""}
-          </p>
+          <div className="mt-2 text-xs text-muted" role="status">
+            {st.critique === "pending" ? (
+              `🔎 ${t("@check está revisando el plan antes de construir. Puedes firmar sin esperarlo.")}`
+            ) : st.critique === "pass" && suggestions.length ? (
+              // Las sugerencias viven aquí y no en el hilo; al firmar viajan a @build en su encargo.
+              <details>
+                <summary className="cursor-pointer">
+                  🔎 {t("Revisado por @check: se puede construir así")} · {t(suggestions.length === 1 ? "1 sugerencia" : "{n} sugerencias", { n: suggestions.length })}
+                </summary>
+                <ul className="mt-1.5 list-disc space-y-1 pl-5 text-ink">
+                  {suggestions.map((s, i) => (
+                    <li key={i}>
+                      <Markdown body={s} />
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-1.5">{t("Le llegan a @build al firmar.")}</p>
+              </details>
+            ) : st.critique === "pass" ? (
+              `🔎 ${t("Revisado por @check: se puede construir así.")}`
+            ) : null}
+          </div>
         )}
         <div className="mt-3 flex flex-wrap items-center gap-2">
           {canSign && st.status === "escalated" ? (

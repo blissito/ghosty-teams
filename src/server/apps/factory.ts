@@ -414,6 +414,7 @@ export const factoryPlanCardFn = createServerFn({ method: "POST" })
       note: plan.note,
       prUrl: run.prUrl,
       critique: plan.critique,
+      critiqueNotes: plan.critique === "pass" ? (plan.critiqueNotes ?? null) : null,
     };
   });
 

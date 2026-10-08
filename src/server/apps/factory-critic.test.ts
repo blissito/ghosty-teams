@@ -8,6 +8,7 @@ const posts: string[] = [];
 let plan: Record<string, unknown> = {};
 let failedBefore = false;
 let current = "plan_review";
+let suggestions = "";
 
 const row = (status: string) => ({ id: 10, channel_id: 14, root_msg_id: 3970, topic: "general", title: "Corte", status, plan_version: 1, loops: 0, requested_by: "ana", approved_by: null, pr_url: null });
 
@@ -18,6 +19,7 @@ vi.mock("../../dbq.server", () => ({
     if (sql.includes("critique = 'fail' LIMIT 1")) return failedBefore ? [{ 1: 1 }] : [];
     if (sql.startsWith("SELECT * FROM gt_factory_plans")) return [{ plan_md: "## Historia\nCorte del día", ...plan }];
     if (sql.startsWith("SELECT critique, auto_approve_by")) return [plan];
+    if (sql.startsWith("SELECT critique, critique_notes")) return suggestions ? [{ critique: "pass", critique_notes: suggestions }] : [];
     if (sql.startsWith("UPDATE gt_factory_runs SET status")) return [row((current = String(args[0])))];
     return [];
   },
@@ -56,6 +58,7 @@ beforeEach(() => {
   plan = {};
   failedBefore = false;
   current = "plan_review";
+  suggestions = "";
 });
 
 describe("crítico del plan", () => {
@@ -80,7 +83,8 @@ describe("crítico del plan", () => {
     const r = await finishCritique(run("plan_review"), true, "", "https://x");
     expect(r.status).toBe("building");
     expect(wakeups.some((w) => w.key.startsWith("factory:10:build:"))).toBe(true);
-    expect(posts.some((p) => p.includes("Revisé el plan v1"))).toBe(true);
+    // La tarjeta ya dice «Revisado por @check»: sin aviso repetido en el hilo (MailMask #18, 8-oct).
+    expect(posts.some((p) => p.includes("Revisé el plan"))).toBe(false);
   });
 
   it("pass en un pedido suelto: sigue esperando la firma de la persona", async () => {
@@ -88,6 +92,16 @@ describe("crítico del plan", () => {
     const r = await finishCritique(run("plan_review"), true, "", "https://x");
     expect(r.status).toBe("plan_review");
     expect(wakeups).toHaveLength(0);
+  });
+
+  it("las sugerencias del crítico viajan a @build al firmar", async () => {
+    plan = { critique: "pending", auto_approve_by: "beto", auto_approve_who: "Beto", decision: null };
+    suggestions = "- que revoke no revoque si no puede listar las llaves";
+    await finishCritique(run("plan_review"), true, suggestions, "https://x");
+    const toBuild = wakeups.find((w) => w.key.startsWith("factory:10:build:"));
+    expect(toBuild?.text).toContain("Sugerencias del crítico");
+    expect(toBuild?.text).toContain("no revoque si no puede listar");
+    expect(posts).toHaveLength(0);
   });
 
   it("fail: vuelve a @plan como «cambios» de @check", async () => {

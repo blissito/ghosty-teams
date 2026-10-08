@@ -301,7 +301,8 @@ export async function finishCritique(
   }
   await dbq("UPDATE gt_factory_plans SET critique = ?, critique_notes = ? WHERE run_id = ? AND version = ?", [pass ? "pass" : "fail", findings.slice(0, 4000) || null, run.id, version]);
   if (pass) {
-    await postInThread(run, "check", `🔎 Revisé el plan v${run.planVersion}: se puede construir así.${findings.trim() ? `\n\n${findings.trim()}` : ""}`);
+    // Sin aviso en el hilo: la tarjeta del plan ya dice «Revisado por @check» y despliega las
+    // sugerencias (`critiqueNotes`); al firmar viajan a @build en su encargo (`decide`).
     if (row.auto_approve_by) {
       const next = await decide({ run, version: run.planVersion, decision: "approve", sub: String(row.auto_approve_by), who: String(row.auto_approve_who ?? "Quien aprobó el sprint"), origin });
       return { ok: true, status: next.status };
@@ -705,6 +706,15 @@ export function postRelay(run: Run, d: { from: string; to: string; kind: RelayKi
   void postInThread(run, d.from, relayFence(d));
 }
 
+/** Las sugerencias del crítico que pasó el plan (`critique_notes` con `pass`), para el encargo de
+ *  @build. Antes se guardaban y nadie las leía: la persona las veía y @build no. */
+export async function critiqueSuggestions(runId: number, version: number): Promise<string> {
+  const [row] = await dbq("SELECT critique, critique_notes FROM gt_factory_plans WHERE run_id = ? AND version = ?", [runId, version]).catch(() => []);
+  const notes = String(row?.critique_notes ?? "").trim();
+  if (row?.critique !== "pass" || !notes) return "";
+  return `\n\n## Sugerencias del crítico (opcionales; aplícalas si no cambian el alcance)\n${notes}`;
+}
+
 /** El fence de la tarjeta de plan. La tarjeta lee estado y texto al pintar. */
 export const planCardFence = (runId: number, version: number) =>
   "```gt-plan\n" + JSON.stringify({ runId, version }) + "\n```";
@@ -961,6 +971,7 @@ export async function decide(opts: {
         ? `${who} pidió otra vuelta. Revisa los últimos hallazgos de @check en este hilo, corrige en la misma rama y cierra con factory_build_done.`
         : `${who} aprobó el plan v${version}. Constrúyelo: rama nueva, código, pruebas, PR en BORRADOR, y cierra con factory_build_done.`) +
       (await takeNotes(run.id)) +
+      (again ? "" : await critiqueSuggestions(run.id, version)) +
       `\n\n## Plan aprobado (v${version})\n${plan?.planMd ?? ""}`;
     // La caja del pedido antes del encargo: sin lugar en el tier, el pedido espera en cola con el
     // encargo guardado y el tick lo entrega en cuanto se libere uno.

@@ -416,7 +416,9 @@ export async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
   // «(sin respuesta)» es el relleno de `runAgentTurn` para un turno que no dijo nada: en un
   // despertador no se deja como burbuja (palmera-legal, 3-oct: un @check de 2 s quedó así en el
   // hilo). `afterFactoryTurn` ya recibió la respuesta tal cual y empuja al rol igual.
-  if (!finalBody || finalBody === "OK" || finalBody === "(sin respuesta)") {
+  // El crítico del plan (`-critic`) tampoco deja burbuja: su resultado ya lo dice la tarjeta del
+  // plan (estado y sugerencias); su respuesta repetía lo mismo y decía «Aprobé» (MailMask #18, 8-oct).
+  if (!finalBody || finalBody === "OK" || finalBody === "(sin respuesta)" || ref.groupId.endsWith("-critic")) {
     if (shellId != null) await db.deleteMessage(shellId).catch(() => {});
     return;
   }
