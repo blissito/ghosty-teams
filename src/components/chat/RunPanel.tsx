@@ -83,7 +83,7 @@ export function RunPanel({ runId, channelId }: { runId: number; channelId: numbe
 
   return (
     <div className="flex flex-col gap-4 p-4">
-      <RunCard card={{ runId }} channelId={channelId} />
+      <RunCard card={{ runId }} channelId={channelId} inPanel />
 
       {card.currentStep && (
         <p className="text-xs text-muted">

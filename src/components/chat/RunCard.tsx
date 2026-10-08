@@ -2,8 +2,8 @@
 // Dice en qué etapa va el pedido y deja firmar el plan AQUÍ, sin abrir el hilo; el detalle
 // (plan completo, hallazgos, PR) sigue en el hilo. Estado leído al pintar; se refresca con
 // los `refresh` del room que publica cada transición.
-import { Markdown } from "../Markdown";
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { ChatCtx } from "./message";
+import { Fragment, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { useT } from "../../i18n";
 import { useRtSubscribe } from "../../utils/rt-bus";
 import { factoryRunCardFn, factoryDecisionFn, factoryRetryPreviewFn, factorySetPreviewOffFn, factoryRunActionFn, factoryRunCiFn, factoryFixCiFn } from "../../server/apps/factory";
@@ -42,11 +42,11 @@ export function escalationLine(loops: number, t: (s: string) => string): string 
     : t("@build no puede resolverlo con sus herramientas: ¿otra vuelta o replanear?");
 }
 
-export function RunCard({ card, channelId }: { card: RunCardData; channelId: number }) {
+export function RunCard({ card, channelId, inPanel }: { card: RunCardData; channelId: number; inPanel?: boolean }) {
+  const { onOpenArtifact } = useContext(ChatCtx);
   const t = useT();
   const [st, setSt] = useState<State>(null);
   const [busy, setBusy] = useState(false);
-  const [showPlan, setShowPlan] = useState(false);
   const [asking, setAsking] = useState(false);
   const [note, setNote] = useState("");
   const [err, setErr] = useState("");
@@ -360,14 +360,15 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
               </button>
             </>
           )}
-          {st.planMd && (
+          {/* El plan se lee en el panel lateral del pedido (plan, firma y bitácora), no dentro de la
+              tarjeta: desplegado ahí no se podía leer (8-oct). Dentro del panel ya está abajo. */}
+          {st.planMd && !inPanel && onOpenArtifact && (
             <button
               type="button"
-              onClick={() => setShowPlan((v) => !v)}
-              aria-expanded={showPlan}
+              onClick={() => onOpenArtifact({ kind: "run", title: `${t("Pedido")} #${st.runId}`, runId: st.runId, channelId })}
               className="rounded-full border border-border px-3 py-1 text-xs font-semibold text-ink hover:bg-surface-3"
             >
-              {showPlan ? t("Ocultar plan") : `${t("Ver plan")} v${st.planVersion}`}
+              {t("Ver plan")} v{st.planVersion}
             </button>
           )}
           {st.preview?.state === "ready" && st.preview.url && (
@@ -435,11 +436,6 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
             {t("Ver hilo")} →
           </a>
         </div>
-        {showPlan && st.planMd && (
-          <div className="mt-2 max-h-96 overflow-y-auto rounded-xl border border-border bg-surface p-3 text-sm">
-            <Markdown body={st.planMd} />
-          </div>
-        )}
         {asking && (
           <div className="mt-2 flex gap-2">
             <input
