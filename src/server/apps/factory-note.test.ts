@@ -16,7 +16,9 @@ const notes: { runId: number; by: string; text: string }[] = [];
 const posted: string[] = [];
 const messages: Record<number, { body: string }> = {};
 const threads: Record<number, { body: string }[]> = {};
-const handoffs: { to: string; cause: string; text: string }[] = [];
+const handoffs: { to: string; cause: string; text: string; opts?: Run }[] = [];
+const relays: Run[] = [];
+let roleMsgCount = 0;
 const absorbCalls: { runId: number; keys: string[] }[] = [];
 let steerOk = false;
 const steers: string[] = [];
@@ -48,7 +50,8 @@ vi.mock("./factory-runs.server", () => ({
     return { ...run, ...patch, status: "building" };
   },
   postInThread: async (_r: Run, _h: string, body: string) => (posted.push(body), 1),
-  handoff: async (_r: Run, to: string, _s: string, cause: string, text: string) => (handoffs.push({ to, cause, text }), true),
+  postRelay: (_r: Run, d: Run) => void relays.push(d),
+  handoff: async (_r: Run, to: string, _s: string, cause: string, text: string, _o?: string, _g?: string, opts?: Run) => (handoffs.push({ to, cause, text, opts }), true),
   takeNotes: async () => "",
   reopenWithNotes: async (run: Run, _by: string, extra: string, _o: string, data: Run) => {
     applied.push({ event: "rework", patch: { merge_asked: null, loops: 0 }, data });
@@ -66,7 +69,10 @@ vi.mock("./factory-runs.server", () => ({
 }));
 
 vi.mock("../../dbq.server", () => ({
-  dbq: async (sql: string, args: unknown[] = []) => (sqlLog.push({ sql, args }), sql.includes("status = 'active'") && activeSprint ? [activeSprint] : []),
+  dbq: async (sql: string, args: unknown[] = []) => (
+    sqlLog.push({ sql, args }),
+    sql.includes("type = 'role_msg'") ? [{ n: roleMsgCount }] : sql.includes("status = 'active'") && activeSprint ? [activeSprint] : []
+  ),
 }));
 vi.mock("./sprint.server", () => ({
   validateSprintItems: (raw: any[]) => raw.map((i) => ({ key: i.key, title: i.title, size: i.size, dependsOn: [], bodyMd: i.title })),
@@ -92,6 +98,8 @@ beforeEach(() => {
   notes.length = 0;
   posted.length = 0;
   handoffs.length = 0;
+  relays.length = 0;
+  roleMsgCount = 0;
   absorbCalls.length = 0;
   steerOk = false;
   steers.length = 0;
@@ -213,6 +221,41 @@ describe("factory_note en vivo: @build a media obra recibe la nota en su turno",
     steerOk = true;
     await (await tool("factory_note", dest)).handler("beto", { text: "x y z" });
     expect(steers).toHaveLength(0);
+  });
+});
+
+// @build ↔ @check se escriben (POC 8-oct): en vivo si el otro trabaja, si no lo despierta; en el
+// hilo sólo queda la línea de relevo, nunca el texto.
+describe("factory_message", () => {
+  const dest = { channelId: 3, parentId: 99, handle: "check" };
+  it("en vivo: steer al otro rol + línea de relevo sin el texto", async () => {
+    current = baseRun({ status: "checking" });
+    steerOk = true;
+    const r: any = await (await tool("factory_message", dest)).handler("beto", { to: "build", text: "¿el 404 es a propósito?" });
+    expect(r).toMatchObject({ ok: true, delivered: "live" });
+    expect(steers[0]).toContain("¿el 404 es a propósito?");
+    expect(steers[0]).toContain('factory_message {to: "check"}');
+    expect(relays).toEqual([{ from: "check", to: "build", kind: "message" }]);
+    expect(logged).toEqual([{ type: "role_msg", data: { to: "build" } }]);
+    expect(handoffs).toHaveLength(0);
+  });
+  it("sin turno vivo: lo despierta con un encargo `:msg` sin skills", async () => {
+    current = baseRun({ status: "checking" });
+    const r: any = await (await tool("factory_message", dest)).handler("beto", { to: "build", text: "duda" });
+    expect(r).toMatchObject({ ok: true, delivered: "woken" });
+    expect(handoffs[0]).toMatchObject({ to: "build", opts: { keySuffix: ":msg", skills: false } });
+  });
+  it("sólo entre @build y @check, y no a sí mismo", async () => {
+    current = baseRun({ status: "checking" });
+    expect(((await (await tool("factory_message", { ...dest, handle: "plan" })).handler("beto", { to: "build", text: "x" })) as any).ok).toBe(false);
+    expect(((await (await tool("factory_message", dest)).handler("beto", { to: "check", text: "x" })) as any).ok).toBe(false);
+  });
+  it("tope de 6 por pedido y sentido", async () => {
+    current = baseRun({ status: "checking" });
+    roleMsgCount = 6;
+    const r: any = await (await tool("factory_message", dest)).handler("beto", { to: "build", text: "otra" });
+    expect(r.ok).toBe(false);
+    expect(relays).toHaveLength(0);
   });
 });
 

@@ -16,6 +16,9 @@ export async function factoryTools(_sub: string, dest: ToolDest | null): Promise
   return [...runTools(dest), ...alertWebhookTools(dest), ...uptimeTools(dest)];
 }
 
+/** Tope de `factory_message` por pedido y por rol que escribe: evita el ping-pong entre agentes. */
+const MAX_ROLE_MESSAGES = 6;
+
 const origin = async () => {
   const { reqOrigin } = await import("../../origin.server");
   return reqOrigin().catch(() => "");
@@ -469,6 +472,8 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
             `NO edites ni empujes nada. ` +
             `Cierra con factory_check_verdict (runId ${run.id}).`,
           await origin(),
+          "",
+          { from: "build" },
         );
         return { ok: true, runId: run.id, status: next.status, note: "@check ya tiene el encargo. Tu paso terminó." };
       },
@@ -659,6 +664,8 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
               : "") +
             (await R.takeNotes(run.id)),
           await origin(),
+          "",
+          { from: "check" },
         );
         return { ok: true, status: next.status, note: "Regresado a @build." };
       },
@@ -1098,6 +1105,48 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
       },
     },
     {
+      name: "factory_message",
+      description:
+        "Sólo @build y @check, dentro de su pedido. Escríbele al otro rol una pregunta o un aviso corto " +
+        "(«¿el endpoint nuevo devuelve 404 o 200 vacío?», «ya empujé el arreglo del test»). Si está trabajando le entra en vivo; " +
+        "si no, lo despierta en su conversación del pedido y te contesta con esta misma tool. En el hilo sólo se ve que se hablaron, no el texto. " +
+        "Pregunta en vez de reprobar por una duda; NO sirve para cerrar tu paso (eso sigue siendo factory_build_done / factory_check_verdict). " +
+        "Después de preguntar sigue con lo demás: la respuesta te entra en vivo. Máximo 6 mensajes por pedido en cada sentido.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          to: { type: "string", enum: ["build", "check"], description: "El otro rol" },
+          text: { type: "string", description: "El mensaje, breve y concreto" },
+          runId: { type: "number", description: "Id del PEDIDO; si este hilo es el del pedido, sale solo" },
+        },
+        required: ["to", "text"],
+      },
+      handler: async (sub, a) => {
+        const from = dest?.handle;
+        if (from !== "build" && from !== "check") return { ok: false, error: "sólo @build y @check se escriben con factory_message" };
+        const to = String(a.to ?? "");
+        if ((to !== "build" && to !== "check") || to === from) return { ok: false, error: `to tiene que ser «${from === "build" ? "check" : "build"}»` };
+        const text = String(a.text ?? "").trim().slice(0, 2000);
+        if (!text) return { ok: false, error: "el mensaje está vacío" };
+        const run = await resolveNoteRun(dest, sub, a.runId);
+        if (!run) return { ok: false, error: "no encuentro el pedido de este hilo: pasa runId" };
+        if (run.status === "done" || run.status === "cancelled") return { ok: false, error: `el pedido #${run.id} ya terminó` };
+        const R = await import("./factory-runs.server");
+        const { dbq } = await import("../../dbq.server");
+        const sent = await dbq("SELECT COUNT(*) AS n FROM gt_factory_events WHERE run_id = ? AND type = 'role_msg' AND actor = ?", [run.id, from]).catch(() => []);
+        if (Number(sent[0]?.n ?? 0) >= MAX_ROLE_MESSAGES)
+          return { ok: false, error: `ya van ${MAX_ROLE_MESSAGES} mensajes a @${to} en este pedido: decide con lo que tienes o pregúntale a la persona en el hilo` };
+        await R.logEvent(run.id, "role_msg", from, { to });
+        R.postRelay(run, { from, to, kind: "message" });
+        const body = `Mensaje de @${from} sobre el pedido #${run.id}: ${text}\n\nSi hace falta contestar, usa factory_message {to: "${from}"}; no lo escribas en el hilo.`;
+        if (await R.steerRole(run, to, body)) return { ok: true, delivered: "live", note: `@${to} ya lo recibió en su turno en curso.` };
+        const ok = await R.handoff(run, to, run.approvedBy ?? run.requestedBy, `mensaje de @${from}`, body, await origin(), "", { keySuffix: ":msg", skills: false });
+        return ok
+          ? { ok: true, delivered: "woken", note: `@${to} no estaba trabajando: lo desperté y su respuesta te entra como mensaje.` }
+          : { ok: false, error: `no pude despertar a @${to}` };
+      },
+    },
+    {
       name: "factory_status",
       description:
         "Estado del pedido de este hilo, de runId (el #N del PEDIDO) o de pr (número o URL del PR de GitHub): etapa, versión del plan, vueltas, PR y tarea.",
@@ -1314,7 +1363,7 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
   }
   // Misma frase que Tasks: tenerlas y no llamarlas es el otro modo de falla.
   parts.push(
-    "Tus tools de la fábrica (factory_plan_submit, factory_plan_critique, factory_build_done, factory_check_verdict, factory_status, factory_close, factory_ci_starter, factory_repo_prep, factory_preview, factory_sprint_submit, factory_note, factory_context, factory_room) " +
+    "Tus tools de la fábrica (factory_plan_submit, factory_plan_critique, factory_build_done, factory_check_verdict, factory_status, factory_close, factory_ci_starter, factory_repo_prep, factory_preview, factory_sprint_submit, factory_note, factory_message, factory_context, factory_room) " +
       "ya están disponibles en este turno: LLÁMALAS para cerrar tu paso; sin ellas la estafeta no avanza." +
       notaNombres(toolChannel),
   );

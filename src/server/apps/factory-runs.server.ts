@@ -695,6 +695,16 @@ export async function postInThread(run: Run, handle: string, body: string): Prom
   }
 }
 
+/**
+ * Línea de relevo en el hilo (estilo Grok: «Message from…», «Handed to…»): dice QUE dos roles se
+ * hablaron o se pasaron el trabajo, nunca el texto. La pinta `RelayLine` (message.tsx).
+ */
+export type RelayKind = "message" | "handoff";
+export const relayFence = (d: { from: string; to: string; kind: RelayKind }) => "```gt-relay\n" + JSON.stringify(d) + "\n```";
+export function postRelay(run: Run, d: { from: string; to: string; kind: RelayKind }): void {
+  void postInThread(run, d.from, relayFence(d));
+}
+
 /** El fence de la tarjeta de plan. La tarjeta lee estado y texto al pintar. */
 export const planCardFence = (runId: number, version: number) =>
   "```gt-plan\n" + JSON.stringify({ runId, version }) + "\n```";
@@ -714,6 +724,9 @@ export async function handoff(
   origin: string,
   /** Otra conversación del mismo rol en el mismo pedido (el juez de un eval de @check). */
   groupSuffix = "",
+  /** `from`: el rol que pasa el trabajo (pinta la línea de relevo); `keySuffix`: marca del
+   *  despertador (`:msg` = mensaje entre roles); `skills: false` = sin la línea de skills. */
+  opts: { from?: string; keySuffix?: string; skills?: boolean } = {},
 ): Promise<boolean> {
   const t0 = Date.now();
   const { resolvedAgents, agentGroupId } = await import("../../agents.server");
@@ -729,13 +742,13 @@ export async function handoff(
   const groupId = await agentGroupId(agent, `factory-${run.id}${groupSuffix}`);
   // Las skills del paso van en el encargo, junto a la tarea: en el prompt del rol no se seguían.
   let skills = "";
-  if ((to === "build" || to === "check") && !groupSuffix) {
+  if ((to === "build" || to === "check") && !groupSuffix && opts.skills !== false) {
     const plan = run.planVersion ? await getPlan(run.id, run.planVersion).catch(() => null) : null;
     skills = `\n\n${(await import("./factory-roles")).roleSkillsLine(to, `${run.title}\n${plan?.planMd ?? ""}`)}`;
   }
   const { enqueueWakeup, mintWakeRef } = await import("../wakeups.server");
   const ok = await enqueueWakeup({
-    key: `factory:${run.id}:${to}:${Date.now()}`,
+    key: `factory:${run.id}:${to}:${Date.now()}${opts.keySuffix ?? ""}`,
     ref: mintWakeRef({
       sub,
       ns,
@@ -750,6 +763,7 @@ export async function handoff(
     dueAt: Math.floor(Date.now() / 1000),
   });
   console.log(`[lat] handoff #${run.id} → @${to} encolado en ${Date.now() - t0}ms`);
+  if (ok && opts.from && !groupSuffix && opts.keySuffix !== ":msg") postRelay(run, { from: opts.from, to, kind: "handoff" });
   // `kick`, no `arm`: con sólo armar, el relevo esperaba al siguiente tick (hasta 30 s) y la
   // persona veía «nada pasó» tras firmar (MailMask, 2026-10-01).
   if (ok) (await import("../wakeups.server")).kickWakeups(ns);

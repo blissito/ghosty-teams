@@ -2479,6 +2479,9 @@ export async function callAgentBackendStream(
       ...(salesBoardId ? { boardId: salesBoardId } : {}),
       // Modelo de ESTE turno (fábrica). gs lo valida contra el motor y lo topa por plan.
       ...(native && factoryTurn?.model ? { model: factoryTurn.model } : {}),
+      // Ayudantes nativos síncronos sólo para @build (POC 8-oct); gs lo prende si el espacio tiene
+      // `factoryNativeSubagents`. Va en TODO turno de un rol (true/false) para que la clave no oscile.
+      ...(native && factoryTurn ? { nativeSubagents: agent.handle === "build" } : {}),
     });
     const url = `${base}/api/v2/fleet-agents/${fleetAgentId}/message-stream`;
     const doStream = (tok: string) =>

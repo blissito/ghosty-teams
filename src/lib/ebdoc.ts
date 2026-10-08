@@ -1166,6 +1166,7 @@ export function bubbleWithoutEbDoc(
     // La de plan de la Software Factory: el fence sólo trae ids, la tarjeta lee el resto.
     body = stripPlanCard(body);
     body = stripRunCard(body);
+    body = stripRelay(body);
     body = stripVerdictCard(body);
     body = stripPreviewErrorCard(body);
     body = stripSprintCard(body);
@@ -1430,6 +1431,30 @@ export function extractRunCard(body: string): RunCardData | null {
 
 export function stripRunCard(body: string): string {
   return body.replace(/```gt-run[^\n]*\n[\s\S]*?```/, "").trim();
+}
+
+/* ── Línea de relevo entre roles (```gt-relay```) ──────────────────────────── */
+// Estilo Grok («Message from…», «Handed to…»): QUE dos roles se hablaron o se pasaron el trabajo,
+// nunca el texto. La publica la plataforma (factory-runs `postRelay`).
+
+export type RelayData = { from: string; to: string; kind: "message" | "handoff" };
+
+export function extractRelay(body: string): RelayData | null {
+  const m = body.match(/```gt-relay[^\n]*\n([\s\S]*?)```/);
+  if (!m) return null;
+  try {
+    const d = JSON.parse(m[1].trim()) as Record<string, unknown>;
+    const from = String(d.from ?? "");
+    const to = String(d.to ?? "");
+    if (!from || !to) return null;
+    return { from, to, kind: d.kind === "message" ? "message" : "handoff" };
+  } catch {
+    return null;
+  }
+}
+
+export function stripRelay(body: string): string {
+  return body.replace(/```gt-relay[^\n]*\n[\s\S]*?```/, "").trim();
 }
 
 /* ── Veredicto de @check (```gt-verdict```) ────────────────────────────────── */

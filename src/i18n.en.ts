@@ -467,6 +467,8 @@ export const en: Record<string, string> = {
   "Pega la credencial…": "Paste the credential…",
   "Pega tu llave…": "Paste your key…",
   "Pensando…": "Thinking…",
+  "@{from} le escribió a @{to}": "@{from} messaged @{to}",
+  "@{from} le pasó el trabajo a @{to}": "@{from} handed off to @{to}",
   "Pequeño": "Small",
   "Perfil": "Profile",
   "Personalidad en este espacio": "Personality in this space",

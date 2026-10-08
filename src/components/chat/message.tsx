@@ -70,7 +70,7 @@ import type { Message, Attachment, Artifact, CustomEmoji } from "../../db.server
 import { forwardTargetsFn, forwardMessageFn } from "../../server/forward";
 import { readReceiptsFn} from "../../server/reads";
 import { agentMetaFn, type AgentMeta } from "../../server/agent-meta";
-import { SmilePlus, Pencil, ArrowLeft, Reply, Square, Ban, CircleHelp, ShieldAlert, Github, Circle, Asterisk, ListChecks } from "lucide-react";
+import { SmilePlus, Pencil, ArrowLeft, Reply, Square, Ban, CircleHelp, ShieldAlert, Github, Circle, Asterisk, ListChecks, MessageCircle, ArrowRight } from "lucide-react";
 import { useRtSubscribe } from "../../utils/rt-bus";
 import { PlanCard } from "./PlanCard";
 import { RunCard } from "./RunCard";
@@ -90,7 +90,7 @@ import { registerModalEsc } from "../../utils/modal-esc";
 import { useScrollLock } from "../../utils/scroll-lock";
 import { type ArtifactView, viewFromAttachment } from "../../components/ArtifactPanel";
 import { FxOverlay } from "./FxOverlay";
-import { extractFx, extractEbDoc, bubbleWithoutEbDoc, extractToolState, extractSubagents, extractSteps, extractTodos, extractAlert, extractAsk, extractPermission, extractAllPr, extractAllGh, extractTask, extractTests, extractPlanCard, extractRunCard, extractVerdictCard, extractPreviewErrorCard, extractSprintCard, extractAsksCard, extractAdsProposalCard, extractAdsCampaignCard, extractAdsReportCard, extractAdsPendingCard, type ToolState, type TodoState, type AlertCardData, type AskCardData, type PermissionCardData, type GhCardData, type PrCardData, type TaskCardData, type TestsCardData } from "../../lib/ebdoc";
+import { extractFx, extractEbDoc, bubbleWithoutEbDoc, extractToolState, extractSubagents, extractSteps, extractTodos, extractAlert, extractAsk, extractPermission, extractAllPr, extractAllGh, extractTask, extractTests, extractPlanCard, extractRunCard, extractRelay, type RelayData, extractVerdictCard, extractPreviewErrorCard, extractSprintCard, extractAsksCard, extractAdsProposalCard, extractAdsCampaignCard, extractAdsReportCard, extractAdsPendingCard, type ToolState, type TodoState, type AlertCardData, type AskCardData, type PermissionCardData, type GhCardData, type PrCardData, type TaskCardData, type TestsCardData } from "../../lib/ebdoc";
 import { SubagentList } from "./SubagentList";
 import { prCardStateFn, runCardActionFn, taskCardStateFn, runTaskCardActionFn } from "../../server/connectors";
 import { answerAgentAskFn } from "../../server/agent-ask";
@@ -2794,6 +2794,10 @@ export function MessageRow({
     );
   }
 
+  // Relevo entre roles de la fábrica: una línea delgada al centro, sin burbuja ni avatar.
+  const relay = isAgent ? extractRelay(m.body) : null;
+  if (relay) return <RelayLine relay={relay} time={time} />;
+
   // ── Variante COMPACTA (estilo Twitch) ────────────────────────────────────────
   //
   // Una línea por mensaje: hora, insignias, nombre en color, y el cuerpo a continuación.
@@ -3244,6 +3248,24 @@ export function MessageRow({
  * carácter dentro de la línea) para que quede alineado con la primera renglón
  * aunque el paso ocupe varias líneas.
  */
+
+/** «@check → @build · mensaje» / «@build entregó a @check»: se ve QUE se hablaron, nunca el texto
+ *  (como el «Message from…» de Grok). */
+export function RelayLine({ relay, time }: { relay: RelayData; time: string }) {
+  const t = useT();
+  const Icon = relay.kind === "message" ? MessageCircle : ArrowRight;
+  const label =
+    relay.kind === "message"
+      ? t("@{from} le escribió a @{to}", { from: relay.from, to: relay.to })
+      : t("@{from} le pasó el trabajo a @{to}", { from: relay.from, to: relay.to });
+  return (
+    <div className="flex items-center justify-center gap-1.5 py-1 text-xs text-muted">
+      <Icon size={12} className="shrink-0" />
+      <span>{label}</span>
+      <span className="opacity-60">· {time}</span>
+    </div>
+  );
+}
 
 export function StepList({ steps, emojis }: { steps: string[]; emojis?: { name: string; file_id: string }[] }) {
   return (
