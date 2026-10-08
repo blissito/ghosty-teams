@@ -320,7 +320,8 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         const run = await runOf(dest, a.runId);
         if (!run) return { ok: false, error: "no encuentro el pedido: pasa runId" };
         const pass = a.pass === true;
-        const findings = String(a.findings ?? "").trim();
+        // Haiku a veces manda una lista: `String()` la pegaba con comas («….,Justificación…», 8-oct).
+        const findings = findingsText(a.findings);
         if (!pass && !findings) return { ok: false, error: "con pass=false los hallazgos son obligatorios" };
         const R = await import("./factory-runs.server");
         const version = Number.isInteger(Number(a.version)) && Number(a.version) > 0 ? Number(a.version) : run.planVersion;
@@ -1374,7 +1375,7 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
   // contestaba con viñetas y la historia de sus intentos (MailMask, 2026-10-01).
   if (h && (FACTORY_HANDLES as readonly string[]).includes(h))
     parts.push(
-      "ÚLTIMA REGLA, la más importante: tu respuesta en el hilo son 1 a 4 renglones de prosa, sin viñetas ni encabezados. " +
+      "ÚLTIMA REGLA, la más importante: tu respuesta en el hilo son 1 o 2 renglones de prosa, sin viñetas ni encabezados, sin repetir lo que otro rol ya dijo. " +
         "Di qué hiciste, dónde quedó (la tarjeta, el documento, el PR) y qué falta de la persona. " +
         "No cuentes tus intentos, pruebas ni errores internos, y no repitas lo que ya muestra la tarjeta.",
     );

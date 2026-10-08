@@ -295,7 +295,9 @@ export async function finishCritique(
     await dbq("UPDATE gt_factory_plans SET critique = ?, critique_notes = ? WHERE run_id = ? AND version = ?", [pass ? "pass" : "fail", findings.slice(0, 4000) || null, run.id, version]);
     if (!pass && version === run.planVersion && !["done", "cancelled"].includes(run.status)) {
       await addNote(run.id, "@check (crítico del plan)", `Lo que el crítico encontró en el plan v${version} (ya estaba firmado):\n${findings.trim()}`);
-      await postInThread(run, "check", `🔎 Revisé el plan v${version} después de la firma. Esto le llega a @build como nota:\n\n${findings.trim()}`);
+      // En el hilo sólo el aviso: el detalle ya viaja a @build en la nota (antes se pegaba entero).
+      const n = findings.split("\n").filter((l) => /^\s*([-*•]|\d+[.)])\s/.test(l)).length;
+      await postInThread(run, "check", `🔎 Revisé el plan v${version} después de la firma: ${n > 1 ? `${n} ajustes` : n === 1 ? "un ajuste" : "ajustes"}, ya le llegaron a @build como nota.`);
     }
     return { ok: true, status: run.status };
   }
