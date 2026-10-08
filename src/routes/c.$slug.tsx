@@ -1940,13 +1940,20 @@ function ChannelPage() {
           if (t && !t.replies.some((m) => m.id === ev.msg.id))
             threadCache.set(ev.msg.parent_id, { root: t.root, replies: [...t.replies, ev.msg] });
           const arr = flowCache.get(slug);
-          if (arr)
-            flowCache.set(
-              slug,
-              arr.map((m) =>
-                m.id === ev.msg.parent_id ? { ...m, reply_count: (m.reply_count ?? 0) + 1 } : m
-              )
+          if (arr) {
+            const bumped = arr.map((m) =>
+              m.id === ev.msg.parent_id ? { ...m, reply_count: (m.reply_count ?? 0) + 1 } : m
             );
+            // «También en el room» (la tarjeta del pedido): además del hilo, va al flujo del room
+            // con su badge, igual que un mensaje de primer nivel (así lo cuenta `unreadByRoom`).
+            if (ev.msg.also_in_channel && !bumped.some((m) => m.id === ev.msg.id)) bumped.push(ev.msg);
+            flowCache.set(slug, bumped);
+          }
+          if (ev.msg.also_in_channel) {
+            if (isMine || (openDmId == null && ev.msg.channel_id === channel.id && visible))
+              markReadFn({ data: { scope: "room", scopeId: ev.msg.channel_id } }).catch(() => {});
+            else bumpUnread("room", ev.msg.channel_id);
+          }
           // Un hilo pudo nacer (primer reply) → refresca la lista de hilos del sidebar.
           // PERO no para la cáscara de un agente (streaming): un revalidate a media
           // corriente refetcha el body aún vacío del DB y pisa los deltas ya pintados.

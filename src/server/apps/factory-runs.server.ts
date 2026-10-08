@@ -1066,7 +1066,11 @@ export async function ensureRunCard(run: Run): Promise<void> {
     const { currentNamespace } = await import("../tenant.server");
     const who = await agentIdentity("plan");
     const body = runCardFence(run.id);
-    const { id } = await db.postAgent(run.channelId, null, body, "msg", who.handle, who.name, run.topic, who.avatar);
+    // Dentro del hilo del pedido y «también en el room» (8-oct): antes salía suelta en el room y
+    // parecía que el trabajo se mudaba a otro lado. Un pedido sin hilo la deja en el room.
+    const { id } = run.rootMsgId
+      ? await db.postAgent(run.channelId, run.rootMsgId, body, "msg", who.handle, who.name, run.topic, who.avatar, { alsoInChannel: true })
+      : await db.postAgent(run.channelId, null, body, "msg", who.handle, who.name, run.topic, who.avatar);
     await dbq("UPDATE gt_factory_runs SET card_msg_id = ? WHERE id = ? AND card_msg_id IS NULL", [id, run.id]);
     const msg = await db.getMessage(id);
     if (msg) bus.publish(bus.ch.room(await currentNamespace(), run.channelId), { t: "message:new", msg });

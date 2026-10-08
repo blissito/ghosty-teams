@@ -106,6 +106,9 @@ export type Message = {
   quoted_excerpt?: string | null;
   forwarded_from?: string | null; // reenviado: autor original (rótulo "Reenviado")
   turn_model?: string | null; // modelo que corrió el turno del agente (el pie de la respuesta)
+  /** Respuesta de hilo que también se pinta en el room («en el hilo de…»). */
+  also_in_channel?: number;
+  thread_root_excerpt?: string | null;
 };
 
 export type Attachment = {
@@ -160,6 +163,8 @@ function toMessage(r: Row): Message {
     quoted_excerpt: (r.quoted_excerpt as string | null) ?? null,
     forwarded_from: (r.forwarded_from as string | null) ?? null,
     turn_model: (r.turn_model as string | null) ?? null,
+    also_in_channel: r.also_in_channel == null ? 0 : num(r.also_in_channel),
+    thread_root_excerpt: (r.thread_root_excerpt as string | null) ?? null,
   };
 }
 
@@ -1460,7 +1465,7 @@ export async function listRecentHits(userSub: string, channelIds: number[]): Pro
       `SELECT m.*, ch.slug AS _slug, ch.name AS _rname
          FROM gc_messages m JOIN gc_channels ch ON ch.id = m.channel_id
          JOIN (SELECT channel_id, MAX(id) AS mid FROM gc_messages
-                WHERE dm_id IS NULL AND kind = 'msg' AND parent_id IS NULL
+                WHERE dm_id IS NULL AND kind = 'msg' AND (parent_id IS NULL OR also_in_channel = 1)
                   AND channel_id IN (${ph}) GROUP BY channel_id) x ON x.mid = m.id`,
       channelIds
     );
@@ -2456,10 +2461,10 @@ export async function listChannelFlow(channelId: number, topic?: string): Promis
   const rows = await dbq(
     `SELECT m.*, (SELECT COUNT(*) FROM gc_messages c WHERE c.parent_id = m.id) AS reply_count
        FROM gc_messages m
-      WHERE m.channel_id = ? AND m.parent_id IS NULL ${filter}
+      WHERE m.channel_id = ? AND (m.parent_id IS NULL OR m.also_in_channel = 1) ${filter}
         AND (
           m.id IN (SELECT id FROM gc_messages
-                    WHERE channel_id = ? AND parent_id IS NULL ${topic ? "AND topic = ?" : ""}
+                    WHERE channel_id = ? AND (parent_id IS NULL OR also_in_channel = 1) ${topic ? "AND topic = ?" : ""}
                     ORDER BY created_at DESC, id DESC LIMIT ${FLOW_LIMIT})
           OR EXISTS (SELECT 1 FROM gc_messages c WHERE c.parent_id = m.id)
         )
@@ -2504,7 +2509,7 @@ export async function listTopics(channelId: number): Promise<TopicInfo[]> {
   const rows = await dbq(
     `SELECT topic, COUNT(*) AS count, MAX(created_at) AS last_at
        FROM gc_messages
-      WHERE channel_id = ? AND parent_id IS NULL
+      WHERE channel_id = ? AND (parent_id IS NULL OR also_in_channel = 1)
       GROUP BY topic
       ORDER BY last_at DESC`,
     [channelId]
@@ -2670,12 +2675,15 @@ export async function postAgent(
   agentHandle: string,
   sender: string,
   topic = "general", // hereda el topic del root del hilo (lo pasa chat.ts)
-  avatar = "" // avatar del agente → se ve en el chat
+  avatar = "", // avatar del agente → se ve en el chat
+  /** Respuesta de hilo que además se pinta en el room (la tarjeta del pedido de la fábrica). */
+  opts: { alsoInChannel?: boolean } = {},
 ): Promise<{ id: number }> {
+  const also = opts.alsoInChannel && parentId != null;
   const rows = await dbq(
-    `INSERT INTO gc_messages (channel_id, parent_id, sender, avatar, body, kind, mentions_ghosty, agent_handle, topic)
-     VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?) RETURNING id`,
-    [channelId, parentId, sender, avatar, body, kind, agentHandle, topic]
+    `INSERT INTO gc_messages (channel_id, parent_id, sender, avatar, body, kind, mentions_ghosty, agent_handle, topic, also_in_channel, thread_root_excerpt)
+     VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ${also ? "(SELECT substr(body, 1, 140) FROM gc_messages WHERE id = ?)" : "NULL"}) RETURNING id`,
+    [channelId, parentId, sender, avatar, body, kind, agentHandle, topic, also ? 1 : 0, ...(also ? [parentId] : [])]
   );
   return { id: num(rows[0].id) };
 }
@@ -3124,7 +3132,7 @@ export async function unreadByRoom(userSub: string): Promise<UnreadCount[]> {
        FROM gc_messages m
        LEFT JOIN gc_reads r
          ON r.user_sub = ? AND r.scope = 'room' AND r.scope_id = CAST(m.channel_id AS TEXT)
-      WHERE m.dm_id IS NULL AND m.parent_id IS NULL AND m.kind = 'msg'
+      WHERE m.dm_id IS NULL AND (m.parent_id IS NULL OR m.also_in_channel = 1) AND m.kind = 'msg'
         AND m.created_at > COALESCE(r.last_read_at, 0)
         AND NOT EXISTS (SELECT 1 FROM gc_mutes mu
               WHERE mu.user_sub = ? AND mu.scope = 'room'

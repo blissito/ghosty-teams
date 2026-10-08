@@ -2771,6 +2771,11 @@ export function MessageRow({
     (prev.sender_sub && m.sender_sub ? prev.sender_sub === m.sender_sub : prev.sender === m.sender) &&
     m.created_at - prev.created_at < 300;
 
+  // Respuesta de hilo pintada también en el room («también en el room», 8-oct): en el room abre SU
+  // hilo y lleva el rótulo «en el hilo de…»; dentro del hilo se pinta normal.
+  const broadcast = !!showThreadLink && !!m.also_in_channel && m.parent_id != null;
+  const threadOf = broadcast ? m.parent_id! : m.id;
+
   if (m.kind === "status") {
     // Tarjeta de quick-call (body = JSON) → tarjeta rica estilo Slack.
     const card = parseCallCard(m.body);
@@ -2940,7 +2945,7 @@ export function MessageRow({
           {/* Orden: emoji → hilo → flechas (responder, reenviar) → editar (propio) → ⋯.
               Copiar y destacar viven ahora en el menú ⋯. */}
           {canReact && react && <ReactButton m={m} />}
-          {showThreadLink && onOpenThread && !m.reply_count && <ThreadReplyButton onOpen={() => onOpenThread(m.id)} />}
+          {showThreadLink && onOpenThread && !m.reply_count && <ThreadReplyButton onOpen={() => onOpenThread(threadOf)} />}
           {setReplyTo && <ReplyButton m={m} author={displayName} />}
           {forward && <ForwardButton m={m} />}
             {m.body ? <CopyButton m={m} /> : null}
@@ -2997,6 +3002,18 @@ export function MessageRow({
           ) : null}
         </div>
         )}
+        {broadcast && onOpenThread ? (
+          <button
+            onClick={() => onOpenThread(threadOf)}
+            className="mb-1 flex w-full max-w-md items-start gap-1.5 rounded-md border-l-2 border-brand/60 bg-surface-2 px-2 py-1 text-left transition hover:bg-surface-3"
+          >
+            <MessageSquare size={12} className="mt-0.5 shrink-0 text-muted" />
+            <span className="min-w-0 text-xs text-muted">
+              {t("en el hilo de")}{" "}
+              <span className="text-ink">«{(m.thread_root_excerpt ?? "").length > 90 ? (m.thread_root_excerpt ?? "").slice(0, 90) + "…" : m.thread_root_excerpt}»</span>
+            </span>
+          </button>
+        ) : null}
         {/* Reenviado (forward): rótulo sutil estilo WhatsApp sobre el cuerpo. */}
         {m.forwarded_from ? (
           <div className="mb-0.5 flex items-center gap-1 text-xs italic text-muted">
@@ -3222,7 +3239,7 @@ export function MessageRow({
             espacio legítimo). SIN respuestas → NO se renderiza nada inline: el afordance
             "responder en hilo" vive en la barra flotante de hover (posición absoluta → cero
             reserva de espacio, cero brinco de layout, como Slack). */}
-        {showThreadLink && onOpenThread && m.reply_count ? (
+        {showThreadLink && onOpenThread && m.reply_count && !broadcast ? (
           <div className="mt-1 flex items-center gap-3 text-xs">
             <button
               onClick={() => onOpenThread(m.id)}

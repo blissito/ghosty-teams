@@ -82,6 +82,16 @@ export function rememberSlug(ns: string, slug: string): void {
   }
 }
 
+function forgetTenants(nss: string[]): void {
+  const s = load();
+  for (const ns of nss) delete s[ns];
+  try {
+    fs.writeFileSync(FILE, JSON.stringify(s));
+  } catch {
+    /* best-effort */
+  }
+}
+
 let warmed = false;
 
 /** Una vez por proceso: corre `ensureSchema` en cada espacio de la última semana. */
@@ -95,8 +105,20 @@ export function warmKnownTenants(): void {
     void (async () => {
       const { withNamespace } = await import("./tenant.server");
       const { ensureSchema } = await import("./schema.server");
-      for (const ns of list) await withNamespace(ns, () => ensureSchema()).catch(() => {});
-      console.log(`[tenants] desperté ${list.length} espacio(s) al arrancar`);
+      // Un espacio cuyo `ensureSchema` falla entero (8-oct: 9 de 21 con «183 fallos» en cada
+      // arranque) se dice cuál y por qué; si sqld ya no tiene ese namespace, se olvida en vez de
+      // reintentarlo en silencio cada deploy. Si era una caída pasajera, se vuelve a recordar en
+      // cuanto alguien lo visite (`rememberTenant`).
+      const dead: string[] = [];
+      for (const ns of list) {
+        await withNamespace(ns, () => ensureSchema()).catch((e) => {
+          // Sólo se olvida si sqld dice que el namespace no existe; una caída pasajera no.
+          if (/namespace|not found|does not exist|404/i.test(String(e instanceof Error ? e.message : e))) dead.push(ns);
+          console.warn(`[tenants] ${ns} no despertó: ${String(e instanceof Error ? e.message : e).slice(0, 160)}`);
+        });
+      }
+      if (dead.length) forgetTenants(dead);
+      console.log(`[tenants] desperté ${list.length - dead.length} espacio(s) al arrancar${dead.length ? ` · olvidé ${dead.length}` : ""}`);
     })();
   }, 3_000).unref?.();
 }

@@ -189,6 +189,11 @@ async function migrate(): Promise<void> {
   // Modelo que corrió el turno del agente: el pie dice ése y no el del handle (escalada,
   // «@build con opus», evals, tope del plan). Los mensajes anteriores caen al del handle.
   await addColumn("gc_messages", "turn_model", "TEXT");
+  // «También en el room» (estilo «Also send to #channel» de Slack, 8-oct): una respuesta de hilo
+  // que además se pinta en el flujo del room, con el extracto de la raíz para el rótulo «en el
+  // hilo de…» (copia al insertar, como `quoted_excerpt`, para que el realtime ya la traiga).
+  await addColumn("gc_messages", "also_in_channel", "INTEGER NOT NULL DEFAULT 0");
+  await addColumn("gc_messages", "thread_root_excerpt", "TEXT");
 
   await exec(`CREATE INDEX IF NOT EXISTS gc_messages_chan_topic
               ON gc_messages(channel_id, topic, created_at)`);
@@ -204,6 +209,8 @@ async function migrate(): Promise<void> {
   // causa raíz del arranque lentísimo de rooms grandes (general). Con el índice = lookup.
   await exec(`CREATE INDEX IF NOT EXISTS gc_messages_parent
               ON gc_messages(parent_id)`);
+  await exec(`CREATE INDEX IF NOT EXISTS gc_messages_also_in_channel
+              ON gc_messages(channel_id, also_in_channel, created_at)`);
 
   await exec(`CREATE TABLE IF NOT EXISTS gc_reactions (
     message_id INTEGER NOT NULL,

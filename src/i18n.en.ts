@@ -467,6 +467,7 @@ export const en: Record<string, string> = {
   "Pega la credencial…": "Paste the credential…",
   "Pega tu llave…": "Paste your key…",
   "Pensando…": "Thinking…",
+  "en el hilo de": "in the thread of",
   "Revisado por @check: se puede construir así": "Reviewed by @check: good to build",
   "1 sugerencia": "1 suggestion",
   "Le llegan a @build al firmar.": "@build gets them when you sign.",

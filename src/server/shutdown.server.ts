@@ -109,10 +109,17 @@ function armar(): void {
       }
       cierres.clear();
       console.log(`[shutdown] ${señal}: ${n} recurso(s) cerrado(s)`);
-      // No se llama a process.exit(): con los recursos liberados, Node sale solo cuando
-      // termina lo que tenga a medias (una request en vuelo se completa). Un exit() aquí
-      // cortaría esa request, que es justo el error genérico que queríamos quitar.
-      // La red es el timeout de systemd, que ya no debería llegar a dispararse.
+      // Los turnos vivos se sueltan para que el proceso nuevo los adopte al arrancar.
+      void import("./turns.server")
+        .then((t) => t.releaseLiveTurns())
+        .then((k) => k && console.log(`[shutdown] ${k} turno(s) soltados para adopción`))
+        .catch(() => {});
+      // Salida acotada (8-oct). Se esperaba que Node saliera solo al terminar lo que tuviera a
+      // medias, pero el stream de un turno durable (con sus reintentos) mantiene vivo el event
+      // loop: systemd lo mataba a los 90 s y en ese hueco nada escuchaba en :3000 (502 público,
+      // deploy de las 11:00). nitro ya cerró el listener en el SIGTERM, así que esperar más no
+      // atiende a nadie. 6 s alcanzan para soltar los turnos, `setTurnDurable` y los cuerpos.
+      setTimeout(() => process.exit(0), 6_000).unref();
     });
   }
 }

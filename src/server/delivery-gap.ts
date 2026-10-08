@@ -218,7 +218,7 @@ export async function warnIfNothingDelivered(
       ? { sql: "dm_id = ?", arg: msg.dm_id }
       : msg.parent_id != null
         ? { sql: "parent_id = ?", arg: msg.parent_id }
-        : { sql: "channel_id = ? AND parent_id IS NULL", arg: msg.channel_id };
+        : { sql: "channel_id = ? AND (parent_id IS NULL OR also_in_channel = 1)", arg: msg.channel_id };
   const tarjetas = await dbq(
     `SELECT 1 FROM gc_messages WHERE ${scope.sql} AND id > ? AND body LIKE '%\`\`\`gt-%' LIMIT 1`,
     [scope.arg, messageId],

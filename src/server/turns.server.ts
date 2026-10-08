@@ -283,6 +283,33 @@ async function latir(): Promise<void> {
   }
 }
 
+/**
+ * Apagado (SIGTERM del deploy): los turnos que este proceso tenía vivos se sueltan para que el
+ * proceso nuevo los ADOPTE en su barrido de arranque. Con el latido vigente, `sweepOrphans` los
+ * respetaba hasta `LEASE_S` (90 s) y la burbuja se quedaba en «pensando» ese rato. Se apaga el
+ * latido antes, o el siguiente tick los volvería a marcar vivos.
+ */
+export async function releaseLiveTurns(): Promise<number> {
+  if (latido) clearInterval(latido);
+  latido = null;
+  const porNs = new Map<string, number[]>();
+  for (const t of live.values()) {
+    const ids = porNs.get(t.ns) ?? [];
+    ids.push(t.messageId);
+    porNs.set(t.ns, ids);
+  }
+  const { withNamespace } = await import("./tenant.server");
+  let n = 0;
+  for (const [ns, ids] of porNs) {
+    await withNamespace(ns, () =>
+      persistir(`UPDATE gt_turns SET heartbeat_at = NULL WHERE state = 'running' AND message_id IN (${ids.join(",")})`, []),
+    )
+      .then(() => (n += ids.length))
+      .catch(() => {});
+  }
+  return n;
+}
+
 export function registerTurn(t: Omit<LiveTurn, "startedAt"> & { startedAt?: number }): LiveTurn {
   const entry: LiveTurn = { ...t, startedAt: t.startedAt ?? Date.now() };
   live.set(claveDe(entry.ns, entry.messageId), entry);
