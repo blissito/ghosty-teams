@@ -84,10 +84,17 @@ export async function ciCoverage(
   repo: string,
   scripts: Record<string, string>,
   listing?: unknown,
-): Promise<{ onPr: boolean; path: string | null; missing: string[] }> {
+): Promise<{ onPr: boolean; path: string | null; missing: string[]; docker: boolean }> {
   const wf = await prWorkflows(sub, repo, listing);
-  if (!wf.length) return { onPr: false, path: null, missing: CI_SCRIPTS.filter((s) => !!scripts[s]) };
-  return { onPr: true, path: wf[0].path, missing: uncoveredScripts(wf.map((w) => w.text), scripts) };
+  if (!wf.length) return { onPr: false, path: null, missing: CI_SCRIPTS.filter((s) => !!scripts[s]), docker: false };
+  const texts = wf.map((w) => w.text);
+  return { onPr: true, path: wf[0].path, missing: uncoveredScripts(texts, scripts), docker: buildsDocker(texts) };
+}
+
+/** ¿Algún workflow de PR construye la imagen? Con Dockerfile, un PR que no compila la imagen
+ *  rompe hasta el deploy (MailMask #17: el bundle pasaba las pruebas y tumbaba el build, 8-oct). */
+export function buildsDocker(texts: string[]): boolean {
+  return texts.some((t) => /docker\/build-push-action|\bdocker\s+(buildx\s+)?build\b/.test(t));
 }
 
 /**
@@ -138,10 +145,11 @@ export async function buildCiStarter(
   // pedido de preparar el repo daba vueltas build→check sin salida (palmera-legal, 2-oct).
   const depReviewOk = !info?.private || info?.security_and_analysis?.advanced_security?.status === "enabled";
 
-  const [pnpm, yarn, nvmrc] = await Promise.all([
+  const [pnpm, yarn, nvmrc, dockerfile] = await Promise.all([
     exists(sub, repo, "pnpm-lock.yaml"),
     exists(sub, repo, "yarn.lock"),
     exists(sub, repo, ".nvmrc"),
+    exists(sub, repo, "Dockerfile"),
   ]);
   const pm = pnpm ? "pnpm" : yarn ? "yarn" : "npm";
   const install = pm === "pnpm" ? "pnpm install --frozen-lockfile" : pm === "yarn" ? "yarn install --frozen-lockfile" : "npm ci";
@@ -194,7 +202,21 @@ ${pm === "pnpm" ? `      - uses: ${a.pnpm}\n` : ""}      - uses: ${a.setupNode}
       - uses: ${a.gitleaks}
         env:
           GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}
-${depReviewOk ? `      - uses: ${a.depReview}\n        with:\n          fail-on-severity: high\n` : ""}`;
+${depReviewOk ? `      - uses: ${a.depReview}\n        with:\n          fail-on-severity: high\n` : ""}${
+    dockerfile
+      ? `  docker:
+    if: github.event_name == 'pull_request'
+    runs-on: ${runsOn}
+    timeout-minutes: 20
+    steps:
+      - uses: ${a.checkout}
+        with:
+          persist-credentials: false
+      # Sólo comprueba que la imagen se construye; nunca la sube.
+      - run: docker build -t ci-check .
+`
+      : ""
+  }`;
   const codeowners = `# Los cambios al CI y a esta regla los revisa una persona (Software Factory de Ghosty).\n/.github/ @${owner}\n`;
   const notes: string[] = [];
   if (unpinned.length) notes.push(`No pude fijar por SHA: ${unpinned.join(", ")} (quedaron con su tag).`);

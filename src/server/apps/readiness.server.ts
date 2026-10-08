@@ -68,6 +68,10 @@ export type RepoFacts = {
   /** El workflow de PR que ya existe (null = sin CI) y los scripts del repo que no corre. */
   ciPath?: string | null;
   ciMissing?: string[];
+  /** Hay tsconfig y no hay script `typecheck`: la preparación agrega `tsc --noEmit` (no hay herramienta que elegir). */
+  addTypecheck?: boolean;
+  /** Hay Dockerfile y ningún workflow de PR construye la imagen. */
+  ciDockerMissing?: boolean;
 };
 
 export const LEVELS: Record<1 | 2 | 3, ReadinessKey[]> = {
@@ -159,7 +163,10 @@ export async function repoReadiness(sub: string, repo: string, opts: { fresh?: b
       scripts = {};
     }
   }
-  const missingScripts = ["test", ...(scripts.typecheck || scripts.lint ? [] : ["typecheck"])].filter((s) => !scripts[s]);
+  // Con tsconfig, el typecheck no pide elegir nada (`tsc --noEmit`): lo agrega la preparación en
+  // vez de mandarlo a «otro pedido» que nadie pedía (MailMask llegó al #24 sin tipos en CI, 8-oct).
+  const addTypecheck = has("tsconfig.json") && !scripts.typecheck;
+  const missingScripts = ["test", ...(scripts.typecheck || scripts.lint || addTypecheck ? [] : ["typecheck"])].filter((s) => !scripts[s]);
 
   // CODEOWNERS puede vivir en la raíz, en .github/ o en docs/ (GitHub mira los tres).
   const coPath = ghFiles.includes("CODEOWNERS") ? ".github/CODEOWNERS" : has("CODEOWNERS") ? "CODEOWNERS" : null;
@@ -167,7 +174,8 @@ export async function repoReadiness(sub: string, repo: string, opts: { fresh?: b
 
   // Protegida = el ruleset de la fábrica, o cualquier protección que GitHub reporte en la rama.
   const { protectionState, ciCoverage, deployWorkflow } = await import("./ci-starter.server");
-  const ci = await ciCoverage(sub, repo, scripts, workflows).catch(() => ({ onPr: false, path: null, missing: [] as string[] }));
+  const ci = await ciCoverage(sub, repo, scripts, workflows).catch(() => ({ onPr: false, path: null, missing: [] as string[], docker: false }));
+  const ciDockerMissing = has("Dockerfile") && !ci.docker;
   const deploy = await deployWorkflow(sub, repo, workflows).catch(() => null);
   const protection = await protectionState(sub, repo).catch(() => "error" as const);
   const P = await import("./preview.server");
@@ -193,7 +201,7 @@ export async function repoReadiness(sub: string, repo: string, opts: { fresh?: b
     lockfile: !!pm,
     scripts: missingScripts.length === 0,
     agents_md: has("AGENTS.md"),
-    ci: ci.onPr && ci.missing.length === 0,
+    ci: ci.onPr && ci.missing.length === 0 && !addTypecheck && !ciDockerMissing,
     codeowners: codeownersCoversGithub(codeowners),
     dependabot: ghFiles.some((n) => /^dependabot\.ya?ml$/i.test(n)) || has("renovate.json"),
     protected: protection === "protected" || branch?.protected === true,
@@ -225,6 +233,8 @@ export async function repoReadiness(sub: string, repo: string, opts: { fresh?: b
       deployWorkflow: deploy?.path ?? null,
       ciPath: ci.path,
       ciMissing: ci.missing,
+      addTypecheck,
+      ciDockerMissing,
     },
     checkedAt: Date.now(),
   };
@@ -335,12 +345,18 @@ export function preparationPlan(r: Readiness): { title: string; planMd: string; 
   const miss = (k: ReadinessKey) => r.checks.some((c) => c.key === k && !c.ok);
   const fixes = r.checks.filter((c) => !c.ok && c.fixable).map((c) => c.key);
   const steps: string[] = [];
+  const f = r.facts;
+  if (miss("ci") && f.addTypecheck) steps.push('- `package.json` — agrega el script `"typecheck": "tsc --noEmit"` (el repo ya tiene `tsconfig.json`). Si salen errores de tipos, arréglalos si son pocos; si son muchos, dilo en el PR.');
   // Con CI propio se completa el suyo: nunca se le pone uno al lado ni se le pisa.
-  if (miss("ci") && r.facts.ciPath)
-    steps.push(
-      `- \`${r.facts.ciPath}\` — agrega los pasos que faltan (${(r.facts.ciMissing ?? []).map((s) => `\`${runCmd(r.facts.pm, s)}\``).join(", ")}) en el job que ya corre en los PR, con su mismo instalador y runner. No cambies nada más.`,
-    );
-  else if (miss("ci")) steps.push("- `.github/workflows/ci.yml` — las pruebas corren solas en cada PR (tipos, lint, pruebas, build, secretos y dependencias).");
+  if (miss("ci") && f.ciPath) {
+    const adds = [...(f.ciMissing ?? []), ...(f.addTypecheck ? ["typecheck"] : [])].map((s) => `\`${runCmd(f.pm, s)}\``);
+    const what = [
+      adds.length ? `los pasos que faltan (${adds.join(", ")}) en el job que ya corre en los PR, con su mismo instalador y runner` : null,
+      f.ciDockerMissing ? "un job `docker` que corra `docker build -t ci-check .` sólo en PR, sin subir la imagen" : null,
+    ].filter(Boolean);
+    steps.push(`- \`${f.ciPath}\` — agrega ${what.join(" y ")}. No cambies nada más.`);
+  } else if (miss("ci"))
+    steps.push(`- \`.github/workflows/ci.yml\` — las pruebas corren solas en cada PR (tipos, lint, pruebas, build${f.ciDockerMissing ? ", imagen de Docker" : ""}, secretos y dependencias).`);
   if (miss("codeowners")) steps.push("- `.github/CODEOWNERS` — los cambios a `.github/` los revisa una persona.");
   if (miss("dependabot")) steps.push("- `.github/dependabot.yml` — dependencias al día, agrupadas y semanales.");
   if (miss("agents_md"))
@@ -364,6 +380,14 @@ export function preparationPlan(r: Readiness): { title: string; planMd: string; 
     later.push("- Proteger la rama principal: GitHub sólo lo permite en repos privados con GitHub Pro o Team (o si el repo es público).");
   else if (miss("protected")) later.push("- Proteger la rama principal: lo activa el dueño con un clic en «Listo para agentes» cuando este PR tenga merge.");
 
+  // Sólo lo que de verdad entra en el PR: un criterio de algo que no se toca hacía reprobar
+  // a @check por «falta el CI nuevo» cuando el pedido nunca lo traía (MailMask #24, 8-oct).
+  const criteria = [
+    `- El PR sólo agrega o completa esos archivos${f.addTypecheck && miss("ci") ? " (y los arreglos de tipos que pida el typecheck)" : ""}; no toca nada más de la app.`,
+    miss("ci") ? "- El CI corre en el PR con lo agregado y queda en verde (o el hallazgo dice qué paso falla y por qué)." : null,
+    miss("agents_md") ? "- `AGENTS.md` lista comandos que existen en `package.json`." : null,
+    miss("prod_env") && f.deployWorkflow ? `- En \`${f.deployWorkflow}\` sólo cambia la línea \`environment: production\`.` : null,
+  ].filter(Boolean);
   const planMd = `# Preparar ${r.repo} para agentes
 
 Pedido armado por la plataforma a partir de la revisión «Listo para agentes» (nivel ${r.level} de 3, ${r.passed}/${r.total}).
@@ -373,14 +397,12 @@ Criterios de OpenSSF Scorecard y del estándar AGENTS.md.
 ${steps.join("\n")}
 
 ## Cómo
-1. Llama \`factory_repo_prep\` (repo ${r.repo}): devuelve los archivos listos.
+1. Llama \`factory_repo_prep\` (repo ${r.repo}): devuelve los archivos nuevos listos${f.ciPath && miss("ci") ? "; los cambios a archivos que ya existen los haces tú, como dice la lista de arriba" : ""}.
 2. Escríbelos TAL CUAL en una rama nueva; sólo completa los comentarios \`<!-- @build: … -->\` leyendo el repo.
 3. Abre el PR en borrador y cierra con \`factory_build_done\`.
-
+${steps.some((s) => s.includes(".github/")) ? "\nEste pedido es la excepción autorizada a «no tocar `.github/`»: preparar el repo es justo eso.\n" : ""}
 ## Criterios de aceptación
-- El PR sólo agrega o completa esos archivos; no toca código de la app.
-- El CI nuevo corre en el PR y queda en verde (o el hallazgo dice qué script falla).
-- \`AGENTS.md\` lista comandos que existen en \`package.json\`.
+${criteria.join("\n")}
 ${later.length ? `\n## Fuera de este PR\n${later.join("\n")}\n` : ""}`;
   return { title: `Preparar ${r.repo.split("/")[1] ?? r.repo} para agentes`, planMd, fixes };
 }

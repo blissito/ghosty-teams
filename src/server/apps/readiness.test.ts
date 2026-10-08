@@ -214,6 +214,37 @@ describe("Listo para agentes", () => {
     expect(out.files).toEqual([]);
   });
 
+  it("MailMask #24: con tsconfig y Dockerfile, la preparación agrega typecheck y docker build (8-oct)", async () => {
+    complete();
+    root = [...root, "tsconfig.json", "Dockerfile"];
+    contents["package.json"] = JSON.stringify({ scripts: { test: "vitest" } });
+    ciYml = "on:\n  pull_request:\njobs:\n  v:\n    steps:\n      - run: pnpm test\n";
+    const r = await check();
+    expect(r.checks.find((c) => c.key === "ci")!.ok).toBe(false);
+    expect(r.facts.missingScripts).toEqual([]);
+    const { planMd } = preparationPlan(r);
+    expect(planMd).toContain('"typecheck": "tsc --noEmit"');
+    expect(planMd).toContain("`pnpm typecheck`");
+    expect(planMd).toContain("docker build -t ci-check .");
+    expect(planMd).toContain("excepción autorizada");
+  });
+
+  it("los criterios sólo piden lo que entra en el PR (sin «CI nuevo» si no hay CI que tocar)", async () => {
+    complete();
+    root = root.filter((f) => f !== "AGENTS.md");
+    const { planMd } = preparationPlan(await check());
+    expect(planMd).not.toContain("El CI corre en el PR");
+    expect(planMd).toContain("`AGENTS.md` lista comandos");
+  });
+
+  it("CI que ya construye la imagen no pide job docker", async () => {
+    complete();
+    root = [...root, "Dockerfile"];
+    ciYml = CI_FULL + "      - uses: docker/build-push-action@v6\n";
+    const r = await check();
+    expect(r.checks.find((c) => c.key === "ci")!.ok).toBe(true);
+  });
+
   it("AGENTS.md lista sólo comandos que existen y remite a CLAUDE.md", () => {
     const md = agentsMdSkeleton({
       owner: "acme",
