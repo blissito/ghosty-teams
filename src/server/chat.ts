@@ -1398,6 +1398,17 @@ export const askAgent = createServerFn({ method: "POST" })
       currentDoc,
       invokerSub: poster?.sub, // sus tools de conectores (per-invocador, no del owner)
       inject: steer,
+      // STEER: con qué mensaje se inyecta; el worker avisa cuando empieza su respuesta.
+      messageRef: invokerMessageIds[0],
+      // Un mensaje inyectado ya contestado recibe su ✅ en ese momento, no al cerrar el turno.
+      onSteerAnswered: (ids) => {
+        void import("./agent-ack.server").then((m) => m.ackEnd(ns, ids, data.handle, "done"));
+      },
+      // La burbuja que el turno deja atrás al partirse por un steer: se cierra autoritativa.
+      closeBubble: async (id, body) => {
+        await db.setMessageBody(id, body);
+        bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body });
+      },
       adoptar: data.adoptar === true,
       prefijo: data.adoptar === true && data.shellId != null ? await prefijoDeAdopcion(data.shellId) : undefined,
       // Destino de las tools nativas: este canal, este topic, este agente.
@@ -1501,7 +1512,13 @@ export const askAgent = createServerFn({ method: "POST" })
       // La cáscara puede ser la eager del cliente o una que `ensure()` creó lazy (un tool
       // event antes del `injected`): `registeredId` cubre las dos.
       const huerfana = data.shellId ?? registeredId;
-      if (huerfana != null) {
+      // Adjuntos que no entraron a la caja: la cáscara no se borra, se queda con el aviso.
+      const fallidos = turnResult.attachmentsFailed ?? [];
+      if (huerfana != null && fallidos.length) {
+        const aviso = fallidos.map((f) => `⚠️ No me llegó «${f.name}»${f.reason ? ` (${f.reason})` : ""}. Vuelve a adjuntarlo.`).join("\n");
+        await db.setMessageBody(huerfana, aviso);
+        bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id: huerfana, body: aviso });
+      } else if (huerfana != null) {
         await db.deleteMessage(huerfana).catch(() => {});
         bus.publish(bus.ch.room(ns, channel.id), { t: "message:deleted", id: huerfana, channelId: channel.id, parentId: data.parentId ?? null });
       }

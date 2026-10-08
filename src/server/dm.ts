@@ -633,7 +633,13 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
       // La cáscara puede ser la eager del cliente o una que `ensure()` creó lazy (un tool
       // event antes del `injected`): `registeredId` cubre las dos.
       const huerfana = data.shellId ?? registeredId;
-      if (huerfana != null) {
+      // Adjuntos que no entraron a la caja: la cáscara se queda con el aviso (ver chat.ts).
+      const fallidos = turnResult.attachmentsFailed ?? [];
+      if (huerfana != null && fallidos.length) {
+        const aviso = fallidos.map((f) => `⚠️ No me llegó «${f.name}»${f.reason ? ` (${f.reason})` : ""}. Vuelve a adjuntarlo.`).join("\n");
+        await db.setMessageBody(huerfana, aviso);
+        fanout({ t: "message:body", id: huerfana, body: aviso });
+      } else if (huerfana != null) {
         await db.deleteMessage(huerfana).catch(() => {});
         fanout({ t: "message:deleted", id: huerfana, channelId: null, parentId: null, dmId: data.id });
       }

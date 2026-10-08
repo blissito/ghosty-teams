@@ -1714,7 +1714,16 @@ export async function callAgentBackendStream(
    * su backlog desde el inicio). `onDurable` avisa el turnId en cuanto gs lo acepta, para
    * guardarlo y poder adoptarlo si este proceso muere.
    */
-  durableOpts?: { resumeTurnId?: string; onDurable?: (turnId: string) => void },
+  durableOpts?: {
+    resumeTurnId?: string;
+    onDurable?: (turnId: string) => void;
+    /** STEER: id del mensaje que se inyecta. El worker lo devuelve en `reply_to`. */
+    messageRef?: number;
+    /** La respuesta a estos mensajes empieza aquí (`folded` = ya iba en la burbuja actual). */
+    onReplyTo?: (messageIds: number[], folded: boolean) => void | Promise<void>;
+    /** Adjuntos que no entraron a la caja del agente, con el porqué. */
+    onAttachmentsFailed?: (failed: { name: string; reason: string }[]) => void;
+  },
 ): Promise<string> {
   // El webhook sigue sin SSE: junta el reply y lo emite de un tirón. Un agente A2A NO cae
   // aquí — tiene streaming de verdad y se atiende más abajo.
@@ -2466,6 +2475,7 @@ export async function callAgentBackendStream(
       ...(toolToken && toolsUrl ? { toolToken, toolsUrl } : {}),
       ...(wakeUrl && wakeRef ? { wakeUrl, wakeRef } : {}),
       ...(inject ? { inject: true } : {}),
+      ...(inject && durableOpts?.messageRef != null ? { messageRef: String(durableOpts.messageRef) } : {}),
       ...(salesBoardId ? { boardId: salesBoardId } : {}),
       // Modelo de ESTE turno (fábrica). gs lo valida contra el motor y lo topa por plan.
       ...(native && factoryTurn?.model ? { model: factoryTurn.model } : {}),
@@ -2581,14 +2591,26 @@ export async function callAgentBackendStream(
           }
           const line = frame.split("\n").find((l) => l.startsWith("data:"));
           if (!line) continue;
-          let ev: { type?: string; value?: string; model?: string; message?: string; name?: string; id?: string; phase?: "start" | "end"; ok?: boolean; detail?: string; todos?: TodoItem[]; sub?: SubEvent; elapsedMs?: number } & Partial<TruncatedEvent>;
+          let ev: { type?: string; value?: string; model?: string; message?: string; name?: string; id?: string; phase?: "start" | "end"; ok?: boolean; detail?: string; todos?: TodoItem[]; sub?: SubEvent; elapsedMs?: number; messageIds?: unknown; folded?: boolean; failed?: unknown } & Partial<TruncatedEvent>;
           try {
             ev = JSON.parse(line.slice(5).trim());
           } catch {
             continue;
           }
+          if (ev.type === "attachments") {
+            // Llega antes del `injected` en un steer, o al inicio de un turno: se dice al pie.
+            const failed = (Array.isArray(ev.failed) ? ev.failed : [])
+              .map((f: { name?: unknown; reason?: unknown }) => ({ name: String(f?.name ?? "archivo"), reason: String(f?.reason ?? "") }));
+            if (failed.length) durableOpts?.onAttachmentsFailed?.(failed);
+            continue;
+          }
           if (ev.type === "injected") {
             return INJECTED; // el trabajo sigue en la burbuja de allá; ésta no existe
+          }
+          if (ev.type === "reply_to") {
+            const ids = (Array.isArray(ev.messageIds) ? ev.messageIds : []).map(Number).filter((n) => Number.isFinite(n) && n > 0);
+            if (ids.length) await durableOpts?.onReplyTo?.(ids, ev.folded === true);
+            continue;
           }
           if (ev.type === "chunk" && ev.value) {
             streamed += ev.value;
@@ -3028,12 +3050,18 @@ async function runAgentTurnInner(opts: {
    * final sale aparte, debajo. Sin él (wakeups, sentry) todo va en una sola burbuja.
    */
   createFollowUp?: (shellId: number) => Promise<number>;
+  /** STEER: el mensaje que se inyecta (ya validado: de este room y de quien escribe). */
+  messageRef?: number;
+  /** Mensajes inyectados que ya tienen respuesta: el caller les pone ✅. */
+  onSteerAnswered?: (messageIds: number[]) => void;
+  /** Cierra AUTORITATIVA una burbuja que el turno deja atrás (se partió por un steer). */
+  closeBubble?: (id: number, body: string) => Promise<void>;
   /** Cada tool NUEVA del turno (nombres crudos). Se persisten mientras corre: si un deploy
    *  lo mata, la continuación sabe qué ya se ejecutó en vez de «no hay registro». */
   onToolNames?: (names: string[]) => void;
   /** Causa del fallo de transporte, si el turno murió. `null` = entregó.
    *  Lo consumen chat.ts/dm.ts para marcar el turno como fallido en vez de `done`. */
-}): Promise<{ id: number; reply: string; failure?: string | null; toolsCorridas?: string[]; plan?: { id: number; body: string } }> {
+}): Promise<{ id: number; reply: string; failure?: string | null; toolsCorridas?: string[]; plan?: { id: number; body: string }; attachmentsFailed?: { name: string; reason: string }[] }> {
   // Se guarda la PROMESA, no sólo el id: al retomar tras un reinicio gs repite el backlog de
   // golpe y varios eventos llamaban a `ensure` antes de que la primera burbuja existiera —
   // cada uno creaba la suya (mercadito #4, 5-oct: 22 burbujas idénticas de @build).
@@ -3353,6 +3381,42 @@ async function runAgentTurnInner(opts: {
     else if (label) opts.emitDelta(await ensure(), `- ⏳ ${label.ing}\n`);
   };
 
+  // Adjuntos que no entraron a la caja: el aviso va al pie, lo diga o no el modelo.
+  const adjuntosFallidos: { name: string; reason: string }[] = [];
+  const pieAdjuntos = (): string =>
+    adjuntosFallidos.length
+      ? "\n\n" + adjuntosFallidos.map((f) => `⚠️ No me llegó «${f.name}»${f.reason ? ` (${f.reason})` : ""}. Vuelve a adjuntarlo.`).join("\n")
+      : "";
+  // STEER: cuando el worker avisa que empieza la respuesta a un mensaje que la persona
+  // escribió a mitad del turno, la burbuja actual se cierra y la respuesta sigue en una nueva,
+  // DEBAJO de ese mensaje. Antes todo se pegaba a la burbuja vieja, arriba de lo que la persona
+  // escribió, y para ella no hubo respuesta (palmera-legal, 7-oct). Mismo mecanismo que el
+  // layout de Boris: `createFollowUp` + cierre autoritativo de la burbuja que queda atrás.
+  let partida = false;
+  const onReplyTo = async (ids: number[], folded: boolean) => {
+    opts.onSteerAnswered?.(ids);
+    if (folded || !opts.createFollowUp || !opts.emitBody) return;
+    const shellId = await ensure();
+    cancelPaint();
+    const cerrado = renderBody(true).trim();
+    // Una burbuja sin nada no se cierra ni se parte: la respuesta nueva sigue en ella.
+    if (!narration().trim()) return;
+    opts.emitBody(shellId, cerrado);
+    await opts.closeBubble?.(shellId, cerrado);
+    const newId = await opts.createFollowUp(shellId);
+    shellP = Promise.resolve(newId);
+    // La burbuja nueva empieza limpia: el checklist y los pasos de la anterior se quedan allá.
+    tools.length = 0;
+    idToEntry.clear();
+    segs.length = 0;
+    acc = "";
+    segStart = 0;
+    brokeByTool = false;
+    anyActivity = false;
+    todos = null;
+    partida = true;
+  };
+
   let reply: string;
   /** El corte, si lo hubo. Se compone al final, sobre el texto autoritativo.
    *  Va en un contenedor y no en un `let` suelto porque la única asignación ocurre dentro
@@ -3375,7 +3439,7 @@ async function runAgentTurnInner(opts: {
     await onChunk(reply);
   } else {
     try {
-      reply = await callAgentBackendStream(opts.agent, opts.groupId, opts.sender, opts.text, onChunk, opts.parts ?? [], onTool, opts.currentDoc, opts.invokerSub, opts.signal, opts.dest, opts.inject, opts.originOverride, opts.publicChannel, (t) => { corte.ev = t; }, (f) => { fallo.message = f.message; }, opts.adoptar, (m) => { turnModel.value = m; }, { resumeTurnId: opts.durableResume, onDurable: (tid) => void rememberDurable(tid) });
+      reply = await callAgentBackendStream(opts.agent, opts.groupId, opts.sender, opts.text, onChunk, opts.parts ?? [], onTool, opts.currentDoc, opts.invokerSub, opts.signal, opts.dest, opts.inject, opts.originOverride, opts.publicChannel, (t) => { corte.ev = t; }, (f) => { fallo.message = f.message; }, opts.adoptar, (m) => { turnModel.value = m; }, { resumeTurnId: opts.durableResume, onDurable: (tid) => void rememberDurable(tid), messageRef: opts.inject ? opts.messageRef : undefined, onReplyTo, onAttachmentsFailed: (f) => { adjuntosFallidos.push(...f); } });
     } catch (e) {
       // Detenido: NO es un error del agente. Se conserva lo que alcanzó a escribir y se
       // dice que se detuvo — borrarlo tiraría trabajo que el usuario ya estaba leyendo.
@@ -3390,13 +3454,15 @@ async function runAgentTurnInner(opts: {
   // STEER: no hay turno que cerrar acá. `id` sale 0 y el llamador borra la cáscara que
   // había creado eager — dos burbujas para un mensaje que se contesta en una sola sería
   // peor que el problema que veníamos a resolver.
-  if (reply === INJECTED) return { id: 0, reply: INJECTED };
+  if (reply === INJECTED) return { id: 0, reply: INJECTED, attachmentsFailed: adjuntosFallidos };
   if (opts.signal?.aborted) {
     const partial = narration().trim();
     return { id: await ensure(), reply: renderTodos() + renderToolBlock(true) + (partial ? `${partial}\n\n⏹ Detenido.` : "⏹ Detenido.") };
   }
   // `acc` (con separadores) es el texto bonito; reply es la acumulación cruda del stream.
-  let finalText = narration().trim() || reply || "(sin respuesta)";
+  // Tras partir por un steer, `reply` (el `done` de gs) trae el texto de TODO el turno: ya está
+  // repartido en las burbujas de atrás y no se repite aquí.
+  let finalText = narration().trim() || (partida ? "" : reply) || "(sin respuesta)";
   // El aviso de corte se pega AQUÍ y no por `onChunk` a propósito: éste es el cuerpo que el
   // caller persiste. Metido en el stream se vería en vivo y `done.value` lo borraría del
   // historial — el turno quedaría cortado sin decirlo, que es el bug original.
@@ -3429,7 +3495,7 @@ async function runAgentTurnInner(opts: {
       await saveTurnModel(newId);
       // `plan` = la burbuja del turno ya cerrada: el caller la persiste AUTORITATIVA
       // (`setMessageBody`, streaming = 0), o al recargar se vería como turno a medias.
-      return { id: newId, reply: respuesta, failure: null, toolsCorridas: [...toolsCrudas], plan: { id: shellId, body: planBody } };
+      return { id: newId, reply: respuesta + pieAdjuntos(), failure: null, toolsCorridas: [...toolsCrudas], plan: { id: shellId, body: planBody } };
     }
   }
   // Body final autoritativo: bloque gt-tools TODO ✅ + texto separado. El caller lo persiste.
@@ -3437,7 +3503,7 @@ async function runAgentTurnInner(opts: {
   await saveTurnModel(finalId);
   return {
     id: finalId,
-    reply: renderToolBlock(true) + finalText + avisoCorte,
+    reply: renderToolBlock(true) + finalText + avisoCorte + pieAdjuntos(),
     failure: fallo.message,
     // Sólo importan si murió; el llamador las persiste en ese caso.
     toolsCorridas: [...toolsCrudas],
