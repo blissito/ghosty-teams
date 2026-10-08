@@ -3382,27 +3382,27 @@ async function runAgentTurnInner(opts: {
   };
 
   // Adjuntos que no entraron a la caja: el aviso va al pie, lo diga o no el modelo.
-  const adjuntosFallidos: { name: string; reason: string }[] = [];
-  const pieAdjuntos = (): string =>
-    adjuntosFallidos.length
-      ? "\n\n" + adjuntosFallidos.map((f) => `⚠️ No me llegó «${f.name}»${f.reason ? ` (${f.reason})` : ""}. Vuelve a adjuntarlo.`).join("\n")
+  const failedAttachments: { name: string; reason: string }[] = [];
+  const attachmentsFooter = (): string =>
+    failedAttachments.length
+      ? "\n\n" + failedAttachments.map((f) => `⚠️ No me llegó «${f.name}»${f.reason ? ` (${f.reason})` : ""}. Vuelve a adjuntarlo.`).join("\n")
       : "";
   // STEER: cuando el worker avisa que empieza la respuesta a un mensaje que la persona
   // escribió a mitad del turno, la burbuja actual se cierra y la respuesta sigue en una nueva,
   // DEBAJO de ese mensaje. Antes todo se pegaba a la burbuja vieja, arriba de lo que la persona
   // escribió, y para ella no hubo respuesta (palmera-legal, 7-oct). Mismo mecanismo que el
   // layout de Boris: `createFollowUp` + cierre autoritativo de la burbuja que queda atrás.
-  let partida = false;
+  let splitDone = false;
   const onReplyTo = async (ids: number[], folded: boolean) => {
     opts.onSteerAnswered?.(ids);
     if (folded || !opts.createFollowUp || !opts.emitBody) return;
     const shellId = await ensure();
     cancelPaint();
-    const cerrado = renderBody(true).trim();
+    const closedBody = renderBody(true).trim();
     // Una burbuja sin nada no se cierra ni se parte: la respuesta nueva sigue en ella.
     if (!narration().trim()) return;
-    opts.emitBody(shellId, cerrado);
-    await opts.closeBubble?.(shellId, cerrado);
+    opts.emitBody(shellId, closedBody);
+    await opts.closeBubble?.(shellId, closedBody);
     const newId = await opts.createFollowUp(shellId);
     shellP = Promise.resolve(newId);
     // La burbuja nueva empieza limpia: el checklist y los pasos de la anterior se quedan allá.
@@ -3414,7 +3414,7 @@ async function runAgentTurnInner(opts: {
     brokeByTool = false;
     anyActivity = false;
     todos = null;
-    partida = true;
+    splitDone = true;
   };
 
   let reply: string;
@@ -3439,7 +3439,7 @@ async function runAgentTurnInner(opts: {
     await onChunk(reply);
   } else {
     try {
-      reply = await callAgentBackendStream(opts.agent, opts.groupId, opts.sender, opts.text, onChunk, opts.parts ?? [], onTool, opts.currentDoc, opts.invokerSub, opts.signal, opts.dest, opts.inject, opts.originOverride, opts.publicChannel, (t) => { corte.ev = t; }, (f) => { fallo.message = f.message; }, opts.adoptar, (m) => { turnModel.value = m; }, { resumeTurnId: opts.durableResume, onDurable: (tid) => void rememberDurable(tid), messageRef: opts.inject ? opts.messageRef : undefined, onReplyTo, onAttachmentsFailed: (f) => { adjuntosFallidos.push(...f); } });
+      reply = await callAgentBackendStream(opts.agent, opts.groupId, opts.sender, opts.text, onChunk, opts.parts ?? [], onTool, opts.currentDoc, opts.invokerSub, opts.signal, opts.dest, opts.inject, opts.originOverride, opts.publicChannel, (t) => { corte.ev = t; }, (f) => { fallo.message = f.message; }, opts.adoptar, (m) => { turnModel.value = m; }, { resumeTurnId: opts.durableResume, onDurable: (tid) => void rememberDurable(tid), messageRef: opts.inject ? opts.messageRef : undefined, onReplyTo, onAttachmentsFailed: (f) => { failedAttachments.push(...f); } });
     } catch (e) {
       // Detenido: NO es un error del agente. Se conserva lo que alcanzó a escribir y se
       // dice que se detuvo — borrarlo tiraría trabajo que el usuario ya estaba leyendo.
@@ -3454,7 +3454,7 @@ async function runAgentTurnInner(opts: {
   // STEER: no hay turno que cerrar acá. `id` sale 0 y el llamador borra la cáscara que
   // había creado eager — dos burbujas para un mensaje que se contesta en una sola sería
   // peor que el problema que veníamos a resolver.
-  if (reply === INJECTED) return { id: 0, reply: INJECTED, attachmentsFailed: adjuntosFallidos };
+  if (reply === INJECTED) return { id: 0, reply: INJECTED, attachmentsFailed: failedAttachments };
   if (opts.signal?.aborted) {
     const partial = narration().trim();
     return { id: await ensure(), reply: renderTodos() + renderToolBlock(true) + (partial ? `${partial}\n\n⏹ Detenido.` : "⏹ Detenido.") };
@@ -3462,7 +3462,7 @@ async function runAgentTurnInner(opts: {
   // `acc` (con separadores) es el texto bonito; reply es la acumulación cruda del stream.
   // Tras partir por un steer, `reply` (el `done` de gs) trae el texto de TODO el turno: ya está
   // repartido en las burbujas de atrás y no se repite aquí.
-  let finalText = narration().trim() || (partida ? "" : reply) || "(sin respuesta)";
+  let finalText = narration().trim() || (splitDone ? "" : reply) || "(sin respuesta)";
   // El aviso de corte se pega AQUÍ y no por `onChunk` a propósito: éste es el cuerpo que el
   // caller persiste. Metido en el stream se vería en vivo y `done.value` lo borraría del
   // historial — el turno quedaría cortado sin decirlo, que es el bug original.
@@ -3495,7 +3495,7 @@ async function runAgentTurnInner(opts: {
       await saveTurnModel(newId);
       // `plan` = la burbuja del turno ya cerrada: el caller la persiste AUTORITATIVA
       // (`setMessageBody`, streaming = 0), o al recargar se vería como turno a medias.
-      return { id: newId, reply: respuesta + pieAdjuntos(), failure: null, toolsCorridas: [...toolsCrudas], plan: { id: shellId, body: planBody } };
+      return { id: newId, reply: respuesta + attachmentsFooter(), failure: null, toolsCorridas: [...toolsCrudas], plan: { id: shellId, body: planBody } };
     }
   }
   // Body final autoritativo: bloque gt-tools TODO ✅ + texto separado. El caller lo persiste.
@@ -3503,7 +3503,7 @@ async function runAgentTurnInner(opts: {
   await saveTurnModel(finalId);
   return {
     id: finalId,
-    reply: renderToolBlock(true) + finalText + avisoCorte + pieAdjuntos(),
+    reply: renderToolBlock(true) + finalText + avisoCorte + attachmentsFooter(),
     failure: fallo.message,
     // Sólo importan si murió; el llamador las persiste en ese caso.
     toolsCorridas: [...toolsCrudas],

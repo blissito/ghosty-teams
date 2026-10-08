@@ -6153,7 +6153,7 @@ function RepoPanel({
     }
   };
 
-  const avisar = async (repo: string, on: boolean) => {
+  const setNotify = async (repo: string, on: boolean) => {
     setBusy(true);
     try {
       const next = await setRoomRepoNotifyFn({ data: { channelId, repo, on } });
@@ -6222,7 +6222,7 @@ function RepoPanel({
                   {/* Los avisos de PR caen en UN room por repo (el mismo repo en #tech y
                       #marketing avisaba en los dos). Aquí se elige dónde. */}
                   <span className="shrink-0 text-[11px] text-muted">{t("Avisos de PR")}</span>
-                  <Toggle on={m.notify} disabled={busy} onChange={(v) => avisar(m.repo, v)} label={t("Avisos de PR aquí")} />
+                  <Toggle on={m.notify} disabled={busy} onChange={(v) => setNotify(m.repo, v)} label={t("Avisos de PR aquí")} />
                   <button
                     type="button"
                     disabled={busy}

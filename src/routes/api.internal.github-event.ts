@@ -164,11 +164,11 @@ export const Route = createFileRoute("/api/internal/github-event")({
           }
           // Rooms con los avisos de este repo prendidos, más los que YA tienen la tarjeta de este
           // PR: apagar el aviso no puede dejar una tarjeta congelada en «abierto».
-          const { dbq: qc } = await import("../dbq.server");
-          const conTarjeta = (await qc("SELECT channel_id FROM gt_pr_cards WHERE repo = ? AND number = ?", [ev.repo.toLowerCase(), ev.number]).catch(() => []))
+          const { dbq: queryCards } = await import("../dbq.server");
+          const roomsWithCard = (await queryCards("SELECT channel_id FROM gt_pr_cards WHERE repo = ? AND number = ?", [ev.repo.toLowerCase(), ev.number]).catch(() => []))
             .map((r: any) => Number(r.channel_id));
-          const vivos = new Set(await db.roomsOfRepo(ev.repo));
-          const rooms = [...new Set([...(await db.notifyRoomsOfRepo(ev.repo)), ...conTarjeta.filter((c) => vivos.has(c))])]
+          const liveRooms = new Set(await db.roomsOfRepo(ev.repo));
+          const rooms = [...new Set([...(await db.notifyRoomsOfRepo(ev.repo)), ...roomsWithCard.filter((c) => liveRooms.has(c))])]
             .filter((c) => !runRooms.has(c));
           if (!rooms.length) return Response.json({ ok: true, rooms: 0, factoryRooms: runRooms.size });
 

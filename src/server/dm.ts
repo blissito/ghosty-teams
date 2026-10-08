@@ -648,11 +648,11 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
       // event antes del `injected`): `registeredId` cubre las dos.
       const huerfana = data.shellId ?? registeredId;
       // Adjuntos que no entraron a la caja: la cáscara se queda con el aviso (ver chat.ts).
-      const fallidos = turnResult.attachmentsFailed ?? [];
-      if (huerfana != null && fallidos.length) {
-        const aviso = fallidos.map((f) => `⚠️ No me llegó «${f.name}»${f.reason ? ` (${f.reason})` : ""}. Vuelve a adjuntarlo.`).join("\n");
-        await db.setMessageBody(huerfana, aviso);
-        fanout({ t: "message:body", id: huerfana, body: aviso });
+      const failedAttachments = turnResult.attachmentsFailed ?? [];
+      if (huerfana != null && failedAttachments.length) {
+        const notice = failedAttachments.map((f) => `⚠️ No me llegó «${f.name}»${f.reason ? ` (${f.reason})` : ""}. Vuelve a adjuntarlo.`).join("\n");
+        await db.setMessageBody(huerfana, notice);
+        fanout({ t: "message:body", id: huerfana, body: notice });
       } else if (huerfana != null) {
         await db.deleteMessage(huerfana).catch(() => {});
         fanout({ t: "message:deleted", id: huerfana, channelId: null, parentId: null, dmId: data.id });

@@ -1513,11 +1513,11 @@ export const askAgent = createServerFn({ method: "POST" })
       // event antes del `injected`): `registeredId` cubre las dos.
       const huerfana = data.shellId ?? registeredId;
       // Adjuntos que no entraron a la caja: la cáscara no se borra, se queda con el aviso.
-      const fallidos = turnResult.attachmentsFailed ?? [];
-      if (huerfana != null && fallidos.length) {
-        const aviso = fallidos.map((f) => `⚠️ No me llegó «${f.name}»${f.reason ? ` (${f.reason})` : ""}. Vuelve a adjuntarlo.`).join("\n");
-        await db.setMessageBody(huerfana, aviso);
-        bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id: huerfana, body: aviso });
+      const failedAttachments = turnResult.attachmentsFailed ?? [];
+      if (huerfana != null && failedAttachments.length) {
+        const notice = failedAttachments.map((f) => `⚠️ No me llegó «${f.name}»${f.reason ? ` (${f.reason})` : ""}. Vuelve a adjuntarlo.`).join("\n");
+        await db.setMessageBody(huerfana, notice);
+        bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id: huerfana, body: notice });
       } else if (huerfana != null) {
         await db.deleteMessage(huerfana).catch(() => {});
         bus.publish(bus.ch.room(ns, channel.id), { t: "message:deleted", id: huerfana, channelId: channel.id, parentId: data.parentId ?? null });
