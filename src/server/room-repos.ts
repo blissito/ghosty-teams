@@ -123,6 +123,15 @@ export const removeRoomRepoFn = createServerFn({ method: "POST" })
     return await db.listRoomRepos(Number(data.channelId));
   });
 
+/** Switch «Avisos de PR aquí»: en qué rooms caen las tarjetas de PR de este repo. */
+export const setRoomRepoNotifyFn = createServerFn({ method: "POST" })
+  .validator((d: { channelId: number; repo: string; on: boolean }) => d)
+  .handler(async ({ data }) => {
+    const { db } = await visibleChannel(Number(data.channelId));
+    await db.setRoomRepoNotify(Number(data.channelId), String(data.repo), data.on === true);
+    return await db.listRoomRepos(Number(data.channelId));
+  });
+
 /** Para la card del home: cada repo con los rooms donde está conectado. */
 export const workspaceRoomReposFn = createServerFn({ method: "GET" }).handler(async () => {
   const me = await sessionUser();

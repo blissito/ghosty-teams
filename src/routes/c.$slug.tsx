@@ -83,6 +83,7 @@ import {
   githubInstallationReposFn,
   githubOpenPrsFn,
   addRoomRepoFn,
+  setRoomRepoNotifyFn,
   removeRoomRepoFn,
   workspaceRoomReposFn,
 } from "../server/room-repos";
@@ -2542,7 +2543,7 @@ function ChannelPage() {
           revalidate();
           if (r?.steered) showSteerHint({ channelId: null, parentId: null, dmId: o.dmId! });
           if (r?.needsAgent && r.agentHandle)
-            askDmAgentFn({ data: { id: o.dmId!, body: o.body, sender: "", handle: r.agentHandle, shellId: r.shellId ?? undefined, quotedAuthor: o.quotedAuthor ?? null, quotedExcerpt: o.quotedExcerpt ?? null, quotedId: o.quotedId ?? null, attachments: o.attachments } })
+            askDmAgentFn({ data: { id: o.dmId!, body: o.body, sender: "", handle: r.agentHandle, shellId: r.shellId ?? undefined, quotedAuthor: o.quotedAuthor ?? null, quotedExcerpt: o.quotedExcerpt ?? null, quotedId: o.quotedId ?? null, attachments: o.attachments, invokerMessageId: r.id } })
               .then(() => revalidate())
               .catch(() => revalidate());
         })
@@ -5877,11 +5878,11 @@ function DocsButton({ channelId, channelSlug, threadRootId, dmId }: { channelId:
 function RepoButton({ channelId }: { channelId: number }) {
   const t = useT();
   const [open, setOpen] = useState(false);
-  const [mine, setMine] = useState<{ repo: string; connectedBy: string }[] | null>(null);
+  const [mine, setMine] = useState<{ repo: string; connectedBy: string; notify: boolean }[] | null>(null);
 
   const cargar = useCallback(() => {
     roomReposFn({ data: { channelId } })
-      .then((r) => setMine(r.map((x) => ({ repo: x.repo, connectedBy: x.connectedBy }))))
+      .then((r) => setMine(r.map((x) => ({ repo: x.repo, connectedBy: x.connectedBy, notify: x.notify }))))
       .catch(() => setMine([]));
   }, [channelId]);
 
@@ -5938,7 +5939,7 @@ function RepoButton({ channelId }: { channelId: number }) {
           channelId={channelId}
           mine={mine ?? []}
           onClose={() => setOpen(false)}
-          onChange={(next) => setMine(next.map((x) => ({ repo: x.repo, connectedBy: x.connectedBy })))}
+          onChange={(next) => setMine(next.map((x) => ({ repo: x.repo, connectedBy: x.connectedBy, notify: x.notify })))}
           onLevel={(repo, l) => repo === atado && setLevel(l)}
         />
       )}
@@ -6089,9 +6090,9 @@ function RepoPanel({
   onLevel,
 }: {
   channelId: number;
-  mine: { repo: string; connectedBy: string }[];
+  mine: { repo: string; connectedBy: string; notify: boolean }[];
   onClose: () => void;
-  onChange: (next: { repo: string; connectedBy: string }[]) => void;
+  onChange: (next: { repo: string; connectedBy: string; notify: boolean }[]) => void;
   onLevel?: (repo: string, level: number | null) => void;
 }) {
   const t = useT();
@@ -6144,9 +6145,19 @@ function RepoPanel({
     setBusy(true);
     try {
       const next = await addRoomRepoFn({ data: { channelId, repo } });
-      onChange(next.map((x) => ({ repo: x.repo, connectedBy: x.connectedBy })));
+      onChange(next.map((x) => ({ repo: x.repo, connectedBy: x.connectedBy, notify: x.notify })));
       setFocus(repo);
       setQ("");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const avisar = async (repo: string, on: boolean) => {
+    setBusy(true);
+    try {
+      const next = await setRoomRepoNotifyFn({ data: { channelId, repo, on } });
+      onChange(next.map((x) => ({ repo: x.repo, connectedBy: x.connectedBy, notify: x.notify })));
     } finally {
       setBusy(false);
     }
@@ -6156,7 +6167,7 @@ function RepoPanel({
     setBusy(true);
     try {
       const next = await removeRoomRepoFn({ data: { channelId, repo } });
-      onChange(next.map((x) => ({ repo: x.repo, connectedBy: x.connectedBy })));
+      onChange(next.map((x) => ({ repo: x.repo, connectedBy: x.connectedBy, notify: x.notify })));
       setFocus(next[0]?.repo ?? null);
     } catch (e) {
       alert(e instanceof Error ? e.message : String(e));
@@ -6208,6 +6219,10 @@ function RepoPanel({
                 >
                   <Github size={14} className="shrink-0 text-muted" />
                   <span className="min-w-0 flex-1 truncate">{m.repo}</span>
+                  {/* Los avisos de PR caen en UN room por repo (el mismo repo en #tech y
+                      #marketing avisaba en los dos). Aquí se elige dónde. */}
+                  <span className="shrink-0 text-[11px] text-muted">{t("Avisos de PR")}</span>
+                  <Toggle on={m.notify} disabled={busy} onChange={(v) => avisar(m.repo, v)} label={t("Avisos de PR aquí")} />
                   <button
                     type="button"
                     disabled={busy}

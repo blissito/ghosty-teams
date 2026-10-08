@@ -1487,6 +1487,8 @@ export const en: Record<string, string> = {
   "Ya no se revisará ni se avisará si se cae. Puedes volver a agregarla cuando quieras.": "It won't be checked anymore and nobody will be told if it goes down. You can add it again anytime.",
   "Conectar un repositorio": "Connect a repository",
   "Conectados a este room": "Connected to this room",
+  "Avisos de PR": "PR alerts",
+  "Avisos de PR aquí": "PR alerts here",
   "Buscar un repositorio…": "Search a repository…",
   "Buscando tus repositorios…": "Looking for your repositories…",
   "Ningún repositorio coincide.": "No repository matches.",

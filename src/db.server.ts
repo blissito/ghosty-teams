@@ -2251,6 +2251,17 @@ export async function roomsOfSalesBoard(boardId: string): Promise<number[]> {
   return rows.map((r) => Number(r.channel_id));
 }
 
+/** Rooms vivos donde caen los avisos de PR de `repo` (`notify`, uno por repo salvo que la gente
+ *  prenda más). Ver gt_room_repos.notify en server/schema.server.ts. */
+export async function notifyRoomsOfRepo(repo: string): Promise<number[]> {
+  const rows = await dbq(
+    `SELECT DISTINCT r.channel_id FROM gt_room_repos r JOIN gc_channels c ON c.id = r.channel_id
+     WHERE LOWER(r.repo) = LOWER(?) AND r.notify = 1 AND COALESCE(c.archived, 0) = 0`,
+    [repo],
+  );
+  return rows.map((r) => Number(r.channel_id));
+}
+
 /** Rooms vivos (no archivados) que tienen `repo` entre sus repos. Case-insensitive: el repo se
  *  guarda como lo tecleó la persona y GitHub lo manda con su capitalización. */
 export async function roomsOfRepo(repo: string): Promise<number[]> {
@@ -2267,24 +2278,28 @@ export async function roomsOfRepo(repo: string): Promise<number[]> {
 // sólo ve éstos, y en un room sin ninguno no ve ninguno. Ver gt_room_repos en
 // server/schema.server.ts para el porqué.
 
-export type RoomRepo = { repo: string; connectedBy: string; createdAt: number };
+export type RoomRepo = { repo: string; connectedBy: string; createdAt: number; notify: boolean };
 
 export async function listRoomRepos(channelId: number): Promise<RoomRepo[]> {
   const rows = await dbq(
-    "SELECT repo, connected_by, created_at FROM gt_room_repos WHERE channel_id = ? ORDER BY created_at",
+    "SELECT repo, connected_by, created_at, notify FROM gt_room_repos WHERE channel_id = ? ORDER BY created_at",
     [channelId]
   );
   return rows.map((r) => ({
     repo: String(r.repo),
     connectedBy: String(r.connected_by),
     createdAt: Number(r.created_at ?? 0),
+    notify: Number(r.notify ?? 1) === 1,
   }));
 }
 
 export async function addRoomRepo(channelId: number, repo: string, sub: string): Promise<void> {
   await dbq(
-    "INSERT INTO gt_room_repos (channel_id, repo, connected_by) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
-    [channelId, repo, sub]
+    // Avisa aquí sólo si ningún otro room avisa ya de este repo.
+    `INSERT INTO gt_room_repos (channel_id, repo, connected_by, notify) VALUES (?, ?, ?,
+       NOT EXISTS (SELECT 1 FROM gt_room_repos WHERE LOWER(repo) = LOWER(?) AND notify = 1))
+     ON CONFLICT DO NOTHING`,
+    [channelId, repo, sub, repo]
   );
 }
 
@@ -2293,6 +2308,21 @@ export async function addRoomRepo(channelId: number, repo: string, sub: string):
 // dejar filas que nadie puede quitar desde la UI.
 export async function removeRoomRepo(channelId: number, repo: string): Promise<void> {
   await dbq("DELETE FROM gt_room_repos WHERE channel_id = ? AND LOWER(repo) = LOWER(?)", [
+    channelId,
+    repo,
+  ]);
+  // Si avisaba aquí y ya no avisa nadie, el aviso pasa al room que lo conectó primero.
+  await dbq(
+    `UPDATE gt_room_repos SET notify = 1 WHERE id = (SELECT MIN(id) FROM gt_room_repos WHERE LOWER(repo) = LOWER(?))
+       AND NOT EXISTS (SELECT 1 FROM gt_room_repos WHERE LOWER(repo) = LOWER(?) AND notify = 1)`,
+    [repo, repo],
+  );
+}
+
+/** Prende o apaga los avisos de PR de `repo` en este room (el switch del panel de repos). */
+export async function setRoomRepoNotify(channelId: number, repo: string, on: boolean): Promise<void> {
+  await dbq("UPDATE gt_room_repos SET notify = ? WHERE channel_id = ? AND LOWER(repo) = LOWER(?)", [
+    on ? 1 : 0,
     channelId,
     repo,
   ]);

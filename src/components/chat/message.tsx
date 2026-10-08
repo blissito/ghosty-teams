@@ -637,8 +637,8 @@ export function ChatImage({ src, alt, width, height }: { src: string; alt: strin
       className={`relative inline-block overflow-hidden rounded-lg border border-border ${
         // Sin dims (agente/generadas, GIF/SVG, adjuntos viejos, sharp ausente): slot FIJO
         // 240×240 → 0 layout-shift, la imagen entra con object-contain (letterbox si no calza)
-        // pero el box NO crece al cargar → nada empuja. La solución de raíz es backfillear las
-        // dims en el path del agente (TODO) para que caigan al camino con box exacto de abajo.
+        // pero el box NO crece al cargar → nada empuja. Las del agente ya traen dims desde
+        // `attachPublished` (7-oct); quedan sin ellas las viejas y GIF/SVG que sharp no mida.
         // Con dims: los atributos width/height del <img> ya reservan el box exacto (natural).
         hasDims ? "" : "h-60 w-60 max-w-full"
       }`}

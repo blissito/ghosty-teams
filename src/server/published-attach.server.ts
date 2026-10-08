@@ -100,10 +100,14 @@ export async function attachPublished(messageId: number, a: PublishedAttachment)
         console.error(`[attach] miniatura de ${a.fileName} falló:`, e instanceof Error ? e.message : e);
       }
     }
+    // Imagen del agente: con sus dimensiones el chat reserva el box exacto en vez del cuadro
+    // fijo de 240×240, donde una tarjeta de 4082×2268 se veía diminuta (palmera-legal, 7-oct).
+    const dims = /^image\//i.test(up.mime || a.mime) ? await (await import("./image.server")).imageDims(bytes) : null;
     await db.createAttachments(messageId, [
       {
         fileId: up.fileId,
         thumbFileId,
+        ...(dims ? { width: dims.width, height: dims.height } : {}),
         mime: up.mime || a.mime,
         size: up.size ?? bytes.length,
         name: a.name,

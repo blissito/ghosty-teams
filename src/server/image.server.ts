@@ -17,6 +17,23 @@ const THUMB_MAX_EDGE = 1024;
 const WEBP_QUALITY = 80;
 const THUMB_MIN_BYTES = 200 * 1024; // imágenes chicas: no vale la pena un derivado
 
+/** Ancho y alto intrínsecos (tras EXIF-rotate) de una imagen. `null` si sharp no está o no la
+ *  entiende: el render cae al slot fijo, como antes. Mismo cálculo que `processAndStoreImage`. */
+export async function imageDims(buf: Buffer): Promise<{ width: number; height: number } | null> {
+  try {
+    const sharpMod = await import("sharp").catch(() => null);
+    const sharp = (sharpMod as { default?: (b: Buffer) => import("sharp").Sharp } | null)?.default;
+    if (!sharp) return null;
+    const meta = await sharp(buf).metadata();
+    const rotated = meta.orientation != null && meta.orientation >= 5;
+    const width = (rotated ? meta.height : meta.width) ?? 0;
+    const height = (rotated ? meta.width : meta.height) ?? 0;
+    return width && height ? { width, height } : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function processAndStoreImage(opts: {
   blob: Blob;
   contentType: string;

@@ -735,6 +735,20 @@ async function migrate(): Promise<void> {
     "CREATE UNIQUE INDEX IF NOT EXISTS gt_room_repos_uniq ON gt_room_repos(channel_id, repo)"
   );
   await exec("CREATE INDEX IF NOT EXISTS gt_room_repos_chan ON gt_room_repos(channel_id)");
+  // `notify` = en este room caen los avisos de PR del repo. Uno por repo: el mismo repo atado a
+  // #tech y #marketing avisaba en los dos y se leía como duplicado (palmera-legal, 7-oct). El
+  // repo sigue sirviendo al agente en ambos rooms; sólo el aviso es de uno. Al nacer la columna
+  // se queda avisando el room que lo conectó primero (sólo esa vez: después lo decide la gente).
+  {
+    let hadNotify = true;
+    try {
+      hadNotify = (await tableColumns("gt_room_repos")).has("notify");
+    } catch { /* addColumn registra la falla */ }
+    await addColumn("gt_room_repos", "notify", "INTEGER NOT NULL DEFAULT 1");
+    if (!hadNotify)
+      await exec(`UPDATE gt_room_repos SET notify = 0 WHERE id NOT IN
+        (SELECT MIN(id) FROM gt_room_repos GROUP BY LOWER(repo))`);
+  }
 
   // Sesiones de push de la fábrica (`apps/factory-git.server.ts`): la caja de @build empuja con
   // git a través del proxy con un token `gfp_` atado a un pedido y un repo. Sólo el hash.

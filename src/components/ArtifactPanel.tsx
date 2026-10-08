@@ -2114,15 +2114,7 @@ export default function ArtifactPanel({
                         streaming={!!artifact.streaming}
                       />
                     ) : artifact.kind === "image" ? (
-                      <div className="grid min-h-full place-items-center p-4">
-                        {/* Vista activa del artefacto → eager (no lazy); solo decoding async. */}
-                        <img
-                          src={artifact.src}
-                          alt={artifact.title}
-                          decoding="async"
-                          className="max-h-full max-w-full rounded-lg object-contain"
-                        />
-                      </div>
+                      <ImageView src={artifact.src} alt={artifact.title} />
                     ) : artifact.kind === "audio" ? (
                       <div className="grid min-h-full place-items-center p-6">
                         <audio
@@ -2521,5 +2513,30 @@ export default function ArtifactPanel({
         />
       ) : null}
     </AnimatePresence>
+  );
+}
+
+/**
+ * Imagen del panel: ajustada al panel, y un clic la muestra a tamaño real (como el visor del
+ * navegador). Sólo ajustada, una tarjeta de 4082×2268 se veía diminuta y no había forma de
+ * revisar si estaba nítida (palmera-legal, 7-oct).
+ */
+function ImageView({ src, alt }: { src: string; alt: string }) {
+  const [real, setReal] = useState(false);
+  return (
+    <div className={real ? "min-h-full overflow-auto p-4" : "grid min-h-full place-items-center p-4"}>
+      {/* Vista activa del artefacto → eager (no lazy); solo decoding async. */}
+      <img
+        src={src}
+        alt={alt}
+        decoding="async"
+        onClick={() => setReal((v) => !v)}
+        className={
+          real
+            ? "max-w-none cursor-zoom-out rounded-lg"
+            : "max-h-full max-w-full cursor-zoom-in rounded-lg object-contain"
+        }
+      />
+    </div>
   );
 }

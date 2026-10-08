@@ -330,6 +330,9 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
       shellId?: number; // caja caliente: cáscara ya creada por postDmMessageFn
       /** Retomar: adoptar el turno ACP huérfano si la caja lo conserva (ver prepareRetryFn). */
       adoptar?: boolean;
+      /** El mensaje de la persona que disparó el turno (el `id` de postDmMessageFn). Con él, un
+       *  steer se contesta en burbuja propia debajo de ese mensaje. Se valida: de este DM y suyo. */
+      invokerMessageId?: number;
       quotedAuthor?: string | null; // quote-reply: superficie para el agente
       quotedExcerpt?: string | null;
       quotedId?: number | null; // id del mensaje citado → cita COMPLETA (no el excerpt)
@@ -552,6 +555,17 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
       adoptar: data.adoptar === true,
       prefijo: data.adoptar === true && data.shellId != null ? await (await import("./chat")).prefijoDeAdopcion(data.shellId) : undefined,
       inject: steer,
+      // STEER: con qué mensaje se inyecta (validado: de este DM y de quien escribe).
+      messageRef: await (async () => {
+        if (data.invokerMessageId == null) return undefined;
+        const m = await db.getMessage(data.invokerMessageId).catch(() => null);
+        return m && m.dm_id === data.id && m.sender_sub === me.sub ? data.invokerMessageId : undefined;
+      })(),
+      // La burbuja que el turno deja atrás al partirse por un steer: se cierra autoritativa.
+      closeBubble: async (id, body) => {
+        await db.setMessageBody(id, body);
+        fanout({ t: "message:body", id, body });
+      },
       dest: destDelTurno,
       createShell: async () => {
         // Caja caliente: la cáscara ya fue creada EAGER por postDmMessageFn → reutiliza su
