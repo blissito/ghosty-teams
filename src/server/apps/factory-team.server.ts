@@ -8,7 +8,7 @@
 import { dbq } from "../../dbq.server";
 import type { ToolDest } from "../connectors/tool-token.server";
 import { FACTORY_HANDLES, type FactoryHandle } from "./factory-roles";
-import { KNOWLEDGE_DIR, TEAM_FILE, engineOfModel, parseMessageOverrides, parseTeamFile, resolveModel, type TeamFile, type TurnOverrides } from "./factory-team";
+import { KNOWLEDGE_DIR, ROLE_DEFAULT_MODEL, TEAM_FILE, engineOfModel, parseMessageOverrides, parseTeamFile, resolveModel, type TeamFile, type TurnOverrides } from "./factory-team";
 
 type StudioAgent = { id: string; name: string; engine: string; model: string };
 export type RoleSource = "message" | "repo" | "space";
@@ -208,10 +208,13 @@ export async function effectiveTeam(repo: string, connectedBy: string, space: Pa
       const fromFile = spec.agent ? agents.find((x) => x.id === spec.agent || x.name.toLowerCase() === spec.agent!.toLowerCase()) : null;
       const a = fromFile ?? agents.find((x) => x.id === space[h]) ?? null;
       const model = spec.model && a ? resolveModel(a.engine, spec.model) : null;
+      // Sin modelo en el repo, el rol corre con su default (@plan/@check en Opus), no con el del
+      // agente: es lo mismo que decide `resolveFactoryTurn`, y la página lo decía mal.
+      const def = ROLE_DEFAULT_MODEL[h];
       return {
         handle: h,
         agent: a ? { id: a.id, name: a.name, engine: a.engine } : null,
-        model: model ?? a?.model ?? null,
+        model: model ?? (def && a && def.engine === a.engine ? def.model : null) ?? a?.model ?? null,
         agentSource: (spec.agent ? "repo" : "space") as RoleSource,
         modelSource: (model ? "repo" : "space") as RoleSource,
         problem: spec.agent && !fromFile ? `no hay agente «${spec.agent}»` : spec.model && a && !model ? `${spec.model} no es de ${a.engine}` : null,

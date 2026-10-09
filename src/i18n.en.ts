@@ -1775,6 +1775,7 @@ export const en: Record<string, string> = {
   "Crear agente en Studio": "Create an agent in Studio",
   "Elige un agente": "Pick an agent",
   "Afinar en Studio": "Tune in Studio",
+  "En este rol corre en": "In this role it runs on",
   "Consejo: @check con un agente de otro motor revisa mejor; el mismo modelo comparte los puntos ciegos de quien construyó.": "Tip: @check on an agent with a different engine reviews better; the same model shares the builder's blind spots.",
   "Crear o afinar agentes en Studio": "Create or tune agents in Studio",
   "Guardar roles": "Save roles",

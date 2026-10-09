@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { Factory, Loader2, ExternalLink } from "lucide-react";
 import { useT } from "../i18n";
 import { createFactoryAgentFn, factorySchedulesFn, factorySuggestFn, setFactoryJudgeFn, setFactoryScheduleFn, factoryStatusFn, installFactoryFn, setFactoryRolesFn, uninstallFactoryFn, type FactoryStatus } from "../server/apps/factory";
+import { ROLE_DEFAULT_MODEL } from "../server/apps/factory-team";
 import { githubInstallationReposFn } from "../server/room-repos";
 import { listChannelsFn } from "../server/chat";
 import ConfirmModal from "./ConfirmModal";
@@ -219,7 +220,8 @@ function Installer({ status, onDone }: { status: FactoryStatus; onDone: () => vo
 }
 
 // Los roles: cada handle apunta a un agente de Studio. Se rotula con su motor y modelo reales
-// (los que dice Studio) y enlaza a su página para afinarlos; la fábrica no guarda modelos.
+// (los que dice Studio) y enlaza a su página para afinarlos. Excepción: @plan y @check corren en
+// su modelo de rol (`ROLE_DEFAULT_MODEL`) y se avisa debajo del selector.
 const HANDLES_UI = ["plan", "build", "check"] as const;
 const ROLE_LABEL: Record<string, string> = { plan: "Planea", build: "Construye", check: "Revisa" };
 
@@ -372,6 +374,16 @@ function RolePickersList({
                 {t("Afinar en Studio")} <ExternalLink className="size-3" />
               </a>
             )}
+            {(() => {
+              // @plan y @check corren en su modelo de rol (Opus) aunque el agente diga otro.
+              const a = status.candidates.find((x) => x.id === value[h]);
+              const def = ROLE_DEFAULT_MODEL[h];
+              return a && def && def.engine === a.engine && def.model !== a.model ? (
+                <span className="w-full pl-[9.5rem] text-[11px] text-muted">
+                  {t("En este rol corre en")} <span className="font-mono">{def.model}</span>
+                </span>
+              ) : null;
+            })()}
             {creatingFor === h && (
               <NewAgentForm
                 handle={h}
