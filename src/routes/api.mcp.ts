@@ -117,7 +117,7 @@ export const Route = createFileRoute("/api/mcp")({
             }
             const nombre = typeof m.params?.name === "string" ? m.params.name : "";
             if (!nombre) return err(m.id, -32602, "falta el nombre de la herramienta");
-            const r = await runTool(quien.invokerSub, nombre, m.params?.arguments ?? {}, dest, scope);
+            const r = await runTool(quien.invokerSub, nombre, m.params?.arguments ?? {}, dest, scope, quien.lu === true);
             // MCP no tiene "resultado con error de negocio": lo que devuelve la tool va como
             // contenido y `isError` marca el fallo. Devolverlo como error de JSON-RPC haría
             // que el agente lo leyera como "el servidor se rompió" y reintentara.

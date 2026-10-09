@@ -110,7 +110,15 @@ describe("autoridad", () => {
     autoridad.mockReturnValue({ invokerSub: "s-ana", dest: { channelId: 4 }, scope: new Set(["lectura"]), publicChannel: false });
     runTool.mockResolvedValue({ ok: true, texto: "listo" });
     await post({ jsonrpc: "2.0", id: 6, method: "tools/call", params: { name: "chat_history", arguments: { limit: 5 } } });
-    expect(runTool).toHaveBeenCalledWith("s-ana", "chat_history", { limit: 5 }, { channelId: 4 }, expect.any(Set));
+    // Sin `lu` en la autoridad = sin Uso Limitado (falla cerrado).
+    expect(runTool).toHaveBeenCalledWith("s-ana", "chat_history", { limit: 5 }, { channelId: 4 }, expect.any(Set), false);
+  });
+
+  it("el Uso Limitado del turno (`lu`) llega a la tool tal cual lo calculó el turno", async () => {
+    autoridad.mockReturnValue({ invokerSub: "s-ana", dest: { dmId: 2 }, scope: new Set(["completo"]), publicChannel: false, lu: true });
+    runTool.mockResolvedValue({ ok: true, texto: "listo" });
+    await post({ jsonrpc: "2.0", id: 7, method: "tools/call", params: { name: "drive_leer", arguments: {} } });
+    expect(runTool).toHaveBeenLastCalledWith("s-ana", "drive_leer", {}, { dmId: 2 }, expect.any(Set), true);
   });
 
   // Un fallo de la tool es CONTENIDO con `isError`, no un error de JSON-RPC: si no, el

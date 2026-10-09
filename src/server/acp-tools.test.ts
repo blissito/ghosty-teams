@@ -16,6 +16,7 @@ const base = {
   dest: { channelId: 9, parentId: 4 },
   origin: "https://acme.ghosty.mx",
   scope: parseScope("lectura"),
+  lu: false,
 };
 
 const claims = (t: string) => JSON.parse(Buffer.from(t.split(".")[0], "base64url").toString());

@@ -375,6 +375,11 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     if (data.quotedId != null) {
       const qm = await db.getMessage(data.quotedId).catch(() => null);
       if (qm?.body?.trim()) quoteCite = clampQuote(qm.body);
+      // Uso Limitado: citar un mensaje con datos de Google no los mete a un destino que no puede recibirlos.
+      if (qm?.google_data) {
+        const { destLimitedUse, GOOGLE_REDACTED } = await import("./limited-use.server");
+        if (!(await destLimitedUse({ dmId: data.id }, agent).catch(() => false))) quoteCite = GOOGLE_REDACTED;
+      }
     }
     const quoted = quoteCite?.trim()
       ? quotedContextPrefix(data.quotedAuthor ?? "", quoteCite, data.body)
@@ -385,7 +390,13 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     // lo filtra → sin inyección (eficiente). Si acumuló mensajes sin verlos (o sesión fresca),
     // el gap los trae. La cita completa SÍ va por-turno.
     const dmScope = { dmId: data.id };
-    const recent = await db.recentContext(dmScope, CATCHUP_FETCH).catch(() => []);
+    // Uso Limitado: lo etiquetado con datos de Google llega redactado si el agente de este DM no es
+    // de Uso Limitado (le cambiaron el modelo después). Gemelo de chat.ts.
+    const { destLimitedUse, redactGoogle } = await import("./limited-use.server");
+    const recent = redactGoogle(
+      await db.recentContext(dmScope, CATCHUP_FETCH).catch(() => []),
+      await destLimitedUse({ dmId: data.id }, agent).catch(() => false),
+    );
     const { esRecordatorio } = await import("./reminders.server");
     // ⚠️ Gemelo de chat.ts, y `dm.ts` siempre se queda atrás: el hueco desde su última
     // respuesta sólo vale si el agente conserva sus propios turnos. Uno cuya sesión no
@@ -517,6 +528,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     // Ver chat.ts: el origen se toma dentro del request, para el auto-retomar.
     const { reqOrigin } = await import("../origin.server");
     const origenDelTurno = await reqOrigin().catch(() => "");
+    const luDelTurno = await import("./limited-use.server").then((m) => m.destLimitedUse(destDelTurno, agent)).catch(() => false);
     const register = (mid: number) => {
       if (registeredId === mid) return;
       registeredId = mid;
@@ -529,6 +541,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
         dest: destDelTurno,
         scope: agent?.backend.kind === "acp" ? agent.backend.scope : undefined,
         publicChannel: false,
+        lu: luDelTurno,
         agent: name, avatar: agent?.avatar ?? "", tarea: tareaDelTurno,
         // Con qué RETOMARLO si muere. Ver chat.ts.
         body: data.body, shellId: data.shellId ?? null, attachments: data.attachments ?? [],

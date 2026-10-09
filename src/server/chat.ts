@@ -1096,6 +1096,11 @@ export const askAgent = createServerFn({ method: "POST" })
     if (data.quotedId != null) {
       const qm = await db.getMessage(data.quotedId).catch(() => null);
       if (qm?.body?.trim()) quoteCite = clampQuote(qm.body);
+      // Uso Limitado: citar un mensaje con datos de Google no los mete a un destino que no puede recibirlos.
+      if (qm?.google_data) {
+        const { destLimitedUse, GOOGLE_REDACTED } = await import("./limited-use.server");
+        if (!(await destLimitedUse({ channelId: channel.id, parentId: data.parentId ?? undefined }, agent).catch(() => false))) quoteCite = GOOGLE_REDACTED;
+      }
     }
     if (quoteCite?.trim()) {
       text = quotedContextPrefix(data.quotedAuthor ?? "", quoteCite, text);
@@ -1126,7 +1131,7 @@ export const askAgent = createServerFn({ method: "POST" })
       // En un HILO, además del room, lo dicho en ESE hilo: su raíz y sus respuestas. Sin esto
       // la respuesta de otro agente justo arriba (p. ej. @check pidiendo cambios) nunca le
       // llegaba al agente que mencionas después — el room sólo trae mensajes de primer nivel.
-      const recent = data.parentId != null
+      const recentRaw = data.parentId != null
         ? await (async () => {
             const hilo = await db.recentContext({ channelId: channel.id, parentId: data.parentId }, CATCHUP_FETCH).catch(() => []);
             const raiz = await db.getMessage(data.parentId!).catch(() => null);
@@ -1135,6 +1140,10 @@ export const askAgent = createServerFn({ method: "POST" })
             return [...todos.values()].sort((a, b) => (a.created_at === b.created_at ? a.id - b.id : a.created_at - b.created_at)).slice(-CATCHUP_FETCH);
           })()
         : roomRecent;
+      // Uso Limitado: si alguien en esta sala no puede recibir datos de Google, los mensajes que los
+      // traen llegan redactados (se ve que existen y por qué), no se cuelan ni desaparecen.
+      const { destLimitedUse, redactGoogle } = await import("./limited-use.server");
+      const recent = redactGoogle(recentRaw, await destLimitedUse({ channelId: channel.id, parentId: data.parentId ?? undefined }, agent).catch(() => false));
       const { esRecordatorio } = await import("./reminders.server");
       // ⚠️ El hueco desde su última respuesta SÓLO vale si el agente conserva sus propios
       // turnos. Un agente ACP cuya sesión no sobrevive a la reconexión empieza cada turno en
@@ -1349,6 +1358,8 @@ export const askAgent = createServerFn({ method: "POST" })
     // que lo retoma corre sin request y no tendría de dónde sacarlo.
     const { reqOrigin } = await import("../origin.server");
     const origenDelTurno = await reqOrigin().catch(() => "");
+    // Uso Limitado del destino: la autoridad del turno para el servidor MCP (igual que el claim `lu`).
+    const luDelTurno = await import("./limited-use.server").then((m) => m.destLimitedUse(destDelTurno, agent)).catch(() => false);
     const register = (mid: number) => {
       if (registeredId === mid) return;
       registeredId = mid;
@@ -1363,6 +1374,7 @@ export const askAgent = createServerFn({ method: "POST" })
         dest: destDelTurno,
         scope: agent?.backend.kind === "acp" ? agent.backend.scope : undefined,
         publicChannel: false,
+        lu: luDelTurno,
         agent: name, avatar: agent?.avatar ?? "",
         tarea: tareaDelTurno,
         // Con qué RETOMARLO si muere. `tarea` va recortada a 60 para nombrar la fila del

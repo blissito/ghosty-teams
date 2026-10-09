@@ -496,15 +496,26 @@ const WS_MEMORY_HINT_MAX_CHARS = 1500;
 /** Ver el comentario largo en `roomSection`: más alto que el del workspace a propósito. */
 const ROOM_MEMORY_HINT_MAX_CHARS = 2500;
 
-async function memoryHint(dest: import("./server/connectors/tool-token.server").ToolDest | null): Promise<string> {
+async function memoryHint(
+  dest: import("./server/connectors/tool-token.server").ToolDest | null,
+  /** Uso Limitado del destino: sin él, las notas que salieron de datos de Google no van (y se dice). */
+  lu = false,
+): Promise<string> {
   if (!dest) return "";
   try {
     const db = await import("./db.server");
+    let retenidas = 0;
+    const visibles = <T extends { googleData?: boolean }>(notas: T[]): T[] => {
+      if (lu) return notas;
+      const out = notas.filter((n) => !n.googleData);
+      retenidas += notas.length - out.length;
+      return out;
+    };
 
     // UNA memoria, dos niveles (unificado 2026-08-08): índice del workspace + notas del
     // room. Un solo bloque para que el agente no razone sobre "cuál memoria".
     let wsSection = "";
-    const wsNotes = await db.listWorkspaceMemory();
+    const wsNotes = visibles(await db.listWorkspaceMemory());
     if (wsNotes.length) {
       // Más recientes primero: si el techo recorta, se cae lo viejo, no lo nuevo.
       const lines: string[] = [];
@@ -536,7 +547,7 @@ async function memoryHint(dest: import("./server/connectors/tool-token.server").
     // Sin `dest.handle` la sección se omitía ENTERA y en silencio. Hoy no: los lineamientos del
     // espacio (`agent_handle=''`) son del lugar, no de quién los lea, así que van igual.
     if (scope) {
-      const notas = await db.listAgentMemory(scope, dest.handle ?? null);
+      const notas = visibles(await db.listAgentMemory(scope, dest.handle ?? null));
       if (notas.length) {
         // Tope, igual que el índice del workspace. Son ~9.6 KB en el peor caso
         // (MEMORY_MAX_NOTES × MEMORY_MAX_CHARS) y se pagan en CADA turno de room y DM.
@@ -558,11 +569,15 @@ async function memoryHint(dest: import("./server/connectors/tool-token.server").
       }
     }
 
-    if (!wsSection && !roomSection) return "";
+    // Uso Limitado: lo retenido se dice, no se esconde.
+    const retenidasSection = retenidas
+      ? `${retenidas} nota(s) salieron de conversaciones con datos de Google y aquí las leen modelos que no son de Uso Limitado: no te llegan. Si te preguntan por algo que no encuentras, dilo.\n`
+      : "";
+    if (!wsSection && !roomSection && !retenidasSection) return "";
     return (
       `[Memoria — si algo deja de aplicar, retíralo con memory_forget (#id o ws:N); si cambia, ` +
       `memory_write con \`replaces\`. Los hechos que valgan para toda la empresa guárdalos con ` +
-      `scope "workspace".\n${wsSection}${roomSection}]\n\n`
+      `scope "workspace".\n${wsSection}${roomSection}${retenidasSection}]\n\n`
     );
   } catch {
     // La memoria es una comodidad: si la tabla aún no existe en este tenant o falla la
@@ -1227,6 +1242,23 @@ const TRUNCATED_RULE =
   `NUNCA re-emitas el documento entero desde esta vista: lo dejarías truncado de verdad. ` +
   `Si te piden una reescritura completa, lee primero todo lo que falte.`;
 
+/**
+ * El documento de la conversación para el turno, salvo que a esa conversación hayan entrado datos de
+ * Google y el destino no sea de Uso Limitado: entonces va el motivo, no el documento (puede haberlo
+ * escrito un turno que leyó Drive). Ver `limited-use.server.ts`.
+ */
+async function docHintFor(currentDoc: CurrentDoc | null | undefined, dest: import("./server/connectors/tool-token.server").ToolDest | null | undefined, lu: boolean): Promise<string> {
+  if (!currentDoc) return "";
+  if (!lu) {
+    const { convKeyOf } = await import("./server/limited-use.server");
+    const key = convKeyOf(dest);
+    const db = await import("./db.server");
+    if (key && (await db.googleConversationAt(key).catch(() => null)))
+      return "[El documento de esta conversación no se te muestra: puede traer datos de Google y aquí los leen modelos que no son de Uso Limitado. Si te lo piden, díselo a la persona.]";
+  }
+  return artifactDocHint(currentDoc);
+}
+
 async function artifactDocHint(currentDoc?: CurrentDoc | null): Promise<string> {
   // El CSS de Tailwind HORNEADO al publicar (marca `gt-baked-tw`) es derivado: se recalcula
   // solo en la siguiente publicación. Al agente no le sirve de nada y son decenas de KB de
@@ -1799,6 +1831,9 @@ export async function callAgentBackendStream(
     const factoryRole = ([...FACTORY_HANDLES, JUDGE_HANDLE] as string[]).includes(agent.handle) && !!dest?.channelId
       ? (await dbAcp.listRoomRepos(dest.channelId).catch(() => [])).length > 0
       : false;
+    const { destLimitedUse } = await import("./server/limited-use.server");
+    // Uso Limitado del destino: tool-token, memoria y documento del turno (ver el camino nativo).
+    const lu = await destLimitedUse(dest, agent).catch(() => false);
     const toolToken = await acpToolToken({
       invokerSub,
       publicChannel,
@@ -1807,6 +1842,7 @@ export async function callAgentBackendStream(
       origin: turnOrigin,
       scope: agent.backend.scope,
       factory: factoryRole,
+      lu,
     });
     /**
      * El servidor MCP de Teams, para el agente que NO tiene nuestro SDK.
@@ -1858,12 +1894,12 @@ export async function callAgentBackendStream(
               .catch(() => "")
           : Promise.resolve(""),
         clockHint(invokerSub).catch(() => ""),
-        memoryHint(dest ?? null).catch(() => ""),
+        memoryHint(dest ?? null, lu).catch(() => ""),
         // La MARCA del espacio. Faltaba, y es la diferencia entre un documento con los
         // colores del cliente y uno donde el agente se inventa el color — que en una
         // dependencia con identidad institucional se ve a la primera.
         brandContextHint(turnOrigin || undefined).catch(() => ""),
-        artifactDocHint(currentDoc).catch(() => ""),
+        docHintFor(currentDoc, dest, lu).catch(() => ""),
       ])
     )
       .map((x) => x.trim())
@@ -2295,6 +2331,12 @@ export async function callAgentBackendStream(
       wakeUrl = `${turnOrigin}/api/internal/agent-wake`;
     } catch { /* sin secret → sin despertador este turno; el aviso del turno siguiente sigue */ }
   }
+  // Uso Limitado del destino: ¿todos los modelos que leen esta conversación pueden recibir datos de
+  // Google? El agente que corre es el de la fábrica si la hay (`fleetAgentId`, `factoryTurn.model`).
+  // Va en el tool-token (claim `lu`) y decide qué memoria y qué documento llegan al turno.
+  const lu = await import("./server/limited-use.server")
+    .then((m) => m.destLimitedUse(dest, agent, { fleetId: fleetAgentId, model: factoryTurn?.model ?? null }))
+    .catch(() => false);
   if (native && invokerSub && !publicChannel) {
     try {
       const { mintToolToken } = await import("./server/connectors/tool-token.server");
@@ -2304,14 +2346,14 @@ export async function callAgentBackendStream(
       // Un turno de la fábrica dura lo que el worker le deja (hasta 2 h, `turnos-largos.md`):
       // con los 15 min de siempre, @build se quedó sin herramientas a media resolución de un
       // choque y no pudo cerrar (MailMask #10, 4-oct: turno de 17 min).
-      toolToken = mintToolToken(invokerSub, await currentNamespace(), dest ?? null, factoryTurn ? 2 * 3600 : undefined);
+      toolToken = mintToolToken(invokerSub, await currentNamespace(), lu, dest ?? null, factoryTurn ? 2 * 3600 : undefined);
       if (!turnOrigin) throw new Error("sin origin: no puedo decirle al box a dónde llamar");
       toolsUrl = `${turnOrigin}/api/connectors/tools`;
     } catch { /* sin secret/origin → sin tools este turno, no rompe */ }
   }
   // docHint (contexto por-doc del turno) va PRIMERO en el texto; el system prompt
   // queda estable (base) → la sesión persistente del worker no se rompe al cambiar doc.
-  const docHint = await artifactDocHint(currentDoc);
+  const docHint = await docHintFor(currentDoc, dest, lu);
   // El hueco de entrega del turno ANTERIOR. Sin esto el aviso muere en la burbuja: el
   // catch-up empieza después de la propia respuesta del agente, así que nunca se entera de
   // que falló — y repite «está en la tarjeta de arriba» mientras la persona dice que no le
@@ -2330,7 +2372,7 @@ export async function callAgentBackendStream(
   // año o daba por hecho UTC. Va por-TURNO (dato variable), nunca en el system prompt.
   const nowHint = await clockHint(invokerSub);
   // Memoria de la conversación: convenciones que ya se acordaron y siguen vigentes.
-  const memHint = await memoryHint(dest ?? null);
+  const memHint = await memoryHint(dest ?? null, lu);
   // La marca del espacio. Va en el TEXTO del turno y no en appendSystemPrompt: el system
   // prompt entra por VALOR en el `configSig` del worker, así que editar el kit cerraría
   // la sesión persistente y el siguiente turno correría en frío.
@@ -3430,9 +3472,17 @@ async function runAgentTurnInner(opts: {
   const fallo: { message: string | null } = { message: null };
   /** Modelo real del turno (del `done` de gs). Contenedor, como `corte`, por el mismo motivo. */
   const turnModel: { value: string | null } = { value: null };
+  const turnStartedAt = Date.now();
   const saveTurnModel = async (id: number) => {
-    if (!turnModel.value || !id) return;
+    if (!id) return;
     const db = await import("./db.server");
+    // Uso Limitado: si en este turno entraron datos de Google a la conversación (Drive de Studio,
+    // `runTool`), la respuesta queda etiquetada y a un destino que no lo es le llega redactada.
+    const { convKeyOf } = await import("./server/limited-use.server");
+    const key = convKeyOf(opts.dest);
+    const at = key ? await db.googleConversationAt(key).catch(() => null) : null;
+    if (at != null && at >= turnStartedAt) await db.setMessageGoogleData(id).catch(() => {});
+    if (!turnModel.value) return;
     await db.setMessageModel(id, turnModel.value).catch(() => {});
   };
   /** Nombres crudos de las tools que corrieron. Sólo se persisten si el turno MUERE. */

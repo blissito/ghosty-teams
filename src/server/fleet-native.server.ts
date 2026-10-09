@@ -35,6 +35,9 @@ export type FleetPool = {
    * después haría que editar aquí se deshiciera solo, sin que nadie viera por qué.
    */
   prompt?: string | null;
+  /** Uso Limitado (Studio, `limitedUseOk`): sus hilos pueden recibir datos de las API de Google.
+   *  Ausente (Studio viejo) = no. Ver `limited-use.server.ts`. */
+  limitedUse?: boolean;
 };
 
 /** Lista los FleetAgent del owner en Studio. GET firma HMAC sobre body vacío. */

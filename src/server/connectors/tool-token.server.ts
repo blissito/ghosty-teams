@@ -85,6 +85,12 @@ export function parseScope(raw: string | null | undefined): ToolScope {
 export function mintToolToken(
   sub: string,
   ns: string,
+  /**
+   * Uso Limitado del destino (`limited-use.server.ts` → `destLimitedUse`): todos los modelos que van a
+   * leer este turno son Anthropic u OpenAI. AUTORIZA (Drive de Studio sólo pasa con `true`), así que
+   * va obligatorio y arriba, como `ns`: un call-site nuevo no puede olvidarlo. Ausente al verificar = no.
+   */
+  lu: boolean,
   dest?: ToolDest | null,
   ttlSec: number = DEFAULT_TTL_S,
   /**
@@ -99,6 +105,7 @@ export function mintToolToken(
     JSON.stringify({
       sub,
       ns: ns ?? undefined,
+      lu: lu === true ? 1 : undefined,
       dest: dest ?? undefined,
       aud: extra?.aud || undefined,
       // Se serializa ORDENADO para que dos tokens del mismo alcance sean idénticos: así el
@@ -113,7 +120,7 @@ export function mintToolToken(
 
 export function verifyToolToken(
   token: string
-): { sub: string; ns: string | null; dest: ToolDest | null; scope: ToolScope } | null {
+): { sub: string; ns: string | null; dest: ToolDest | null; scope: ToolScope; lu: boolean } | null {
   const [payload, sig] = (token || "").split(".");
   if (!payload || !sig) return null;
   const expect = crypto.createHmac("sha256", secret()).update(payload).digest("base64url");
@@ -125,12 +132,14 @@ export function verifyToolToken(
       ns?: string;
       dest?: ToolDest;
       scope?: string;
+      lu?: number;
       exp?: number;
     };
     if (!p.sub || !p.exp || p.exp < Math.floor(Date.now() / 1000)) return null;
     // Sin claim ⇒ `completo`: es lo que emiten hoy todos los call-sites nativos y hay que
     // seguir aceptándolo. Con claim, vale exactamente lo que diga y ni una familia más.
-    return { sub: p.sub, ns: p.ns ?? null, dest: p.dest ?? null, scope: parseScope(p.scope) };
+    // `lu` falla cerrado (al revés que `scope`): sin claim, Drive de Studio no pasa.
+    return { sub: p.sub, ns: p.ns ?? null, dest: p.dest ?? null, scope: parseScope(p.scope), lu: p.lu === 1 };
   } catch {
     return null;
   }

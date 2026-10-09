@@ -81,7 +81,7 @@ export const Route = createFileRoute("/api/connectors/tools")({
         if (body.action === "list") return json({ tools: await listUserTools(sub, dest, scope) });
         if (body.action === "run") {
           if (!body.name) return json({ error: "falta name" }, 400);
-          return json(await runTool(sub, body.name, body.args ?? {}, dest, scope));
+          return json(await runTool(sub, body.name, body.args ?? {}, dest, scope, claims.lu));
         }
         return json({ error: "action debe ser 'list' o 'run'" }, 400);
       },

@@ -6,6 +6,7 @@
 // (listConnectorProviders) → un user no puede invocar la tool de una integración ajena/no
 // conectada. El handler resuelve el token del `sub` internamente (getValidToken).
 
+import { convKeyOf, LIMITED_USE_SHARED_DENIED } from "../limited-use.server";
 import { isStudioTool, runStudioTool, STUDIO_READ_TOOLS, studioTools } from "./studio-bridge.server";
 import { loaderFor, toolsOf } from "./impl";
 import { nativeTools, type ToolDest } from "./native.server";
@@ -188,7 +189,10 @@ export async function runTool(
   toolName: string,
   args: Record<string, unknown>,
   dest: ToolDest | null = null,
-  scope: ToolScope = SCOPE_COMPLETO
+  scope: ToolScope = SCOPE_COMPLETO,
+  /** Uso Limitado del destino (claim `lu` firmado). Falla cerrado: sin él, Drive de Studio no corre y
+   *  los mensajes con datos de Google llegan redactados. */
+  lu = false
 ): Promise<RunResult> {
   // ⚠️ El scope se aplica AQUÍ, en la ejecución, y no sólo en el listado. Filtrar únicamente
   // lo que se anuncia sería cosmético: nada impide que un modelo llame por nombre a una tool
@@ -239,9 +243,17 @@ export async function runTool(
     }
   }
   // Las de Ghosty Studio (Drive): corren en gs con la cuenta de quien escribe.
-  if (isStudioTool(toolName)) return runStudioTool(sub, toolName, args ?? {}, !scope.has("completo"));
+  if (isStudioTool(toolName)) {
+    // Uso Limitado: sin el permiso firmado del destino ni se pregunta a Studio (que igual lo negaría).
+    if (!lu) return { ok: false, error: LIMITED_USE_SHARED_DENIED };
+    const r = await runStudioTool(sub, toolName, args ?? {}, !scope.has("completo"), lu);
+    // Entraron datos de Google a esta conversación: su respuesta y lo que salga de ella se etiquetan.
+    const key = convKeyOf(dest);
+    if (r.ok && lu && key) await (await import("../../db.server")).markGoogleConversation(key).catch(() => {});
+    return r;
+  }
   // Las nativas primero: no requieren conector y su nombre está reservado.
-  const nat = nativeTools(dest).find((t) => t.name === toolName);
+  const nat = nativeTools(dest, lu).find((t) => t.name === toolName);
   if (nat) {
     try {
       return { ok: true, result: await nat.handler(sub, args ?? {}) };

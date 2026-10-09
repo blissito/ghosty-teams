@@ -194,6 +194,9 @@ async function migrate(): Promise<void> {
   // hilo de…» (copia al insertar, como `quoted_excerpt`, para que el realtime ya la traiga).
   await addColumn("gc_messages", "also_in_channel", "INTEGER NOT NULL DEFAULT 0");
   await addColumn("gc_messages", "thread_root_excerpt", "TEXT");
+  // Uso Limitado (9-oct, `limited-use.server.ts`): el mensaje lo escribió un turno que usó datos de
+  // Google (Drive de Studio). A un turno cuyo destino no es de Uso Limitado le llega redactado.
+  await addColumn("gc_messages", "google_data", "INTEGER NOT NULL DEFAULT 0");
 
   await exec(`CREATE INDEX IF NOT EXISTS gc_messages_chan_topic
               ON gc_messages(channel_id, topic, created_at)`);
@@ -212,6 +215,12 @@ async function migrate(): Promise<void> {
   await exec(`CREATE INDEX IF NOT EXISTS gc_messages_also_in_channel
               ON gc_messages(channel_id, also_in_channel, created_at)`);
 
+  // Uso Limitado: conversaciones (sala, hilo o DM) donde entraron datos de Google y cuándo. La lee el
+  // etiquetado de la respuesta del turno y lo que sale de la conversación (memoria del espacio, doc_read).
+  await exec(`CREATE TABLE IF NOT EXISTS gc_google_marks (
+                conv_key TEXT PRIMARY KEY,
+                at       INTEGER NOT NULL
+              )`);
   await exec(`CREATE TABLE IF NOT EXISTS gc_reactions (
     message_id INTEGER NOT NULL,
     user_sub   TEXT NOT NULL,
@@ -627,6 +636,8 @@ async function migrate(): Promise<void> {
   // UNA memoria con dos niveles, no dos sistemas: mismas tools, mismo bloque en el turno.
   await addColumn("gt_agent_memory", "title", "TEXT");
   await addColumn("gt_agent_memory", "source_ref", "TEXT");
+  // Uso Limitado (9-oct): la escribió una conversación con datos de Google (`limited-use.server.ts`).
+  await addColumn("gt_agent_memory", "google_data", "INTEGER NOT NULL DEFAULT 0");
 
   // Documentos fuente de la memoria (patrón DESCTI): un manual/PDF soltado en /memory se
   // registra aquí, viaja al DM del agente para destilarse, y las notas que salen llevan

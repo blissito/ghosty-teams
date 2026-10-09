@@ -79,8 +79,10 @@ export async function runStudioTool(
   name: string,
   args: Record<string, unknown>,
   readOnly: boolean,
+  /** Uso Limitado del destino: Studio sólo corre Drive con `true` (si no, responde el motivo). */
+  limitedUse: boolean,
 ): Promise<{ ok: true; result: unknown } | { ok: false; error: string }> {
-  const r = await call<{ ok: boolean; result?: unknown; error?: string }>(sub, { action: "run", name, args, readOnly });
+  const r = await call<{ ok: boolean; result?: unknown; error?: string }>(sub, { action: "run", name, args, readOnly, limitedUse });
   if (!r) return { ok: false, error: "Ghosty Studio no contestó; vuelve a intentarlo en un momento" };
   return r.ok ? { ok: true, result: r.result } : { ok: false, error: r.error ?? "error" };
 }

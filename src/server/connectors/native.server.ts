@@ -8,6 +8,7 @@
 //
 // El `dest` (canal o DM del turno) viaja en el token-capacidad, no en los argumentos:
 // el agente no puede dejarle un recordatorio a otro ni en otro canal.
+import { agentsBlockingGoogle, convKeyOf, redactGoogle } from "../limited-use.server";
 import { BRAND_MOODS } from "#/lib/brand-tokens";
 import { BRAND_FONTS } from "#/lib/brand-fonts";
 import type { ConnectorTool } from "./impl";
@@ -30,7 +31,12 @@ export function isOwnAgentMessage(
   return msg.sender_sub == null && msg.agent_handle === handle && !msg.mentions_ghosty;
 }
 
-export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
+export function nativeTools(
+  dest: ToolDest | null,
+  /** Uso Limitado del destino (claim `lu`). Sin él (`false`): lo etiquetado con datos de Google llega
+   *  redactado y no sale a la memoria del espacio. Ver `limited-use.server.ts`. */
+  lu = false,
+): ConnectorTool[] {
   // Push a quien el agente mencione en un mensaje que publica por su cuenta (chat_post,
   // chat_edit). Sólo en rooms: en un DM el destinatario ya ve el mensaje. Devuelve el aviso
   // de menciones que no llegaron a nadie ("" si todo bien) para que el agente lo sepa.
@@ -847,6 +853,15 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         const db = await import("../../db.server");
         const note = String(args.note ?? "").trim().replace(/\s+/g, " ");
         if (!note) return { ok: false, error: "la nota viene vacía" };
+        // Uso Limitado: si a esta conversación entraron datos de Google, una nota puede llevarlos.
+        // La memoria de la sala o del espacio la lee cualquier agente; la de un DM, sólo el suyo.
+        const blocked = await googleMemoryBlocked(dest, lu, String(args.scope ?? "room"));
+        if (blocked) return { ok: false, error: blocked };
+        // Lo que se escribe desde una conversación con datos de Google queda etiquetado (sólo lo
+        // lee un destino de Uso Limitado; ver `memoryHint`/`memory_read`).
+        const convKey = convKeyOf(dest);
+        const fromGoogle = !!convKey && !!(await db.googleConversationAt(convKey).catch(() => null));
+        const label = async (id: number) => (fromGoogle && id ? db.setMemoryGoogleData(id).catch(() => {}) : undefined);
 
         if (args.scope === "workspace") {
           if (note.length > db.WS_MEMORY_MAX_CHARS)
@@ -857,6 +872,7 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
               note,
               ...(args.title ? { title: String(args.title).slice(0, db.WS_MEMORY_TITLE_MAX) } : {}),
             });
+            if (ok) await label(id);
             return ok ? { ok: true, id: `ws:${id}` } : { ok: false, error: "esa nota no existe en la memoria del workspace" };
           }
           const title = String(args.title ?? "").trim().slice(0, db.WS_MEMORY_TITLE_MAX);
@@ -882,6 +898,7 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
                   : null;
           const author = dest?.handle ? `@${dest.handle}` : sub;
           const id = await db.addWorkspaceMemory(title, note, author, sourceRef);
+          await label(id);
           return { ok: true, id: `ws:${id}` };
         }
 
@@ -900,6 +917,7 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
 
         if (args.replaces != null) {
           const ok = await db.updateAgentMemory(Number(args.replaces), scope, handle, note);
+          if (ok) await label(Number(args.replaces));
           return ok ? { ok: true, id: Number(args.replaces) } : { ok: false, error: "esa nota no existe en esta conversación" };
         }
         const actuales = await db.listAgentMemory(scope, handle);
@@ -910,6 +928,7 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
             error: `la memoria está llena (${db.MEMORY_MAX_NOTES} notas). Borra alguna con memory_forget o sustituye una con \`replaces\``,
           };
         const id = await db.addAgentMemory(scope, handle, note, sub);
+        await label(id);
         // El alcance vuelve en la respuesta: el agente tiene que poder DECIR si lo guardó como
         // regla del espacio o como convención suya, y si no se lo devolvemos, lo inventa.
         return { ok: true, id, scope: reglas ? "room_rules" : "room" };
@@ -938,6 +957,7 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         if (!Number.isFinite(id) || id <= 0) return { ok: false, error: "id inválido; usa 'ws:N' o el número de la nota" };
         if (esWs) {
           const note = await db.getWorkspaceMemory(id);
+          if (note?.googleData && !lu) return { ok: false, error: GOOGLE_MEMORY_WITHHELD };
           return note
             ? { ok: true, id: `ws:${note.id}`, title: note.title, note: note.note, author: note.createdBy }
             : { ok: false, error: "esa nota no existe (¿la borraron desde /memory?)" };
@@ -945,6 +965,7 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         const scope = dest ? db.memoryScopeKey(dest) : null;
         if (!scope) return { ok: false, error: "no hay conversación en este turno" };
         const note = await db.getAgentMemory(id, scope, dest?.handle ?? null);
+        if (note?.googleData && !lu) return { ok: false, error: GOOGLE_MEMORY_WITHHELD };
         return note
           ? {
               ok: true,
@@ -1175,7 +1196,7 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         const msgs = await db.attachAttachments(
           await db.searchInScope(scope, q, Number(args.limit) || 20),
         ).catch(() => [] as Awaited<ReturnType<typeof db.searchInScope>>);
-        return { ok: true, query: q, count: msgs.length, messages: msgs.map(paraElModelo) };
+        return { ok: true, query: q, count: msgs.length, messages: redactGoogle(msgs, lu).map(paraElModelo) };
       },
     },
     {
@@ -1204,6 +1225,10 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
       // la conversación donde te invocaron) sin abrir ninguna superficie de autorización.
       handler: async (_sub, args) => {
         const db = await import("../../db.server");
+        // Uso Limitado: el documento de una conversación con datos de Google no sale a un destino
+        // que no es de Uso Limitado (puede haberlo escrito un turno que leyó Drive).
+        const key = convKeyOf(dest);
+        if (!lu && key && (await db.googleConversationAt(key).catch(() => null))) return { ok: false, error: GOOGLE_DOC_WITHHELD };
         const documentId = dest?.dmId
           ? await db.getDmArtifact(dest.dmId).catch(() => null)
           : dest?.channelId
@@ -1283,7 +1308,7 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         // Con sus ADJUNTOS: un mensaje de archivos sin texto es invisible sin esto.
         const msgs = await db.attachAttachments(
           await db.historyBefore(scope, Number(args.before) || null, pedidos),
-        ).catch(() => [] as Awaited<ReturnType<typeof db.historyBefore>>);
+        ).then((m) => redactGoogle(m, lu)).catch(() => [] as Awaited<ReturnType<typeof db.historyBefore>>);
         return {
           ok: true,
           count: msgs.length,
@@ -1322,7 +1347,7 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         const db = await import("../../db.server");
         const msgs = await db.attachAttachments(
           await db.messagesByIdInScope(scope, ids),
-        ).catch(() => [] as Awaited<ReturnType<typeof db.messagesByIdInScope>>);
+        ).then((m) => redactGoogle(m, lu)).catch(() => [] as Awaited<ReturnType<typeof db.messagesByIdInScope>>);
         // Un cuerpo entero puede ser un documento pegado. Se acota por mensaje para que
         // pedir cinco no reviente el turno, y el recorte se vuelve a declarar.
         const TOPE = 24_000;
@@ -1989,3 +2014,28 @@ async function tzOf(sub: string): Promise<string> {
   } catch { /* columna nueva en un tenant sin migrar aún */ }
   return rem.DEFAULT_TZ;
 }
+
+/** Por qué `doc_read` no entrega el documento (Uso Limitado). */
+const GOOGLE_DOC_WITHHELD =
+  "el documento de esta conversación puede traer datos de Google y aquí los leen modelos que no son de Uso Limitado: no lo puedes leer. Díselo a la persona; en un DM con un agente Claude u OpenAI sí se puede.";
+
+/**
+ * ¿Se puede guardar memoria desde esta conversación? `null` = sí. Si entraron datos de Google, sólo
+ * cuando todos los que leen esa memoria son de Uso Limitado: la de un DM (`room` en un DM) la lee su
+ * agente (`lu`); la de una sala o del espacio, todos los agentes del espacio.
+ */
+async function googleMemoryBlocked(dest: ToolDest | null, lu: boolean, scope: string): Promise<string | null> {
+  const key = convKeyOf(dest);
+  if (!key) return null;
+  const db = await import("../../db.server");
+  if (!(await db.googleConversationAt(key).catch(() => null))) return null;
+  if (scope === "room" && dest?.dmId) return lu ? null : GOOGLE_MEMORY_BLOCKED;
+  const blockers = await agentsBlockingGoogle().catch(() => null);
+  return blockers && blockers.length === 0 && lu ? null : GOOGLE_MEMORY_BLOCKED;
+}
+
+const GOOGLE_MEMORY_WITHHELD =
+  "esa nota salió de una conversación con datos de Google y aquí los leen modelos que no son de Uso Limitado: no la puedes leer. Díselo a la persona.";
+
+const GOOGLE_MEMORY_BLOCKED =
+  "no guardé la nota: a esta conversación entraron datos de Google y esa memoria la leen agentes con modelos que no son de Uso Limitado. Díselo a la persona; si es algo que no viene de Google, que te lo pida en otra conversación.";

@@ -32,6 +32,8 @@ export type AcpToolArgs = {
   scope: ToolScope;
   /** Turno de un rol de la fábrica (@plan, @build, @check…): credencial de 2 h. */
   factory?: boolean;
+  /** Uso Limitado del destino (`destLimitedUse`). Obligatorio: autoriza Drive de Studio. */
+  lu: boolean;
 };
 
 /**
@@ -52,7 +54,7 @@ export async function acpToolToken(a: AcpToolArgs): Promise<string | undefined> 
   if (!a.invokerSub || a.publicChannel || !a.origin) return undefined;
   try {
     const { mintToolToken } = await import("./connectors/tool-token.server");
-    return mintToolToken(a.invokerSub, a.ns, a.dest ?? null, a.factory ? ACP_FACTORY_TOOL_TTL_S : ACP_TOOL_TTL_S, {
+    return mintToolToken(a.invokerSub, a.ns, a.lu, a.dest ?? null, a.factory ? ACP_FACTORY_TOOL_TTL_S : ACP_TOOL_TTL_S, {
       aud: `${a.origin.replace(/\/+$/, "")}/api/connectors/tools`,
       scope: a.scope,
     });

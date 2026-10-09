@@ -292,6 +292,7 @@ export async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
   const controller = new AbortController();
   const channelSlug = dest.channelId != null ? ((await db.getChannelById(dest.channelId).catch(() => null))?.slug ?? null) : null;
   let registeredId: number | null = null;
+  const luDelTurno = await import("./limited-use.server").then((m) => m.destLimitedUse(dest, agent)).catch(() => false);
   const register = (mid: number) => {
     if (registeredId === mid) return;
     registeredId = mid;
@@ -309,6 +310,7 @@ export async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
       channelId: dest.channelId ?? null, parentId: dest.parentId ?? null, dmId: dest.dmId ?? null,
       dest: { ...dest, handle, name, avatar },
       publicChannel: false,
+      lu: luDelTurno,
       agent: name, avatar,
       tarea: (handoff?.text ?? text).slice(0, 60),
       body: handoff?.text ?? text, slug: channelSlug ?? undefined, shellId: mid,

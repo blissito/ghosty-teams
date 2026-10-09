@@ -9,10 +9,20 @@ beforeAll(() => {
 const mod = () => import("./tool-token.server");
 
 describe("los claims nuevos", () => {
+  it("Uso Limitado (`lu`) falla cerrado: sólo vale si se firmó `true`; editarlo rompe la firma", async () => {
+    const { mintToolToken, verifyToolToken } = await mod();
+    expect(verifyToolToken(mintToolToken("ana", "ns-1", false, { dmId: 2 }))!.lu).toBe(false);
+    const t = mintToolToken("ana", "ns-1", true, { dmId: 2 });
+    expect(verifyToolToken(t)!.lu).toBe(true);
+    const payload = JSON.parse(Buffer.from(mintToolToken("ana", "ns-1", false, null).split(".")[0], "base64url").toString());
+    const falso = Buffer.from(JSON.stringify({ ...payload, lu: 1 })).toString("base64url") + "." + t.split(".")[1];
+    expect(verifyToolToken(falso)).toBeNull();
+  });
+
   it("un token SIN scope vale como `completo` — la retrocompat que protege a los nativos", async () => {
     const { mintToolToken, verifyToolToken } = await mod();
     // Exactamente lo que emiten hoy todos los call-sites existentes.
-    const t = mintToolToken("ana", "ns-1", { channelId: 4 });
+    const t = mintToolToken("ana", "ns-1", false, { channelId: 4 });
     const c = verifyToolToken(t)!;
     expect(c).toMatchObject({ sub: "ana", ns: "ns-1" });
     expect([...c.scope]).toEqual(["completo"]);
@@ -22,14 +32,14 @@ describe("los claims nuevos", () => {
     const { mintToolToken, verifyToolToken } = await mod();
     // Si mañana aparece un scope nuevo y un emisor viejo lo emite mal, que el error sea de
     // MENOS permiso y no de más.
-    const t = mintToolToken("ana", "ns-1", null, 900, { scope: new Set(["inventado"]) });
+    const t = mintToolToken("ana", "ns-1", false, null, 900, { scope: new Set(["inventado"]) });
     expect([...(verifyToolToken(t)?.scope ?? [])]).toEqual(["inventado"]);
   });
 
   it("el `aud` viaja dentro de la firma, así que el portador no puede redirigirse solo", async () => {
     const { mintToolToken, verifyToolToken } = await mod();
     const aud = "https://acme.ghosty.mx/api/connectors/tools";
-    const t = mintToolToken("ana", "ns-1", null, 900, { aud, scope: new Set(["lectura"]) });
+    const t = mintToolToken("ana", "ns-1", false, null, 900, { aud, scope: new Set(["lectura"]) });
     const payload = JSON.parse(Buffer.from(t.split(".")[0], "base64url").toString());
     expect(payload.aud).toBe(aud);
     // Y si alguien lo edita para apuntar a otro host, la firma deja de valer: sin esto, el

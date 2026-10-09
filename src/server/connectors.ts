@@ -76,10 +76,19 @@ export const listMyConnectorsFn = createServerFn({ method: "GET" }).handler(asyn
   const S = await import("./connectors/studio-bridge.server");
   S.forgetStudioCache(me.sub); // el panel abierto = quizá acaba de conectar: que el turno lo vea ya
   const ourIds = new Set(CONNECTORS.map((c) => c.id));
+  // Uso Limitado: Drive no entra a una sala si algún agente del espacio no es Claude/OpenAI. Se dice
+  // en la tarjeta, con quiénes, para que no parezca que «no funciona».
+  const { agentsBlockingGoogle } = await import("./limited-use.server");
+  const blockers = await agentsBlockingGoogle().catch(() => null);
+  const googleNote = blockers === null
+    ? " · No pude confirmar los modelos de los agentes: Drive queda pausado hasta que Ghosty Studio conteste."
+    : blockers.length
+      ? ` · Pausado en las salas: ${blockers.slice(0, 4).map((b) => `@${b.handle}`).join(", ")}${blockers.length > 4 ? ` y ${blockers.length - 4} más` : ""} usan modelos que no son de Uso Limitado y Google no permite que sus datos les lleguen. Funciona en un DM con un agente Claude u OpenAI.`
+      : "";
   const studio = (await S.studioCatalog(me.sub).catch(() => []))
     .filter((c) => !ourIds.has(c.id) && c.store !== "teams")
     .map((c) => ({
-      id: c.id, name: c.nombre, blurb: c.descripcion, icon: c.logo?.icon ?? c.id, logoUrl: S.studioLogoUrl(c), type: "Ghosty Studio",
+      id: c.id, name: c.nombre, blurb: c.id === "google-drive" ? `${c.descripcion}${googleNote}` : c.descripcion, icon: c.logo?.icon ?? c.id, logoUrl: S.studioLogoUrl(c), type: "Ghosty Studio",
       custom: false, status: c.disponible ? ("available" as const) : ("soon" as const),
       manage: c.conectado ? { url: S.studioConnectUrl(c.id), label: c.id === "google-drive" ? "Elegir archivos" : c.kind === "credential" ? "Cambiar llave" : "Administrar" } : null,
       credentials: null, connected: c.conectado, shared: null, mineShared: false, canShareOthers: false,

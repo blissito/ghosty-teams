@@ -109,6 +109,8 @@ export type Message = {
   /** Respuesta de hilo que también se pinta en el room («en el hilo de…»). */
   also_in_channel?: number;
   thread_root_excerpt?: string | null;
+  /** Uso Limitado: lo escribió un turno con datos de Google (`limited-use.server.ts`). */
+  google_data?: number;
 };
 
 export type Attachment = {
@@ -165,12 +167,32 @@ function toMessage(r: Row): Message {
     turn_model: (r.turn_model as string | null) ?? null,
     also_in_channel: r.also_in_channel == null ? 0 : num(r.also_in_channel),
     thread_root_excerpt: (r.thread_root_excerpt as string | null) ?? null,
+    google_data: r.google_data == null ? 0 : num(r.google_data),
   };
 }
 
 /** El modelo que corrió el turno del agente (gs lo manda en el `done`). */
 export async function setMessageModel(messageId: number, model: string): Promise<void> {
   await dbq("UPDATE gc_messages SET turn_model = ? WHERE id = ?", [model.slice(0, 80), messageId]);
+}
+
+// ── Uso Limitado (`limited-use.server.ts`) ──────────────────────────────────────────────────────
+
+/** La conversación recibió datos de Google ahora (guarda la ÚLTIMA vez: con ella se sabe si el turno
+ *  que está cerrando los usó). */
+export async function markGoogleConversation(convKey: string): Promise<void> {
+  await dbq("INSERT INTO gc_google_marks (conv_key, at) VALUES (?, ?) ON CONFLICT(conv_key) DO UPDATE SET at = excluded.at", [convKey, Date.now()]);
+}
+
+/** Cuándo entraron por última vez datos de Google a la conversación (`null` = nunca). */
+export async function googleConversationAt(convKey: string): Promise<number | null> {
+  const rows = await dbq("SELECT at FROM gc_google_marks WHERE conv_key = ?", [convKey]);
+  return rows[0]?.at == null ? null : num(rows[0].at);
+}
+
+/** Etiqueta el mensaje: lo escribió un turno que usó datos de Google. */
+export async function setMessageGoogleData(messageId: number): Promise<void> {
+  await dbq("UPDATE gc_messages SET google_data = 1 WHERE id = ?", [messageId]);
 }
 
 // Marca un mensaje como REENVIADO (guarda el autor original) — lo usa el forward al copiar.
@@ -427,6 +449,8 @@ export type AgentNote = {
   updatedAt: number;
   /** `''` = lineamiento del espacio (lo obedece cualquier agente); `@x` = nota de ese agente. */
   agentHandle: string;
+  /** Uso Limitado: la escribió una conversación con datos de Google. */
+  googleData?: boolean;
 };
 
 /**
@@ -474,9 +498,9 @@ export const MEMORY_MAX_CHARS = 240;
 export async function listAgentMemory(scopeKey: string, handle: string | null): Promise<AgentNote[]> {
   const rows = await dbq(
     handle
-      ? `SELECT id, note, created_by, updated_at, agent_handle FROM gt_agent_memory
+      ? `SELECT id, note, created_by, updated_at, agent_handle, google_data FROM gt_agent_memory
            WHERE scope_key = ? AND (agent_handle = ? OR agent_handle = '') ORDER BY id ASC`
-      : `SELECT id, note, created_by, updated_at, agent_handle FROM gt_agent_memory
+      : `SELECT id, note, created_by, updated_at, agent_handle, google_data FROM gt_agent_memory
            WHERE scope_key = ? AND agent_handle = '' ORDER BY id ASC`,
     handle ? [scopeKey, handle] : [scopeKey]
   );
@@ -486,6 +510,7 @@ export async function listAgentMemory(scopeKey: string, handle: string | null): 
     createdBy: (r.created_by as string | null) ?? null,
     updatedAt: num(r.updated_at),
     agentHandle: String(r.agent_handle ?? ""),
+    googleData: num(r.google_data) === 1,
   }));
 }
 
@@ -545,7 +570,7 @@ export async function getAgentMemory(
 ): Promise<AgentNote | null> {
   const h = handleFilter(handle);
   const rows = await dbq(
-    `SELECT id, note, created_by, updated_at, agent_handle FROM gt_agent_memory
+    `SELECT id, note, created_by, updated_at, agent_handle, google_data FROM gt_agent_memory
        WHERE id = ? AND scope_key = ? AND ${h.sql}`,
     [id, scopeKey, ...h.args]
   );
@@ -557,6 +582,7 @@ export async function getAgentMemory(
     createdBy: r.created_by == null ? null : String(r.created_by),
     updatedAt: num(r.updated_at),
     agentHandle: String(r.agent_handle ?? ""),
+    googleData: num(r.google_data) === 1,
   };
 }
 
@@ -598,6 +624,8 @@ export type WorkspaceNote = {
   createdBy: string | null;
   sourceRef: string | null;
   updatedAt: number;
+  /** Uso Limitado: la escribió una conversación con datos de Google. */
+  googleData?: boolean;
 };
 
 function rowToWorkspaceNote(r: Row): WorkspaceNote {
@@ -608,12 +636,13 @@ function rowToWorkspaceNote(r: Row): WorkspaceNote {
     createdBy: (r.created_by as string | null) ?? null,
     sourceRef: (r.source_ref as string | null) ?? null,
     updatedAt: num(r.updated_at),
+    googleData: num(r.google_data) === 1,
   };
 }
 
 export async function listWorkspaceMemory(): Promise<WorkspaceNote[]> {
   const rows = await dbq(
-    `SELECT id, title, note, created_by, source_ref, updated_at FROM gt_agent_memory
+    `SELECT id, title, note, created_by, source_ref, updated_at, google_data FROM gt_agent_memory
        WHERE scope_key = ? ORDER BY id ASC`,
     [WS_MEMORY_SCOPE]
   );
@@ -622,7 +651,7 @@ export async function listWorkspaceMemory(): Promise<WorkspaceNote[]> {
 
 export async function getWorkspaceMemory(id: number): Promise<WorkspaceNote | null> {
   const rows = await dbq(
-    `SELECT id, title, note, created_by, source_ref, updated_at FROM gt_agent_memory
+    `SELECT id, title, note, created_by, source_ref, updated_at, google_data FROM gt_agent_memory
        WHERE id = ? AND scope_key = ?`,
     [id, WS_MEMORY_SCOPE]
   );
@@ -666,6 +695,12 @@ export async function updateWorkspaceMemory(
     [...args, id, WS_MEMORY_SCOPE]
   );
   return rows.length > 0;
+}
+
+/** Uso Limitado: la nota la escribió una conversación con datos de Google (sólo se le enseña a un
+ *  destino de Uso Limitado). */
+export async function setMemoryGoogleData(id: number): Promise<void> {
+  await dbq("UPDATE gt_agent_memory SET google_data = 1 WHERE id = ?", [id]);
 }
 
 export async function deleteWorkspaceMemory(id: number): Promise<boolean> {

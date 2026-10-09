@@ -72,6 +72,8 @@ export type LiveTurn = {
   handle?: string | null;
   /** Canal público: el texto del turno lo escribe un extraño. Nunca hay tools. */
   publicChannel?: boolean;
+  /** Uso Limitado del destino (`destLimitedUse`): lo mismo que el claim `lu` del tool-token. */
+  lu?: boolean;
 };
 
 export type TurnState = {
@@ -137,7 +139,7 @@ const ejecutando = new Map<string, Set<{ ns: string; getId: () => number | null 
 
 export function inflightAuthority(
   groupId: string,
-): { ns: string; messageId: number; invokerSub: string | null; dest: unknown; scope: unknown; publicChannel: boolean } | null {
+): { ns: string; messageId: number; invokerSub: string | null; dest: unknown; scope: unknown; publicChannel: boolean; lu: boolean } | null {
   const dentro = ejecutando.get(groupId);
   if (!dentro || dentro.size !== 1) return null;
   const [quien] = dentro;
@@ -152,6 +154,7 @@ export function inflightAuthority(
     dest: t.dest,
     scope: t.scope,
     publicChannel: !!t.publicChannel,
+    lu: t.lu === true,
   };
 }
 
