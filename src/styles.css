@@ -208,6 +208,11 @@ body {
 }
 
 /* Destello al scrollear al mensaje origen de un hilo (clic "Ver en el room"). */
+/* La caja de merge se despliega dentro de la tarjeta del pedido (mutación temporal). */
+@keyframes gt-grow {
+  from { opacity: 0; transform: translateY(-4px) scaleY(.96); }
+  to { opacity: 1; transform: none; }
+}
 @keyframes gc-flash {
   0% { background-color: color-mix(in oklab, var(--color-brand) 28%, transparent); }
   100% { background-color: transparent; }

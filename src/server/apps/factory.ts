@@ -546,6 +546,23 @@ async function cancelledView(run: { id: number; prUrl: string | null; approvedBy
 }
 
 // La tarjeta se refresca con cada evento del room: GitHub se pregunta como mucho cada minuto por PR.
+/** Si el PR mezcla limpio con su base: true/false, o null si GitHub aún lo calcula o no contesta. */
+const mergeableCache = new Map<string, { at: number; v: { clean: boolean | null; base: string | null } | null }>();
+async function liveMergeable(sub: string, prUrl: string) {
+  const hit = mergeableCache.get(prUrl);
+  if (hit && Date.now() - hit.at < 60_000) return hit.v;
+  const R = await import("./factory-runs.server");
+  const pr = R.parsePrUrl(prUrl);
+  let v: { clean: boolean | null; base: string | null } | null = null;
+  if (pr) {
+    const { githubApi } = await import("../connectors/github.server");
+    const info = await githubApi(sub, `/repos/${pr.repo}/pulls/${pr.number}`).catch(() => null);
+    if (info && !info.error) v = { clean: typeof info.mergeable === "boolean" ? info.mergeable : null, base: info.base?.ref ?? null };
+  }
+  mergeableCache.set(prUrl, { at: Date.now(), v });
+  return v;
+}
+
 type LiveCi = { state: string; repoHasCi: boolean; checks: import("../connectors/github-checks").CheckItem[] };
 const ciCache = new Map<string, { at: number; v: LiveCi | null }>();
 async function liveCi(sub: string, prUrl: string, repo: string | null, fallbackSub?: string): Promise<LiveCi | null> {
@@ -941,6 +958,8 @@ export const factoryVerdictFn = createServerFn({ method: "POST" })
     // El CI EN VIVO: el del veredicto es una foto de cuando @check aprobó, y poner la rama al día
     // con main lanza otro. La tarjeta decía «✓ en verde» con el CI corriendo (MailMask #34, 10-oct).
     const ci = run.prUrl && run.status === "pr_review" ? await liveCi(run.approvedBy ?? run.requestedBy ?? me.sub, run.prUrl, run.repo, me.sub) : null;
+    // ¿Choca con la rama base? Para la caja de merge («Sin conflictos con main»), como GitHub.
+    const mergeable = run.prUrl && run.status === "pr_review" ? await liveMergeable(run.approvedBy ?? run.requestedBy ?? me.sub, run.prUrl) : null;
     const { dbq: q } = await import("../../dbq.server");
     const mergeQueued = run.status === "pr_review" && !!(await q("SELECT merge_queued_by FROM gt_factory_runs WHERE id = ?", [run.id]))[0]?.merge_queued_by;
     // Para el panel de revisión: esfuerzo (sin modelo), la estafeta a escala de tiempo y lo que se pidió.
@@ -952,7 +971,7 @@ export const factoryVerdictFn = createServerFn({ method: "POST" })
     const approved = [...evs].reverse().find((e) => String(e.type) === "approve");
     return {
       runId: run.id, title: run.title, status: run.status, repo: run.repo, prUrl: run.prUrl, verdict, shots, preview: await R.runPreview(run.id), ci, mergeQueued,
-      effort, relay, approvedAt: approved ? Number(approved.at) : null, branch: run.branch, events: evs.length,
+      mergeable, effort, relay, approvedAt: approved ? Number(approved.at) : null, branch: run.branch, events: evs.length,
     };
   });
 
@@ -1024,7 +1043,10 @@ export const factoryMergeFn = createServerFn({ method: "POST" })
     if (run.status !== "pr_review") throw new Error("el pedido no está esperando revisión");
     const r = await R.mergeRun(run, me.sub);
     // El CI del PR cambió (o se acaba de lanzar): la tarjeta lo vuelve a preguntar ya.
-    if (run.prUrl) ciCache.delete(run.prUrl);
+    if (run.prUrl) {
+      ciCache.delete(run.prUrl);
+      mergeableCache.delete(run.prUrl);
+    }
     // CI corriendo o rama recién puesta al día: no se le pide a la persona volver a picar; queda
     // en cola y el tick lo mezcla al pasar (MailMask #34, 10-oct: «merge no merguea»).
     if (!r.ok && r.queue) {

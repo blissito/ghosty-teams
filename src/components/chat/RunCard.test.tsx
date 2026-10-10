@@ -69,8 +69,9 @@ describe("RunCard con el PR listo", () => {
     expect(screen.getByText("Revisar")).toBeTruthy();
     // Lo que antes llenaba la tarjeta ya no está aquí.
     expect(screen.queryByText("Lee primero")).toBeNull();
-    expect(screen.queryByText("Merge")).toBeNull();
     expect(screen.queryByText(/La fábrica terminó su parte/)).toBeNull();
+    // La caja de merge sólo aparece al picar Merge.
+    expect(screen.queryByText("@check aprobó el PR")).toBeNull();
   });
 });
 
@@ -96,5 +97,17 @@ describe("RunCard al mezclarse", () => {
     runs[13] = { ...runs[13], status: "done", prod: null };
     await act(async () => refreshEv?.({ t: "refresh", channelId: 3 }));
     await waitFor(() => expect(container.querySelector(".gt-fx-confetti")).toBeTruthy());
+  });
+});
+
+describe("RunCard: Merge despliega la caja de merge", () => {
+  it("al picar Merge la tarjeta muta: aprobación, checks, conflictos y botón", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    render(<RunCard card={{ runId: 11 } as never} channelId={3} />);
+    await waitFor(() => expect(screen.getByText("Merge")).toBeTruthy());
+    fireEvent.click(screen.getByText("Merge"));
+    expect(screen.getByText("@check aprobó el PR")).toBeTruthy();
+    expect(screen.getByText("Todos los checks pasaron")).toBeTruthy();
+    expect(screen.getByText(/GitHub está revisando si choca/)).toBeTruthy();
   });
 });

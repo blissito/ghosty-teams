@@ -10,8 +10,8 @@ import { useT } from "../../i18n";
 import { useRtSubscribe } from "../../utils/rt-bus";
 import { type VerdictState } from "./VerdictCard";
 import { FxOverlay } from "./FxOverlay";
-import { DiffBar } from "./ReviewPanel";
-import { factoryVerdictFn, factoryRunCardFn, factoryDecisionFn, factoryRetryPreviewFn, factorySetPreviewOffFn, factoryRunActionFn, factoryRunCiFn, factoryFixCiFn } from "../../server/apps/factory";
+import { DiffBar, MergeBox } from "./ReviewPanel";
+import { factoryVerdictFn, factoryMergeFn, factoryRunCardFn, factoryDecisionFn, factoryRetryPreviewFn, factorySetPreviewOffFn, factoryRunActionFn, factoryRunCiFn, factoryFixCiFn } from "../../server/apps/factory";
 import { prepareRepoFn } from "../../server/apps/readiness";
 import type { RunCardData } from "../../lib/ebdoc";
 
@@ -61,12 +61,15 @@ export function RunCard({ card, channelId, inPanel }: { card: RunCardData; chann
   // (```gt-fx``` de `mergedMessage`) sólo lo veía quien tenía el hilo abierto. Sólo en la
   // TRANSICIÓN: un pedido que ya llegó terminado al pintar no celebra (es efímero, como FxOverlay).
   const prevStatus = useRef<string | null>(null);
+  // «Merge» en la tarjeta: se despliega la caja de merge (mutación temporal) hasta que entra.
+  const [merging, setMerging] = useState(false);
   const [party, setParty] = useState(false);
 
   const refresh = useCallback(() => {
     factoryRunCardFn({ data: { runId: card.runId } })
       .then((s) => {
         if (s?.status === "done" && prevStatus.current && prevStatus.current !== "done") setParty(true);
+        if (s?.status !== "pr_review") setMerging(false);
         prevStatus.current = s?.status ?? null;
         setSt(s);
         // La revisión sólo se pide con el PR en manos de la persona.
@@ -81,6 +84,14 @@ export function RunCard({ card, channelId, inPanel }: { card: RunCardData; chann
   // Los pasos del turno (`turn`) también: así se ve desde el room qué hace el rol AHORA. Con
   // varias tarjetas en el room, como mucho una consulta cada 3 s por tarjeta.
   const lastTurnRefresh = useRef(0);
+  // Caja de merge abierta con el CI corriendo: el avance de los checks no publica eventos en el
+  // room, así que se pregunta cada 15 s mientras la caja está a la vista.
+  const watchMerge = merging || !!st?.mergeQueued;
+  useEffect(() => {
+    if (!watchMerge || st?.status !== "pr_review") return;
+    const id = setInterval(refresh, 15_000);
+    return () => clearInterval(id);
+  }, [watchMerge, st?.status, refresh]);
   useRtSubscribe({
     onEvent: (ev) => {
       if (ev.t === "refresh" && ev.channelId === channelId) refresh();
@@ -91,6 +102,7 @@ export function RunCard({ card, channelId, inPanel }: { card: RunCardData; chann
     },
   });
   if (!st) return null;
+  const mergeBoxOpen = st.status === "pr_review" && !inPanel && (merging || !!st.mergeQueued);
 
   // Cancelado: se pinta la etapa en la que iba (bitácora), no ninguna; lo hecho conserva su ✓.
   const cancelledAt = st.status === "cancelled" && st.cancelled?.from
@@ -264,11 +276,25 @@ export function RunCard({ card, channelId, inPanel }: { card: RunCardData; chann
   // completa y se sentía abrumadora (propuesta del 10-oct).
   if (reviewing && review?.verdict && !inPanel) {
     const v = review.verdict;
+    const doMerge = async () => {
+      setBusy(true);
+      setErr("");
+      try {
+        await factoryMergeFn({ data: { runId: st.runId } });
+      } catch (e) {
+        setErr(e instanceof Error ? e.message : String(e));
+      } finally {
+        setBusy(false);
+        refresh();
+      }
+    };
     const openPanel = () => onOpenArtifact?.({ kind: "run", title: `${t("Pedido")} #${st.runId}`, runId: st.runId, channelId });
     return (
       <div className="mt-1.5 max-w-xl overflow-hidden rounded-xl gt-card">
         {header}
         {v.summary ? <p className="px-3.5 pt-2.5 text-[13.5px] leading-snug text-ink">{v.summary}</p> : null}
+        {mergeBoxOpen && <div className="pt-2.5"><MergeBox st={review} busy={busy} onMerge={doMerge} onClose={() => setMerging(false)} /></div>}
+        {err && <p className="px-3.5 text-xs text-red-600 dark:text-red-400">{err}</p>}
         <div className="flex flex-wrap items-center gap-2 px-3.5 pb-3 pt-2.5">
           <span className="inline-flex items-center gap-1.5 text-xs text-muted">
             <DiffBar add={v.additions} del={v.deletions} />
@@ -278,6 +304,11 @@ export function RunCard({ card, channelId, inPanel }: { card: RunCardData; chann
           <a href={st.threadUrl} className="ml-auto text-xs font-semibold text-muted hover:text-ink">
             {t("Hilo")} →
           </a>
+          {!mergeBoxOpen && (
+            <button type="button" onClick={() => setMerging(true)} className="rounded-full border border-emerald-600 px-3.5 py-1 text-xs font-bold text-emerald-700 hover:bg-emerald-600/10 dark:text-emerald-400">
+              {t("Merge")}
+            </button>
+          )}
           <button type="button" onClick={openPanel} className="rounded-full bg-ink px-3.5 py-1 text-xs font-bold text-surface hover:opacity-90">
             {t("Revisar")}
           </button>
