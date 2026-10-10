@@ -65,19 +65,23 @@ export function RunCard({ card, channelId, inPanel }: { card: RunCardData; chann
   const [merging, setMerging] = useState(false);
   const [party, setParty] = useState(false);
 
-  const refresh = useCallback(() => {
-    factoryRunCardFn({ data: { runId: card.runId } })
-      .then((s) => {
-        if (s?.status === "done" && prevStatus.current && prevStatus.current !== "done") setParty(true);
-        if (s?.status !== "pr_review") setMerging(false);
-        prevStatus.current = s?.status ?? null;
-        setSt(s);
-        // La revisión sólo se pide con el PR en manos de la persona.
-        if (s?.status === "pr_review") factoryVerdictFn({ data: { runId: card.runId } }).then(setReview).catch(() => {});
-        else setReview(null);
-      })
-      .catch(() => {});
-  }, [card.runId]);
+  // Regresa la promesa de las DOS consultas (tarjeta + revisión): quien espera a que el estado
+  // quede al día (el merge) no suelta su «busy» con la mitad vieja todavía pintada.
+  const refresh = useCallback(
+    () =>
+      factoryRunCardFn({ data: { runId: card.runId } })
+        .then(async (s) => {
+          if (s?.status === "done" && prevStatus.current && prevStatus.current !== "done") setParty(true);
+          if (s?.status !== "pr_review") setMerging(false);
+          prevStatus.current = s?.status ?? null;
+          setSt(s);
+          // La revisión sólo se pide con el PR en manos de la persona.
+          if (s?.status === "pr_review") await factoryVerdictFn({ data: { runId: card.runId } }).then(setReview).catch(() => {});
+          else setReview(null);
+        })
+        .catch(() => {}),
+    [card.runId],
+  );
   useEffect(() => {
     refresh();
   }, [refresh]);
@@ -280,12 +284,14 @@ export function RunCard({ card, channelId, inPanel }: { card: RunCardData; chann
       setBusy(true);
       setErr("");
       try {
-        await factoryMergeFn({ data: { runId: st.runId } });
+        const r = await factoryMergeFn({ data: { runId: st.runId } });
+        // Quedó en cola: se pinta ya, sin esperar la vuelta al servidor (el botón no reaparece).
+        if (r?.queued) setReview((cur) => (cur ? { ...cur, mergeQueued: true } : cur));
+        await refresh();
       } catch (e) {
         setErr(e instanceof Error ? e.message : String(e));
       } finally {
         setBusy(false);
-        refresh();
       }
     };
     const openPanel = () => onOpenArtifact?.({ kind: "run", title: `${t("Pedido")} #${st.runId}`, runId: st.runId, channelId });

@@ -633,6 +633,8 @@ export const en: Record<string, string> = {
   "⏳ corriendo": "⏳ running",
   "✗ en rojo": "✗ failing",
   "Merge en cola: entra solo cuando pase el CI": "Merge queued: it goes in as soon as CI passes",
+  "Ver el CI": "View CI",
+  "checks": "checks",
   "Bitácora completa": "Full log",
   "El CI falló": "CI failed",
   "Revisar": "Review",

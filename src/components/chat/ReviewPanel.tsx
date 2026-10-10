@@ -59,8 +59,10 @@ export function ReviewPanel({ runId, channelId }: { runId: number; channelId: nu
     } catch (x) {
       setErr(x instanceof Error ? x.message : String(x));
     } finally {
+      // Se suelta el botón con el estado YA al día: si no, «Merge» reaparecía un instante antes
+      // del «Merge en cola» y parecía que no había agarrado.
+      await refresh();
       setBusy(false);
-      refresh();
     }
   };
 
@@ -258,7 +260,7 @@ export function ReviewPanel({ runId, channelId }: { runId: number; channelId: nu
             </a>
           )}
           {st.mergeQueued ? (
-            <MergeQueued />
+            <MergeQueued st={st} />
           ) : ci?.state === "failure" ? (
             <button type="button" disabled={busy} onClick={() => run(() => factoryFixCiFn({ data: { runId } }))} className="rounded-lg bg-red-600 px-3.5 py-2 text-[13px] font-semibold text-white hover:bg-red-700 disabled:opacity-50">
               {t("Pedir arreglo a @build")}
@@ -360,7 +362,7 @@ export function MergeBox({ st, busy, onMerge, onClose }: { st: VerdictState; bus
       </div>
       <div className="flex flex-wrap items-center gap-3 border-t border-border bg-surface px-3.5 py-2.5">
         {st.mergeQueued ? (
-          <MergeQueued />
+          <MergeQueued st={st} />
         ) : (
           <button type="button" disabled={busy || ci === "failure"} onClick={onMerge} className="rounded-lg bg-emerald-600 px-3.5 py-1.5 text-[13px] font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">
             {busy ? t("Haciendo merge…") : ci === "pending" ? t("Merge cuando pase el CI") : t("Merge")}

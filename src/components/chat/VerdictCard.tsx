@@ -16,9 +16,7 @@ type State = Awaited<ReturnType<typeof factoryVerdictFn>>;
 
 export function useRunState(runId: number, channelId: number) {
   const [st, setSt] = useState<State>(null);
-  const refresh = useCallback(() => {
-    factoryVerdictFn({ data: { runId } }).then(setSt).catch(() => {});
-  }, [runId]);
+  const refresh = useCallback(() => factoryVerdictFn({ data: { runId } }).then(setSt).catch(() => {}), [runId]);
   useEffect(() => {
     refresh();
   }, [refresh]);
@@ -70,13 +68,27 @@ export function VerdictCard({ card, channelId }: { card: { runId: number }; chan
   );
 }
 
-/** Merge picado con el CI corriendo: no hay que volver a picar. */
-export function MergeQueued() {
+/**
+ * Merge picado con el CI corriendo: no hay que volver a picar. Con el estado en vivo dice cuánto
+ * lleva el CI y liga a los checks del PR en GitHub (como el «auto-merge» de GitHub, que enseña
+ * los checks pendientes con su «Details»).
+ */
+export function MergeQueued({ st }: { st?: State }) {
   const t = useT();
+  const checks = st?.ci?.checks ?? [];
+  const done = checks.filter((c) => c.state !== "pending").length;
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/15 px-3 py-1 text-xs font-semibold text-amber-700 dark:text-amber-300" role="status">
-      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500 motion-reduce:animate-none" aria-hidden />
-      {t("Merge en cola: entra solo cuando pase el CI")}
+    <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/15 px-3 py-1 text-xs font-semibold text-amber-700 dark:text-amber-300" role="status">
+        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500 motion-reduce:animate-none" aria-hidden />
+        {t("Merge en cola: entra solo cuando pase el CI")}
+        {checks.length ? <span className="font-normal opacity-80">· {done}/{checks.length} {t("checks")}</span> : null}
+      </span>
+      {st?.prUrl && (
+        <a href={`${st.prUrl}/checks`} target="_blank" rel="noreferrer" className="text-xs font-semibold text-muted hover:text-ink hover:underline">
+          {t("Ver el CI")} ↗
+        </a>
+      )}
     </span>
   );
 }
