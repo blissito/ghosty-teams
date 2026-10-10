@@ -85,10 +85,15 @@ export type Wakeup = {
 /** Encola (idempotente por `key`). Devuelve false si ya existía. */
 export async function enqueueWakeup(w: Omit<Wakeup, "id" | "dueAt"> & { dueAt?: number }): Promise<boolean> {
   const id = crypto.randomUUID();
+  // El vencimiento se fija con el reloj de la BASE (unixepoch() de sqld), el mismo con el que
+  // `sweepTenant` lo compara: `dueAt` sólo aporta el retraso relativo. Con la hora de la caja,
+  // un reloj adelantado (la de Teams iba 22 s adelante, 10-oct) hacía que el barrido inmediato
+  // viera el relevo «aún no» y saliera hasta el tick siguiente: 30-50 s por cada relevo.
+  const delay = w.dueAt != null ? Math.max(0, w.dueAt - Math.floor(Date.now() / 1000)) : 0;
   const rows = await dbq(
     `INSERT OR IGNORE INTO gt_agent_wakeups (id, key, ref, cause, text, origin, due_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,
-    [id, w.key, w.ref, w.cause, w.text, w.origin, w.dueAt ?? Math.floor(Date.now() / 1000)],
+     VALUES (?, ?, ?, ?, ?, ?, unixepoch() + ?) RETURNING id`,
+    [id, w.key, w.ref, w.cause, w.text, w.origin, delay],
   );
   return rows.length > 0;
 }

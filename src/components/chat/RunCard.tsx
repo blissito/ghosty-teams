@@ -256,16 +256,6 @@ export function RunCard({ card, channelId, inPanel }: { card: RunCardData; chann
           <p className="truncate text-sm font-semibold text-ink">
             #{st.runId} · {st.title}
           </p>
-          <p className={`flex min-w-0 items-center gap-1.5 text-[12.5px] font-semibold ${TONE.text}`} role="status">
-            {tone === "work" && !closed && (
-              <span className="relative flex h-2 w-2 shrink-0">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand opacity-60 motion-reduce:animate-none" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-brand" />
-              </span>
-            )}
-            <span className="shrink-0">{statusText}</span>
-            {statusExtra ? <span className="min-w-0 truncate font-normal">· {statusExtra}</span> : null}
-          </p>
         </div>
       </div>
       <div className="px-3.5">
@@ -279,6 +269,16 @@ export function RunCard({ card, channelId, inPanel }: { card: RunCardData; chann
             <span key={seg.key} className="flex-1 truncate">{t(seg.label)}</span>
           ))}
         </div>
+        <p className={`mt-2 flex min-w-0 items-center gap-1.5 text-[12.5px] font-semibold ${TONE.text}`} role="status">
+          {tone === "work" && !closed && (
+            <span className="relative flex h-2 w-2 shrink-0">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand opacity-60 motion-reduce:animate-none" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-brand" />
+            </span>
+          )}
+          <span className="shrink-0">{statusText}</span>
+          {statusExtra ? <span className="min-w-0 truncate font-normal">· {statusExtra}</span> : null}
+        </p>
       </div>
     </>
   );
