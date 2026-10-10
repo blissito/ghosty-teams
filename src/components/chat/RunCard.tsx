@@ -8,7 +8,7 @@ import { ChatCtx } from "./message";
 import { Fragment, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { useT } from "../../i18n";
 import { useRtSubscribe } from "../../utils/rt-bus";
-import { ReviewBody, type VerdictState } from "./VerdictCard";
+import { MergeQueued, ReviewBody, type VerdictState } from "./VerdictCard";
 import { factoryVerdictFn, factoryMergeFn, factoryRunCardFn, factoryDecisionFn, factoryRetryPreviewFn, factorySetPreviewOffFn, factoryRunActionFn, factoryRunCiFn, factoryFixCiFn } from "../../server/apps/factory";
 import { prepareRepoFn } from "../../server/apps/readiness";
 import type { RunCardData } from "../../lib/ebdoc";
@@ -106,11 +106,11 @@ export function RunCard({ card, channelId, inPanel }: { card: RunCardData; chann
     setErr("");
     try {
       await factoryMergeFn({ data: { runId: st.runId } });
-      refresh();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
+      refresh();
     }
   };
   const runCi = async () => {
@@ -468,7 +468,8 @@ export function RunCard({ card, channelId, inPanel }: { card: RunCardData; chann
               {t("Ver PR")} ↗
             </a>
           )}
-          {reviewing && st.ci?.state !== "failure" && (
+          {reviewing && st.mergeQueued && <MergeQueued />}
+          {reviewing && !st.mergeQueued && st.ci?.state !== "failure" && (
             <button
               type="button"
               disabled={busy}

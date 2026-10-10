@@ -55,11 +55,11 @@ export function VerdictCard({ card, channelId }: { card: { runId: number }; chan
     setErr("");
     try {
       await factoryMergeFn({ data: { runId: st.runId } });
-      refresh();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
+      refresh();
     }
   };
 
@@ -83,7 +83,8 @@ export function VerdictCard({ card, channelId }: { card: { runId: number }; chan
               {t("Ver PR")} ↗
             </a>
           )}
-          {!merged && st.status === "pr_review" && (
+          {!merged && st.status === "pr_review" && st.mergeQueued && <MergeQueued />}
+          {!merged && st.status === "pr_review" && !st.mergeQueued && st.ci?.state !== "failure" && (
             <button type="button" disabled={busy} onClick={merge} className={`${btn} border-emerald-600 text-emerald-700 hover:bg-emerald-600/10 dark:text-emerald-400`}>
               {busy ? t("Haciendo merge…") : t("Merge")}
             </button>
@@ -101,6 +102,17 @@ export function VerdictCard({ card, channelId }: { card: { runId: number }; chan
   );
 }
 
+/** Merge picado con el CI corriendo: no hay que volver a picar. */
+export function MergeQueued() {
+  const t = useT();
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/15 px-3 py-1 text-xs font-semibold text-amber-700 dark:text-amber-300" role="status">
+      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500 motion-reduce:animate-none" aria-hidden />
+      {t("Merge en cola: entra solo cuando pase el CI")}
+    </span>
+  );
+}
+
 /**
  * El resumen de la revisión, compartido por la tarjeta del hilo (```gt-verdict```) y la del
  * pedido en el room, que crece con esto cuando el PR queda listo. Primero QUÉ cambia y cómo
@@ -110,8 +122,18 @@ export function ReviewBody({ st }: { st: NonNullable<State> }) {
   const t = useT();
   const v = st.verdict;
   if (!v) return null;
+  // El CI en vivo manda; el del veredicto sólo si GitHub no contestó.
+  const ciState = st.ci?.state ?? v.ci;
   const ci =
-    v.ci === "success" ? { txt: t("✓ en verde"), cls: "text-emerald-600" } : v.ci === "none" ? { txt: t("sin CI en este PR"), cls: "text-amber-600" } : { txt: v.ci, cls: "text-muted" };
+    ciState === "success"
+      ? { txt: t("✓ en verde"), cls: "text-emerald-600" }
+      : ciState === "pending"
+        ? { txt: t("⏳ corriendo"), cls: "text-amber-600" }
+        : ciState === "failure"
+          ? { txt: t("✗ en rojo"), cls: "text-red-600" }
+          : ciState === "none"
+            ? { txt: t("sin CI en este PR"), cls: "text-amber-600" }
+            : { txt: ciState, cls: "text-muted" };
   const rows: [string, React.ReactNode][] = [
     [t("Cambios"), <span className="font-mono">{v.files} {v.files === 1 ? t("archivo") : t("archivos")} · <span className="text-emerald-600">+{v.additions}</span> <span className="text-red-500">−{v.deletions}</span></span>],
     ["CI", <span className={ci.cls}>{ci.txt}</span>],

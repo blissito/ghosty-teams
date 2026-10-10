@@ -909,6 +909,9 @@ async function migrate(): Promise<void> {
   await addColumn("gt_factory_runs", "card_msg_id", "INTEGER");
   // Ya se preguntó «¿lo mezclo?» (PR aprobado y CI en verde): se pregunta UNA vez.
   await addColumn("gt_factory_runs", "merge_asked", "INTEGER");
+  // «Merge» picado con el CI corriendo (o la rama atrás de main): quién lo pidió. El tick lo
+  // mezcla con SUS credenciales en cuanto el CI pase; un rojo lo cancela.
+  await addColumn("gt_factory_runs", "merge_queued_by", "TEXT");
   // Veces seguidas que @build quiso cerrar con el CI en rojo: a la 2ª se escala a una persona.
   await addColumn("gt_factory_runs", "ci_fails", "INTEGER");
   // Tipo de pedido: NULL = pedido normal; `prep` = «Preparar repo» (el plan lo arma la

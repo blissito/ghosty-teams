@@ -1355,7 +1355,24 @@ export async function closeFinishedRuns(): Promise<void> {
     // sólo si le contestan que sí (`maybeMergeReply`), con las credenciales de quien contesta.
     // Un solo `prCi` por vuelta: lo usan la propuesta de merge y el regreso por CI en rojo.
     const ci = outcome === "open" && run.status === "pr_review" ? await prCi(run.approvedBy ?? run.requestedBy, run.prUrl!) : null;
-    if (ci?.state === "failure") await onPrCiRed(run, pr?.headSha ?? null, ci.failed);
+    if (ci?.state === "failure") {
+      // Un rojo cancela el merge en cola: lo que entra tiene que haber pasado.
+      if (row.merge_queued_by) await dbq("UPDATE gt_factory_runs SET merge_queued_by = NULL WHERE id = ?", [run.id]).catch(() => {});
+      await onPrCiRed(run, pr?.headSha ?? null, ci.failed);
+    }
+    // Merge en cola (picado con el CI corriendo): entra solo en cuanto pasa, con las credenciales
+    // de quien lo picó. Antes había que volver a picar y nadie avisaba cuándo (MailMask #34, 10-oct).
+    if (outcome === "open" && run.status === "pr_review" && row.merge_queued_by && (ci?.state === "success" || ci?.state === "none")) {
+      const by = String(row.merge_queued_by);
+      await dbq("UPDATE gt_factory_runs SET merge_queued_by = NULL WHERE id = ?", [run.id]).catch(() => {});
+      const r = await mergeRun(run, by);
+      if (!r.ok) {
+        // Se volvió a quedar atrás de main: mergeRun ya lo puso al día; sigue en cola.
+        if (r.queue) await dbq("UPDATE gt_factory_runs SET merge_queued_by = ? WHERE id = ?", [by, run.id]).catch(() => {});
+        else await postInThread(run, "build", `⚠️ El merge en cola no entró: ${r.error}. ${run.prUrl}`);
+      }
+      continue;
+    }
     if (outcome === "open" && run.status === "pr_review" && pr?.approved && !row.merge_asked) {
       if (ci?.state === "success" || ci?.state === "none") {
         const asked = await dbq("UPDATE gt_factory_runs SET merge_asked = 1 WHERE id = ? AND merge_asked IS NULL RETURNING id", [run.id]);
@@ -1743,7 +1760,10 @@ export async function maybeMergeReply(opts: { channelId: number; rootId: number;
     const asked = await dbq("SELECT merge_asked FROM gt_factory_runs WHERE id = ?", [run.id]);
     if (!asked[0]?.merge_asked) return false;
     const r = await mergeRun(run, opts.sub);
-    if (!r.ok) await postInThread(run, "build", `⚠️ No pude hacer el merge: ${r.error}. ${run.prUrl}`);
+    if (!r.ok && r.queue) {
+      await queueMerge(run.id, opts.sub);
+      await postInThread(run, "build", `⏳ ${r.error} Queda en cola: hago el merge en cuanto el CI pase. ${run.prUrl}`);
+    } else if (!r.ok) await postInThread(run, "build", `⚠️ No pude hacer el merge: ${r.error}. ${run.prUrl}`);
     return true;
   } catch (e) {
     console.error("[factory] mezclar desde el hilo", e);
@@ -1756,7 +1776,14 @@ export async function maybeMergeReply(opts: { channelId: number; rootId: number;
  * aprobación, CI, permisos) y cierra el pedido. Lo usan «mézclalo» en el hilo y «Mezclar»
  * en la tarjeta del veredicto. Nunca lanza.
  */
-export async function mergeRun(run: Run, sub: string): Promise<{ ok: true } | { ok: false; error: string }> {
+/** Deja el merge en cola a nombre de `sub`: el tick lo hace en cuanto el CI pase. */
+export async function queueMerge(runId: number, sub: string): Promise<void> {
+  await dbq("UPDATE gt_factory_runs SET merge_queued_by = ? WHERE id = ?", [sub, runId]);
+  await logEvent(runId, "merge_queued", sub);
+}
+
+/** `queue`: no entró por el CI (corriendo, o recién lanzado al poner la rama al día); puede quedar en cola. */
+export async function mergeRun(run: Run, sub: string): Promise<{ ok: true } | { ok: false; error: string; queue?: boolean }> {
   const pr = run.prUrl ? parsePrUrl(run.prUrl) : null;
   if (!pr) return { ok: false, error: "el pedido no tiene PR" };
   try {
@@ -1780,6 +1807,7 @@ export async function mergeRun(run: Run, sub: string): Promise<{ ok: true } | { 
         }
         return {
           ok: false,
+          queue: !up?.error,
           error: up?.error
             ? `El PR va ${cmp.behind_by} commit(s) atrás de ${base} y no lo pude poner al día (¿conflictos?): ${up.error}`
             : `El PR iba ${cmp.behind_by} commit(s) atrás de ${base}: lo puse al día y vuelvo a ofrecer el merge cuando su CI pase.`,
@@ -1791,7 +1819,7 @@ export async function mergeRun(run: Run, sub: string): Promise<{ ok: true } | { 
     const ci = await prCi(sub, run.prUrl!);
     if (ci?.state === "failure")
       return { ok: false, error: `El CI del PR está en rojo (${ci.failed.join(", ") || "ver checks"}): pídele el arreglo a @build antes del merge.` };
-    if (ci?.state === "pending") return { ok: false, error: "El CI del PR sigue corriendo: espera a que termine." };
+    if (ci?.state === "pending") return { ok: false, queue: true, error: "El CI del PR sigue corriendo: espera a que termine." };
     const tool = allTools().find((t) => t.name === "github_merge_pr");
     const r = (await tool?.handler(sub, { repo: pr.repo, number: pr.number })) as any;
     if (!r || r.error) return { ok: false, error: String(r?.error ?? "GitHub no contestó") };

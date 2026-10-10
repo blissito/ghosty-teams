@@ -9,10 +9,12 @@ afterEach(cleanup);
 vi.mock("../../i18n", () => ({ useT: () => (s: string) => s }));
 vi.mock("../../utils/rt-bus", () => ({ useRtSubscribe: () => {} }));
 const runs: Record<number, object> = {
+  12: { runId: 12, title: "CLI", status: "pr_review", planVersion: 2, loops: 0, canSign: false, prUrl: "https://github.com/o/r/pull/34", preview: null, repo: "o/r", threadUrl: "/c/dev?thread=98", ci: { state: "pending", repoHasCi: true }, mergeQueued: true },
   11: { runId: 11, title: "CLI", status: "pr_review", planVersion: 2, loops: 1, canSign: false, prUrl: "https://github.com/o/r/pull/34", preview: null, repo: "o/r", threadUrl: "/c/dev?thread=98", ci: { state: "success", repoHasCi: true } },
 };
 vi.mock("../../server/apps/factory", () => ({
-  factoryVerdictFn: async () => ({
+  factoryVerdictFn: async ({ data }: { data: { runId: number } }) => ({
+    ci: data.runId === 12 ? { state: "pending", repoHasCi: true } : { state: "success", repoHasCi: true },
     runId: 11, status: "pr_review", repo: "o/r", prUrl: "https://github.com/o/r/pull/34", shots: [], preview: { state: "off" },
     verdict: { prNumber: 34, files: 24, additions: 1339, deletions: 12, ci: "success", ready: true, planVersion: 2, loops: 1, findings: "",
       risk: "high", riskReasons: ["size"], summary: "La CLI ya transfiere dominios.", tryIt: "Corre `cli transfers dns`.",
@@ -65,5 +67,15 @@ describe("RunCard con el PR listo", () => {
     expect(link.getAttribute("title")).toBe("cli/src/commands/transfers.ts");
     // El aviso genérico se va: la tarjeta ya dice qué revisar.
     expect(screen.queryByText(/La fábrica terminó su parte/)).toBeNull();
+  });
+});
+
+describe("RunCard con merge en cola", () => {
+  it("dice el CI en vivo y que el merge entra solo, sin botón para volver a picar", async () => {
+    render(<RunCard card={{ runId: 12 } as never} channelId={3} />);
+    await waitFor(() => expect(screen.getByText("Merge en cola: entra solo cuando pase el CI")).toBeTruthy());
+    expect(screen.getByText("⏳ corriendo")).toBeTruthy();
+    expect(screen.queryByText("✓ en verde")).toBeNull();
+    expect(screen.queryByText("Merge")).toBeNull();
   });
 });

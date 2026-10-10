@@ -515,6 +515,8 @@ export const factoryRunCardFn = createServerFn({ method: "POST" })
       prod: run.status === "done" ? await (await import("./post-merge.server")).runProd(run) : null,
       // Firmado pero sin lugar en el tier: la tarjeta dice «En espera de lugar», no «Arrancando…».
       boxWaiting: !!run.boxWaiting && run.status === "building",
+      // «Merge» picado con el CI corriendo: entra solo al pasar.
+      mergeQueued: run.status === "pr_review" ? !!(await (await import("../../dbq.server")).dbq("SELECT merge_queued_by FROM gt_factory_runs WHERE id = ?", [run.id]))[0]?.merge_queued_by : false,
       // Cancelado: en qué etapa iba y por qué, para conservar las ✓ de lo que sí se hizo.
       cancelled: run.status === "cancelled" ? await cancelledView(run, me.sub) : null,
       ...(await runLive(run)),
@@ -927,13 +929,20 @@ export const factoryVerdictFn = createServerFn({ method: "POST" })
       const { createHash } = await import("node:crypto");
       verdict.readFirst = verdict.readFirst.map((r) => {
         const line = /^\d+/.exec(r.lines ?? "")?.[0];
+        // Veredictos de antes del 10-oct: el «por qué» se cortaba a 200 a media palabra.
+        if (r.why && r.why.length === 200 && !/[.…)]$/.test(r.why)) r = { ...r, why: r.why.replace(/\s+\S*$/, "").replace(/[,;:\s—-]+$/, "") + "…" };
         return { ...r, href: `${run.prUrl}/files#diff-${createHash("sha256").update(r.file).digest("hex")}${line ? `R${line}` : ""}` };
       });
     }
     // Las capturas se firman al pintar (la llave es del storage de Teams, privada).
     const storage = await import("../storage.server");
     const shots = (verdict?.shots ?? []).map((s) => ({ label: s.label, url: storage.signedUrlEstable(s.key, 3600) }));
-    return { runId: run.id, status: run.status, repo: run.repo, prUrl: run.prUrl, verdict, shots, preview: await R.runPreview(run.id) };
+    // El CI EN VIVO: el del veredicto es una foto de cuando @check aprobó, y poner la rama al día
+    // con main lanza otro. La tarjeta decía «✓ en verde» con el CI corriendo (MailMask #34, 10-oct).
+    const ci = run.prUrl && run.status === "pr_review" ? await liveCi(run.approvedBy ?? run.requestedBy ?? me.sub, run.prUrl, run.repo, me.sub) : null;
+    const { dbq: q } = await import("../../dbq.server");
+    const mergeQueued = run.status === "pr_review" && !!(await q("SELECT merge_queued_by FROM gt_factory_runs WHERE id = ?", [run.id]))[0]?.merge_queued_by;
+    return { runId: run.id, status: run.status, repo: run.repo, prUrl: run.prUrl, verdict, shots, preview: await R.runPreview(run.id), ci, mergeQueued };
   });
 
 /**
@@ -1003,8 +1012,16 @@ export const factoryMergeFn = createServerFn({ method: "POST" })
     if (!(await db.listChannels(me.sub, me.isOwner)).some((c) => c.id === run.channelId)) throw new Error("no ves ese room");
     if (run.status !== "pr_review") throw new Error("el pedido no está esperando revisión");
     const r = await R.mergeRun(run, me.sub);
+    // El CI del PR cambió (o se acaba de lanzar): la tarjeta lo vuelve a preguntar ya.
+    if (run.prUrl) ciCache.delete(run.prUrl);
+    // CI corriendo o rama recién puesta al día: no se le pide a la persona volver a picar; queda
+    // en cola y el tick lo mezcla al pasar (MailMask #34, 10-oct: «merge no merguea»).
+    if (!r.ok && r.queue) {
+      await R.queueMerge(run.id, me.sub);
+      return { ok: true as const, queued: true };
+    }
     if (!r.ok) throw new Error(r.error);
-    return { ok: true as const };
+    return { ok: true as const, queued: false };
   });
 
 
