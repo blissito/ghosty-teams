@@ -86,7 +86,7 @@ export function RunPanel({ runId, channelId }: { runId: number; channelId: numbe
   // completa y cancelar quedan plegados: la estafeta a escala ya cuenta la historia.
   if (card.status === "pr_review" && detail?.verdictJson) {
     return (
-      <div className="flex min-h-full flex-col">
+      <div className="flex min-h-full flex-col bg-surface">
         <ReviewPanel runId={runId} channelId={channelId} />
         <details className="border-t border-border px-5 py-3 text-xs text-muted">
           <summary className="cursor-pointer select-none hover:text-ink">{t("Bitácora completa")} · {detail.events.length}</summary>

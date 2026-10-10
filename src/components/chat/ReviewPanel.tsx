@@ -307,7 +307,7 @@ export function ReviewPanel({ runId, channelId }: { runId: number; channelId: nu
       </div>
 
       {/* Caja de merge pegada abajo: el estado del CI en una línea y UNA acción. */}
-      <footer className="sticky bottom-0 space-y-2.5 border-t border-border bg-surface-2 px-5 py-3">
+      <footer className="sticky bottom-0 space-y-2.5 border-t border-border bg-surface px-5 py-3">
         <div className="flex flex-wrap items-center gap-3">
           <p className="min-w-[12rem] flex-1 text-[12.5px] text-muted">
             {ci?.state === "pending" ? (
