@@ -909,7 +909,10 @@ export const factoryVerdictFn = createServerFn({ method: "POST" })
       // Desde el 28-sep; los veredictos anteriores no los traen.
       risk?: import("./factory-risk").RiskLevel;
       riskReasons?: import("./factory-risk").RiskReason[];
-      readFirst?: import("./factory-risk").ReadFirst[];
+      readFirst?: (import("./factory-risk").ReadFirst & { href?: string })[];
+      // Desde el 10-oct: qué cambia y cómo probarlo, en palabras de @check.
+      summary?: string | null;
+      tryIt?: string | null;
       shots?: import("./factory-shots.server").Shot[];
       shotPath?: string | null;
     } | null = null;
@@ -917,6 +920,15 @@ export const factoryVerdictFn = createServerFn({ method: "POST" })
       verdict = rows[0]?.verdict_json ? JSON.parse(String(rows[0].verdict_json)) : null;
     } catch {
       verdict = null;
+    }
+    // Cada «Lee primero» abre SU archivo en el diff (GitHub ancla por sha256 de la ruta y la
+    // línea con R<n>); antes todos llevaban a /files y había que buscarlo a mano.
+    if (verdict?.readFirst?.length && run.prUrl) {
+      const { createHash } = await import("node:crypto");
+      verdict.readFirst = verdict.readFirst.map((r) => {
+        const line = /^\d+/.exec(r.lines ?? "")?.[0];
+        return { ...r, href: `${run.prUrl}/files#diff-${createHash("sha256").update(r.file).digest("hex")}${line ? `R${line}` : ""}` };
+      });
     }
     // Las capturas se firman al pintar (la llave es del storage de Teams, privada).
     const storage = await import("../storage.server");

@@ -10,9 +10,10 @@ import { useRtSubscribe } from "../../utils/rt-bus";
 import { factoryMergeFn, factoryRetryPreviewFn, factorySetPreviewOffFn, factoryVerdictFn } from "../../server/apps/factory";
 import { diagnosePreview, STEP_LABEL } from "../../lib/preview-errors";
 
+export type VerdictState = Awaited<ReturnType<typeof factoryVerdictFn>>;
 type State = Awaited<ReturnType<typeof factoryVerdictFn>>;
 
-function useRunState(runId: number, channelId: number) {
+export function useRunState(runId: number, channelId: number) {
   const [st, setSt] = useState<State>(null);
   const refresh = useCallback(() => {
     factoryVerdictFn({ data: { runId } }).then(setSt).catch(() => {});
@@ -62,26 +63,6 @@ export function VerdictCard({ card, channelId }: { card: { runId: number }; chan
     }
   };
 
-  const ci =
-    v.ci === "success" ? { txt: t("✓ en verde"), cls: "text-emerald-600" } : v.ci === "none" ? { txt: t("sin CI en este PR"), cls: "text-amber-600" } : { txt: v.ci, cls: "text-muted" };
-  const rows: [string, React.ReactNode][] = [
-    [t("Cambios"), <span className="font-mono">{v.files} {v.files === 1 ? t("archivo") : t("archivos")} · <span className="text-emerald-600">+{v.additions}</span> <span className="text-red-500">−{v.deletions}</span></span>],
-    ["CI", <span className={ci.cls}>{ci.txt}</span>],
-    [t("Revisión"), <span>{t("contra el plan")} v{v.planVersion}{v.loops ? ` · ${v.loops} ${v.loops === 1 ? t("vuelta") : t("vueltas")}` : ""}</span>],
-  ];
-  // Riesgo: dice cuánto cuidado pide la revisión humana (veredictos anteriores al 28-sep no lo traen).
-  if (v.risk) {
-    const why = (v.riskReasons ?? []).map((r) => t(RISK_REASON[r] ?? r)).join(", ");
-    rows.unshift([
-      t("Riesgo"),
-      v.risk === "high" ? (
-        <span className="font-medium text-amber-600">{t("Alto")}{why ? `: ${why}` : ""} · {t("léelo con calma")}</span>
-      ) : (
-        <span className="text-emerald-600">{t("Bajo")} · {t("revisión rápida")}</span>
-      ),
-    ]);
-  }
-
   return (
     <div className="mt-0.5 flex max-w-xl overflow-hidden rounded-lg gt-card">
       <div className={`w-1 shrink-0 ${merged ? "bg-violet-500" : "bg-emerald-500"}`} aria-hidden="true" />
@@ -90,45 +71,7 @@ export function VerdictCard({ card, channelId }: { card: { runId: number }; chan
           {merged ? t("🟣 Merged") : t("✅ Listo para tu revisión")}
           {v.prNumber ? <span className="ml-1.5 font-mono text-xs font-normal text-muted">PR #{v.prNumber}</span> : null}
         </p>
-        <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
-          {rows.map(([k, val]) => (
-            <div key={k} className="contents">
-              <dt className="text-muted">{k}</dt>
-              <dd className="min-w-0 text-ink">{val}</dd>
-            </div>
-          ))}
-        </dl>
-        {!!v.readFirst?.length && (
-          <div className="mt-2.5 border-t border-border pt-2 text-xs">
-            <p className="font-medium text-ink">{t("Lee primero")}</p>
-            <ol className="mt-1 space-y-0.5">
-              {v.readFirst.map((r, i) => (
-                <li key={i} className="min-w-0 text-muted">
-                  <a href={st.prUrl ? `${st.prUrl}/files` : undefined} target="_blank" rel="noreferrer" className="font-mono text-ink hover:underline">
-                    {r.file}
-                    {r.lines ? `:${r.lines}` : ""}
-                  </a>
-                  {r.why ? ` — ${r.why}` : ""}
-                </li>
-              ))}
-            </ol>
-          </div>
-        )}
-        {st.shots.length > 0 && (
-          // Cómo se ve la preview (escritorio y móvil). Clic = tamaño completo.
-          <div className="mt-2.5 flex items-start gap-2">
-            {st.shots.map((s) => (
-              <a key={s.label} href={s.url} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-md border border-border hover:border-brand">
-                <img
-                  src={s.url}
-                  alt={s.label === "mobile" ? t("Preview en móvil") : t("Preview en escritorio")}
-                  loading="lazy"
-                  className={s.label === "mobile" ? "h-32 w-auto" : "h-32 w-auto max-w-[14rem] object-cover object-top"}
-                />
-              </a>
-            ))}
-          </div>
-        )}
+        <ReviewBody st={st} />
         <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
           {st.preview.state === "ready" && st.preview.url && (
             <a href={st.preview.url} target="_blank" rel="noreferrer" className={`${btn} border-brand text-brand hover:bg-brand/10`}>
@@ -155,6 +98,87 @@ export function VerdictCard({ card, channelId }: { card: { runId: number }; chan
         {open && v.findings && <p className="mt-2 whitespace-pre-wrap border-t border-border pt-2 text-xs leading-relaxed text-muted">{v.findings}</p>}
       </div>
     </div>
+  );
+}
+
+/**
+ * El resumen de la revisión, compartido por la tarjeta del hilo (```gt-verdict```) y la del
+ * pedido en el room, que crece con esto cuando el PR queda listo. Primero QUÉ cambia y cómo
+ * probarlo (lo que la persona necesita para decidir); luego los datos duros y qué leer.
+ */
+export function ReviewBody({ st }: { st: NonNullable<State> }) {
+  const t = useT();
+  const v = st.verdict;
+  if (!v) return null;
+  const ci =
+    v.ci === "success" ? { txt: t("✓ en verde"), cls: "text-emerald-600" } : v.ci === "none" ? { txt: t("sin CI en este PR"), cls: "text-amber-600" } : { txt: v.ci, cls: "text-muted" };
+  const rows: [string, React.ReactNode][] = [
+    [t("Cambios"), <span className="font-mono">{v.files} {v.files === 1 ? t("archivo") : t("archivos")} · <span className="text-emerald-600">+{v.additions}</span> <span className="text-red-500">−{v.deletions}</span></span>],
+    ["CI", <span className={ci.cls}>{ci.txt}</span>],
+    // Antes decía «contra el plan v2», que no dice si pasó: @check sólo llega aquí si lo aprobó.
+    ["@check", <span>{t("✓ cumple el plan")} v{v.planVersion}{v.loops ? ` · ${v.loops} ${v.loops === 1 ? t("vuelta de corrección") : t("vueltas de corrección")}` : ` · ${t("a la primera")}`}</span>],
+  ];
+  // Riesgo: dice cuánto cuidado pide la revisión humana (veredictos anteriores al 28-sep no lo traen).
+  if (v.risk) {
+    const why = (v.riskReasons ?? []).map((r) => t(RISK_REASON[r] ?? r)).join(", ");
+    rows.unshift([
+      t("Riesgo"),
+      v.risk === "high" ? (
+        <span className="font-medium text-amber-600">{t("Alto")}{why ? `: ${why}` : ""} · {t("léelo con calma")}</span>
+      ) : (
+        <span className="text-emerald-600">{t("Bajo")} · {t("revisión rápida")}</span>
+      ),
+    ]);
+  }
+  return (
+    <>
+      {v.summary && <p className="mt-1.5 text-sm leading-snug text-ink">{v.summary}</p>}
+      {v.tryIt && (
+        <p className="mt-1.5 text-xs leading-snug text-ink">
+          <span className="font-medium">{t("Pruébalo")}:</span> <span className="text-muted">{v.tryIt}</span>
+        </p>
+      )}
+      <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
+        {rows.map(([k, val]) => (
+          <div key={k} className="contents">
+            <dt className="text-muted">{k}</dt>
+            <dd className="min-w-0 text-ink">{val}</dd>
+          </div>
+        ))}
+      </dl>
+      {!!v.readFirst?.length && (
+        <div className="mt-2.5 border-t border-border pt-2 text-xs">
+          <p className="font-medium text-ink">{t("Lee primero")}</p>
+          <ol className="mt-1 space-y-1">
+            {v.readFirst.map((r, i) => (
+              <li key={i} className="min-w-0 text-muted">
+                {/* El nombre corto con sus líneas; la ruta completa en el title. El enlace abre ESE archivo en el diff. */}
+                <a href={r.href ?? (st.prUrl ? `${st.prUrl}/files` : undefined)} title={r.file} target="_blank" rel="noreferrer" className="font-mono text-ink hover:underline">
+                  {r.file.split("/").pop()}
+                  {r.lines ? `:${r.lines}` : ""}
+                </a>
+                {r.why ? ` — ${r.why}` : ""}
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+      {st.shots.length > 0 && (
+        // Cómo se ve la preview (escritorio y móvil). Clic = tamaño completo.
+        <div className="mt-2.5 flex items-start gap-2">
+          {st.shots.map((s) => (
+            <a key={s.label} href={s.url} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-md border border-border hover:border-brand">
+              <img
+                src={s.url}
+                alt={s.label === "mobile" ? t("Preview en móvil") : t("Preview en escritorio")}
+                loading="lazy"
+                className={s.label === "mobile" ? "h-32 w-auto" : "h-32 w-auto max-w-[14rem] object-cover object-top"}
+              />
+            </a>
+          ))}
+        </div>
+      )}
+    </>
   );
 }
 

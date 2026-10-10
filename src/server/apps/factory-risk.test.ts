@@ -47,3 +47,17 @@ describe("URL de la captura de la preview", () => {
     expect(shotUrl(p, "//evil.com/x")).toBe(p);
   });
 });
+
+describe("clipSentence", async () => {
+  const { clipSentence } = await import("./factory-risk");
+  it("no deja palabras a medias", () => {
+    const why = "El EPP sólo se filtra en list y transfer-out; los demás --json imprimen la respuesta del SDK tal cual. Hoy ninguna trae el código, pero si la API agrega uno se filtraría";
+    const out = clipSentence(why, 140);
+    expect(out.length).toBeLessThanOrEqual(140);
+    expect(out.endsWith(".") || out.endsWith("…")).toBe(true);
+    expect(out).not.toMatch(/agre$/);
+  });
+  it("deja intacto lo que cabe", () => {
+    expect(clipSentence("  corto  ", 50)).toBe("corto");
+  });
+});

@@ -1,12 +1,15 @@
 // Tarjeta VIVA de una corrida de la Software Factory (```gt-run```), top-level en el room.
 // Dice en qué etapa va el pedido y deja firmar el plan AQUÍ, sin abrir el hilo; el detalle
 // (plan completo, hallazgos, PR) sigue en el hilo. Estado leído al pintar; se refresca con
-// los `refresh` del room que publica cada transición.
+// los `refresh` del room que publica cada transición. Con el PR listo, la tarjeta CRECE con la
+// revisión de @check (qué cambia, riesgo, qué leer) y deja hacer merge aquí: antes eso sólo vivía
+// en el hilo y desde el room se veía «el PR espera tu revisión» sin decir qué revisar.
 import { ChatCtx } from "./message";
 import { Fragment, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { useT } from "../../i18n";
 import { useRtSubscribe } from "../../utils/rt-bus";
-import { factoryRunCardFn, factoryDecisionFn, factoryRetryPreviewFn, factorySetPreviewOffFn, factoryRunActionFn, factoryRunCiFn, factoryFixCiFn } from "../../server/apps/factory";
+import { ReviewBody, type VerdictState } from "./VerdictCard";
+import { factoryVerdictFn, factoryMergeFn, factoryRunCardFn, factoryDecisionFn, factoryRetryPreviewFn, factorySetPreviewOffFn, factoryRunActionFn, factoryRunCiFn, factoryFixCiFn } from "../../server/apps/factory";
 import { prepareRepoFn } from "../../server/apps/readiness";
 import type { RunCardData } from "../../lib/ebdoc";
 
@@ -55,8 +58,17 @@ export function RunCard({ card, channelId, inPanel }: { card: RunCardData; chann
   const [confirming, setConfirming] = useState(false);
   const [allPoints, setAllPoints] = useState(false);
 
+  const [review, setReview] = useState<VerdictState>(null);
+
   const refresh = useCallback(() => {
-    factoryRunCardFn({ data: { runId: card.runId } }).then(setSt).catch(() => {});
+    factoryRunCardFn({ data: { runId: card.runId } })
+      .then((s) => {
+        setSt(s);
+        // La revisión sólo se pide con el PR en manos de la persona.
+        if (s?.status === "pr_review") factoryVerdictFn({ data: { runId: card.runId } }).then(setReview).catch(() => {});
+        else setReview(null);
+      })
+      .catch(() => {});
   }, [card.runId]);
   useEffect(() => {
     refresh();
@@ -88,6 +100,19 @@ export function RunCard({ card, channelId, inPanel }: { card: RunCardData; chann
   // Firmado pero sin caja: el tier tiene todos sus lugares ocupados por otros pedidos.
   const boxWaiting = !!st.boxWaiting;
   const closed = st.status === "done" || st.status === "cancelled";
+  const reviewing = st.status === "pr_review" && !!review?.verdict;
+  const merge = async () => {
+    setBusy(true);
+    setErr("");
+    try {
+      await factoryMergeFn({ data: { runId: st.runId } });
+      refresh();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
   const runCi = async () => {
     setBusy(true);
     setErr("");
@@ -257,11 +282,22 @@ export function RunCard({ card, channelId, inPanel }: { card: RunCardData; chann
                     ? t("⏳ El CI está corriendo en este PR. Cuando termine, el PR queda para tu revisión.")
                     : st.preview?.state === "pending"
                     ? t("🏁 La fábrica terminó su parte. Se está construyendo la preview del PR para que lo revises.")
+                    : reviewing
+                    ? ""
                     : t("🏁 La fábrica terminó su parte: el PR espera tu revisión. Nadie está trabajando en este pedido.")
                 : st.loops
                   ? `${t("Vueltas de check")}: ${st.loops}`
                   : ""}
         </p>
+        {reviewing && review && (
+          <div className="mt-2.5 border-t border-border pt-2.5">
+            <p className="text-sm font-semibold text-ink">
+              {t("✅ Listo para tu revisión")}
+              {review.verdict!.prNumber ? <span className="ml-1.5 font-mono text-xs font-normal text-muted">PR #{review.verdict!.prNumber}</span> : null}
+            </p>
+            <ReviewBody st={review} />
+          </div>
+        )}
         {st.status === "escalated" && st.escalation?.points.length ? (
           <div className="mt-2 rounded-lg border border-amber-600/40 bg-amber-500/5 px-3 py-2 text-xs" role="note">
             <p className="font-semibold text-ink">{t("Lo que @check pide decidir:")}</p>
@@ -431,6 +467,16 @@ export function RunCard({ card, channelId, inPanel }: { card: RunCardData; chann
             <a href={st.prUrl} target="_blank" rel="noreferrer" className="rounded-full border border-border px-3 py-1 text-xs font-semibold text-ink hover:bg-surface-3">
               {t("Ver PR")} ↗
             </a>
+          )}
+          {reviewing && st.ci?.state !== "failure" && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={merge}
+              className="rounded-full border border-emerald-600 bg-emerald-600 px-3 py-1 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-50"
+            >
+              {busy ? t("Haciendo merge…") : t("Merge")}
+            </button>
           )}
           <a href={st.threadUrl} className="ml-auto text-xs font-semibold text-brand hover:underline">
             {t("Ver hilo")} →

@@ -43,7 +43,22 @@ export function mergeCheckRisk(
     .map((r: any) => ({
       file: String(r.file).trim().slice(0, 200),
       ...(r.lines ? { lines: String(r.lines).slice(0, 40) } : {}),
-      ...(r.why ? { why: String(r.why).slice(0, 200) } : {}),
+      ...(r.why ? { why: clipSentence(String(r.why), 220) } : {}),
     }));
   return { level, reasons: byPaths.reasons, readFirst };
+}
+
+/**
+ * Recorta un texto del modelo sin dejar palabras a medias: «…pero si la API agre» se leía como
+ * error en la tarjeta (PR #34, 10-oct). Corta en la última frase completa que quepa o, si no hay,
+ * en la última palabra, con «…».
+ */
+export function clipSentence(text: string, max: number): string {
+  const s = text.replace(/\s+/g, " ").trim();
+  if (s.length <= max) return s;
+  const cut = s.slice(0, max - 1);
+  const dot = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("; "));
+  if (dot > max * 0.5) return cut.slice(0, dot + 1);
+  const sp = cut.lastIndexOf(" ");
+  return (sp > max * 0.5 ? cut.slice(0, sp) : cut).replace(/[,;:\s—-]+$/, "") + "…";
 }

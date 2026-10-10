@@ -504,6 +504,16 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
               "Con pass=true: cuánto cuidado necesita la revisión humana. La plataforma ya lo sube a high si el PR toca " +
               "auth, migraciones, dependencias, API pública, .github/ o es grande; tú puedes subirlo por lógica delicada, nunca bajarlo.",
           },
+          summary: {
+            type: "string",
+            description:
+              "Con pass=true: qué cambia para quien usa el producto, en 1 o 2 frases sin jerga ni rutas " +
+              "(p. ej. «La CLI ya transfiere dominios y cambia sus DNS; registrations ya no imprime el código EPP»). Es lo primero que lee la persona.",
+          },
+          tryIt: {
+            type: "string",
+            description: "Con pass=true: cómo comprobarlo en 1 frase (en la preview: ruta y qué hacer; sin preview: el comando). Omítelo si no hay nada que probar a mano.",
+          },
           evidencePath: {
             type: "string",
             description: "Con pass=true y preview: la ruta de la pantalla que cambió (p. ej. /agenda). La plataforma la captura en escritorio y móvil para la tarjeta.",
@@ -590,7 +600,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           const { githubApi } = await import("../connectors/github.server");
           const info = pr ? await githubApi(sub, `/repos/${pr.repo}/pulls/${pr.number}`).catch(() => null) : null;
           const ciState = run.prUrl ? ((await R.prCi(sub, run.prUrl))?.state ?? "none") : "none";
-          const { classifyPrRisk, mergeCheckRisk } = await import("./factory-risk");
+          const { classifyPrRisk, mergeCheckRisk, clipSentence } = await import("./factory-risk");
           const risk = mergeCheckRisk(classifyPrRisk(run.prUrl ? await R.prFiles(sub, run.prUrl) : []), a);
           const verdict = {
             prNumber: pr?.number ?? null,
@@ -605,6 +615,8 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
             risk: risk.level,
             riskReasons: risk.reasons,
             readFirst: risk.readFirst,
+            summary: a.summary ? clipSentence(String(a.summary), 320) : null,
+            tryIt: a.tryIt ? clipSentence(String(a.tryIt), 200) : null,
             // La ruta que pidió @check: si las capturas se rehacen con una preview nueva, salen de ahí.
             evidencePath: a.evidencePath ? String(a.evidencePath) : null,
           };

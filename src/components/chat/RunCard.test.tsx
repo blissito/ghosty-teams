@@ -8,8 +8,18 @@ afterEach(cleanup);
 // «Check» como si @check siguiera trabajando).
 vi.mock("../../i18n", () => ({ useT: () => (s: string) => s }));
 vi.mock("../../utils/rt-bus", () => ({ useRtSubscribe: () => {} }));
+const runs: Record<number, object> = {
+  11: { runId: 11, title: "CLI", status: "pr_review", planVersion: 2, loops: 1, canSign: false, prUrl: "https://github.com/o/r/pull/34", preview: null, repo: "o/r", threadUrl: "/c/dev?thread=98", ci: { state: "success", repoHasCi: true } },
+};
 vi.mock("../../server/apps/factory", () => ({
-  factoryRunCardFn: async () => ({
+  factoryVerdictFn: async () => ({
+    runId: 11, status: "pr_review", repo: "o/r", prUrl: "https://github.com/o/r/pull/34", shots: [], preview: { state: "off" },
+    verdict: { prNumber: 34, files: 24, additions: 1339, deletions: 12, ci: "success", ready: true, planVersion: 2, loops: 1, findings: "",
+      risk: "high", riskReasons: ["size"], summary: "La CLI ya transfiere dominios.", tryIt: "Corre `cli transfers dns`.",
+      readFirst: [{ file: "cli/src/commands/transfers.ts", lines: "11-31", why: "valida antes de tocar la red", href: "https://github.com/o/r/pull/34/files#diff-abcR11" }] },
+  }),
+  factoryMergeFn: async () => ({}),
+  factoryRunCardFn: async ({ data }: { data: { runId: number } }) => runs[data.runId] ?? ({
     runId: 10, title: "Docs", status: "escalated", planVersion: 1, loops: 3, canSign: true,
     prUrl: null, preview: null, repo: "o/r", threadUrl: "/c/dev?thread=99",
     escalation: { points: ["`ci.yml:51` agrega un paso", "dos cifras de vendido hoy", "c", "d"], at: 1 },
@@ -42,5 +52,18 @@ describe("RunCard escalado", () => {
 
   it("escalado sin agotar vueltas: @build no puede resolverlo", () => {
     expect(escalationLine(1, (s) => s)).toContain("@build no puede resolverlo");
+  });
+});
+
+describe("RunCard con el PR listo", () => {
+  it("crece con la revisión de @check y deja hacer merge desde el room", async () => {
+    render(<RunCard card={{ runId: 11 } as never} channelId={3} />);
+    await waitFor(() => expect(screen.getByText("La CLI ya transfiere dominios.")).toBeTruthy());
+    expect(screen.getByText("Merge")).toBeTruthy();
+    const link = screen.getByText("transfers.ts:11-31").closest("a")!;
+    expect(link.getAttribute("href")).toContain("#diff-abcR11");
+    expect(link.getAttribute("title")).toBe("cli/src/commands/transfers.ts");
+    // El aviso genérico se va: la tarjeta ya dice qué revisar.
+    expect(screen.queryByText(/La fábrica terminó su parte/)).toBeNull();
   });
 });
