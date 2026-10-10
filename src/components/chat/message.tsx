@@ -3083,7 +3083,10 @@ export function MessageRow({
                   />
                 ) : null;
               })()}
-              {!extractAlert(m.body) && !(isAgent && m.agent_handle === "ads" && parseVersionLine(m.body)) && bubbleWithoutEbDoc(m.body).trim() ? (
+              {/* «⏳ Retomando…» es un placeholder: con el turno nuevo YA vivo, el indicador de
+                  abajo (frase, reloj, detener) dice que trabaja. Pintarlo además hacía creer que
+                  retomar tardaba minutos cuando el agente sólo trabajaba sin escribir (10-oct). */}
+              {!extractAlert(m.body) && !(isAgent && m.agent_handle === "ads" && parseVersionLine(m.body)) && bubbleWithoutEbDoc(m.body).trim() && !(turns.has(m.id) && m.body.trim() === "⏳ Retomando…") ? (
               <Markdown
                 body={bubbleWithoutEbDoc(m.body)}
                 artifactUrl={m.artifact?.url}
