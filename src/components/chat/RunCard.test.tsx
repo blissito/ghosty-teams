@@ -79,3 +79,20 @@ describe("RunCard con merge en cola", () => {
     expect(screen.queryByText("Merge")).toBeNull();
   });
 });
+
+describe("RunCard al mezclarse", () => {
+  it("celebra en el room sólo en la transición a terminado", async () => {
+    window.matchMedia = (() => ({ matches: false })) as never;
+    const { act } = await import("@testing-library/react");
+    let refreshEv: ((ev: unknown) => void) | undefined;
+    const bus = await import("../../utils/rt-bus");
+    vi.spyOn(bus, "useRtSubscribe").mockImplementation(((o: { onEvent: (ev: unknown) => void }) => { refreshEv = o.onEvent; }) as never);
+    runs[13] = { ...runs[11], runId: 13, status: "pr_review" };
+    const { container } = render(<RunCard card={{ runId: 13 } as never} channelId={3} />);
+    await waitFor(() => expect(screen.getByText("PR")).toBeTruthy());
+    expect(container.querySelector(".gt-fx-confetti")).toBeNull();
+    runs[13] = { ...runs[13], status: "done", prod: null };
+    await act(async () => refreshEv?.({ t: "refresh", channelId: 3 }));
+    await waitFor(() => expect(container.querySelector(".gt-fx-confetti")).toBeTruthy());
+  });
+});

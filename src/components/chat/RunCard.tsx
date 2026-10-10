@@ -9,6 +9,7 @@ import { Fragment, useCallback, useContext, useEffect, useRef, useState } from "
 import { useT } from "../../i18n";
 import { useRtSubscribe } from "../../utils/rt-bus";
 import { MergeQueued, ReviewBody, type VerdictState } from "./VerdictCard";
+import { FxOverlay } from "./FxOverlay";
 import { factoryVerdictFn, factoryMergeFn, factoryRunCardFn, factoryDecisionFn, factoryRetryPreviewFn, factorySetPreviewOffFn, factoryRunActionFn, factoryRunCiFn, factoryFixCiFn } from "../../server/apps/factory";
 import { prepareRepoFn } from "../../server/apps/readiness";
 import type { RunCardData } from "../../lib/ebdoc";
@@ -59,10 +60,17 @@ export function RunCard({ card, channelId, inPanel }: { card: RunCardData; chann
   const [allPoints, setAllPoints] = useState(false);
 
   const [review, setReview] = useState<VerdictState>(null);
+  // Confeti en el ROOM cuando el pedido se mezcla con la tarjeta a la vista. El del hilo
+  // (```gt-fx``` de `mergedMessage`) sólo lo veía quien tenía el hilo abierto. Sólo en la
+  // TRANSICIÓN: un pedido que ya llegó terminado al pintar no celebra (es efímero, como FxOverlay).
+  const prevStatus = useRef<string | null>(null);
+  const [party, setParty] = useState(false);
 
   const refresh = useCallback(() => {
     factoryRunCardFn({ data: { runId: card.runId } })
       .then((s) => {
+        if (s?.status === "done" && prevStatus.current && prevStatus.current !== "done") setParty(true);
+        prevStatus.current = s?.status ?? null;
         setSt(s);
         // La revisión sólo se pide con el PR en manos de la persona.
         if (s?.status === "pr_review") factoryVerdictFn({ data: { runId: card.runId } }).then(setReview).catch(() => {});
@@ -156,6 +164,8 @@ export function RunCard({ card, channelId, inPanel }: { card: RunCardData; chann
 
   return (
     <div className="mt-1.5 max-w-xl overflow-hidden rounded-lg gt-card">
+      {/* Id negativo: el «ya celebró» de FxOverlay es por mensaje y éste no es uno. */}
+      {party && !inPanel && <FxOverlay messageId={-st.runId} fx="confetti" />}
       <div className="flex items-center gap-2 border-b border-border px-3 py-2">
         <span className="text-[11px] font-bold uppercase tracking-wide text-ink">🏭 {t("Pedido")} #{st.runId}</span>
         <span className="truncate text-sm font-semibold text-ink">{st.title}</span>
