@@ -11,12 +11,22 @@
 
 export type ChecksState = "success" | "failure" | "pending" | "none";
 
+/** Un check por nombre, para la caja de merge (como la de GitHub: los rojos arriba). */
+export type CheckItem = { name: string; state: "success" | "failure" | "pending" | "neutral"; seconds: number | null; url: string | null };
+
 export type ChecksSummary = {
   state: ChecksState;
   total: number;
   failed: { name: string; conclusion: string; url: string | null }[];
   pending: string[];
+  checks: CheckItem[];
 };
+
+const ORDER: Record<CheckItem["state"], number> = { failure: 0, pending: 1, success: 2, neutral: 3 };
+function secondsBetween(a: unknown, b: unknown): number | null {
+  const s = Date.parse(String(a ?? "")), e = b ? Date.parse(String(b)) : Date.now();
+  return Number.isFinite(s) && Number.isFinite(e) && e >= s ? Math.round((e - s) / 1000) : null;
+}
 
 // Conclusiones de un check-run que cuentan como ROJO. `neutral` y `skipped` no: un job
 // saltado a propósito (p. ej. deploy sólo en main) no es un fallo del PR.
@@ -32,18 +42,23 @@ const FAILED = new Set(["failure", "timed_out", "cancelled", "action_required", 
 export function aggregateChecks(checkRuns: unknown, combined: unknown): ChecksSummary {
   const failed: ChecksSummary["failed"] = [];
   const pending: string[] = [];
+  const checks: CheckItem[] = [];
   let total = 0;
 
   const runs = Array.isArray((checkRuns as any)?.check_runs) ? (checkRuns as any).check_runs : [];
   for (const r of runs) {
     total++;
     const name = String(r?.name ?? "check");
+    const url = r?.html_url ?? r?.details_url ?? null;
+    const seconds = secondsBetween(r?.started_at, r?.status === "completed" ? r?.completed_at : null);
     if (r?.status !== "completed") {
       pending.push(name);
+      checks.push({ name, state: "pending", seconds, url });
       continue;
     }
     const c = String(r?.conclusion ?? "");
-    if (FAILED.has(c)) failed.push({ name, conclusion: c, url: r?.html_url ?? r?.details_url ?? null });
+    if (FAILED.has(c)) failed.push({ name, conclusion: c, url });
+    checks.push({ name, state: FAILED.has(c) ? "failure" : c === "success" ? "success" : "neutral", seconds, url });
   }
 
   // El combined status ya trae el ÚLTIMO estado por contexto, no el historial.
@@ -54,10 +69,12 @@ export function aggregateChecks(checkRuns: unknown, combined: unknown): ChecksSu
     const st = String(s?.state ?? "");
     if (st === "pending") pending.push(name);
     else if (st === "failure" || st === "error") failed.push({ name, conclusion: st, url: s?.target_url ?? null });
+    checks.push({ name, state: st === "pending" ? "pending" : st === "failure" || st === "error" ? "failure" : "success", seconds: null, url: s?.target_url ?? null });
   }
 
   const state: ChecksState = failed.length ? "failure" : pending.length ? "pending" : total ? "success" : "none";
-  return { state, total, failed, pending };
+  checks.sort((a, b) => ORDER[a.state] - ORDER[b.state]);
+  return { state, total, failed, pending, checks };
 }
 
 /** Pide las dos fuentes de un commit y las agrega. `get` devuelve el JSON o `{error}`/null. */

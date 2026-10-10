@@ -14,8 +14,11 @@ const runs: Record<number, object> = {
 };
 vi.mock("../../server/apps/factory", () => ({
   factoryVerdictFn: async ({ data }: { data: { runId: number } }) => ({
-    ci: data.runId === 12 ? { state: "pending", repoHasCi: true } : { state: "success", repoHasCi: true },
-    runId: 11, status: "pr_review", repo: "o/r", prUrl: "https://github.com/o/r/pull/34", shots: [], preview: { state: "off" },
+    ci: data.runId === 12
+      ? { state: "pending", repoHasCi: true, checks: [{ name: "verify", state: "pending", seconds: 60, url: null }, { name: "lint", state: "success", seconds: 9, url: null }] }
+      : { state: "success", repoHasCi: true, checks: [] },
+    runId: 11, title: "CLI", status: "pr_review", repo: "o/r", prUrl: "https://github.com/o/r/pull/34", shots: [], preview: { state: "off" },
+    effort: { score: 5, label: "Muy complejo", minutes: 35, reasons: ["1,351 líneas en 24 archivos"] }, relay: [], approvedAt: null, branch: null, events: 0,
     verdict: { prNumber: 34, files: 24, additions: 1339, deletions: 12, ci: "success", ready: true, planVersion: 2, loops: 1, findings: "",
       risk: "high", riskReasons: ["size"], summary: "La CLI ya transfiere dominios.", tryIt: "Corre `cli transfers dns`.",
       readFirst: [{ file: "cli/src/commands/transfers.ts", lines: "11-31", why: "valida antes de tocar la red", href: "https://github.com/o/r/pull/34/files#diff-abcR11" }] },
@@ -58,25 +61,24 @@ describe("RunCard escalado", () => {
 });
 
 describe("RunCard con el PR listo", () => {
-  it("crece con la revisión de @check y deja hacer merge desde el room", async () => {
+  it("en el room AVISA: a quién le toca, esfuerzo y qué cambia; la revisión se abre en el panel", async () => {
     render(<RunCard card={{ runId: 11 } as never} channelId={3} />);
     await waitFor(() => expect(screen.getByText("La CLI ya transfiere dominios.")).toBeTruthy());
-    expect(screen.getByText("Merge")).toBeTruthy();
-    const link = screen.getByText("transfers.ts:11-31").closest("a")!;
-    expect(link.getAttribute("href")).toContain("#diff-abcR11");
-    expect(link.getAttribute("title")).toBe("cli/src/commands/transfers.ts");
-    // El aviso genérico se va: la tarjeta ya dice qué revisar.
+    expect(screen.getByText("Te toca revisar")).toBeTruthy();
+    expect(screen.getByText(/esfuerzo 5\/5 · ~35 min/)).toBeTruthy();
+    expect(screen.getByText("Revisar")).toBeTruthy();
+    // Lo que antes llenaba la tarjeta ya no está aquí.
+    expect(screen.queryByText("Lee primero")).toBeNull();
+    expect(screen.queryByText("Merge")).toBeNull();
     expect(screen.queryByText(/La fábrica terminó su parte/)).toBeNull();
   });
 });
 
 describe("RunCard con merge en cola", () => {
-  it("dice el CI en vivo y que el merge entra solo, sin botón para volver a picar", async () => {
+  it("el anillo dice cuántos checks van y la línea, que el merge entra solo", async () => {
     render(<RunCard card={{ runId: 12 } as never} channelId={3} />);
     await waitFor(() => expect(screen.getByText("Merge en cola: entra solo cuando pase el CI")).toBeTruthy());
-    expect(screen.getByText("⏳ corriendo")).toBeTruthy();
-    expect(screen.queryByText("✓ en verde")).toBeNull();
-    expect(screen.queryByText("Merge")).toBeNull();
+    expect(screen.getByText("1/2")).toBeTruthy();
   });
 });
 
@@ -89,7 +91,7 @@ describe("RunCard al mezclarse", () => {
     vi.spyOn(bus, "useRtSubscribe").mockImplementation(((o: { onEvent: (ev: unknown) => void }) => { refreshEv = o.onEvent; }) as never);
     runs[13] = { ...runs[11], runId: 13, status: "pr_review" };
     const { container } = render(<RunCard card={{ runId: 13 } as never} channelId={3} />);
-    await waitFor(() => expect(screen.getByText("PR")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Te toca revisar")).toBeTruthy());
     expect(container.querySelector(".gt-fx-confetti")).toBeNull();
     runs[13] = { ...runs[13], status: "done", prod: null };
     await act(async () => refreshEv?.({ t: "refresh", channelId: 3 }));

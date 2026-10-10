@@ -1085,7 +1085,7 @@ export async function ensureRunCard(run: Run): Promise<void> {
  * Estado del CI del PR (Actions y statuses externos: Vercel, CircleCI…), con la misma tool
  * que usa el agente. `none` = el repo no tiene CI (NO es verde). null si GitHub no contesta.
  */
-export async function prCi(sub: string, url: string): Promise<{ state: string; failed: string[] } | null> {
+export async function prCi(sub: string, url: string): Promise<{ state: string; failed: string[]; checks: import("../connectors/github-checks").CheckItem[] } | null> {
   const pr = parsePrUrl(url);
   if (!pr) return null;
   try {
@@ -1094,7 +1094,7 @@ export async function prCi(sub: string, url: string): Promise<{ state: string; f
     const r = (await tool?.handler(sub, { repo: pr.repo, number: pr.number })) as any;
     if (!r || r.error) return null;
     const failed = Array.isArray(r.failed) ? r.failed.map((f: any) => String(f?.name ?? f)).slice(0, 5) : [];
-    return { state: String(r.state ?? "none"), failed };
+    return { state: String(r.state ?? "none"), failed, checks: Array.isArray(r.checks) ? r.checks : [] };
   } catch {
     return null;
   }

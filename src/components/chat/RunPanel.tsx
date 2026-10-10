@@ -7,6 +7,7 @@ import { useRtSubscribe } from "../../utils/rt-bus";
 import { RunCard } from "./RunCard";
 import { PlanCard } from "./PlanCard";
 import { VerdictCard } from "./VerdictCard";
+import { ReviewPanel } from "./ReviewPanel";
 import { factoryRunActionFn, factoryRunCardFn, factoryRunDetailFn } from "../../server/apps/factory";
 
 type Card = Awaited<ReturnType<typeof factoryRunCardFn>>;
@@ -80,6 +81,33 @@ export function RunPanel({ runId, channelId }: { runId: number; channelId: numbe
 
   if (!card) return <div className="p-6 text-sm text-muted">{t("Cargando…")}</div>;
   const open = card.view.column !== "closed";
+
+  // PR listo: el panel es la vista de revisión (esfuerzo, qué leer, caja de merge). La bitácora
+  // completa y cancelar quedan plegados: la estafeta a escala ya cuenta la historia.
+  if (card.status === "pr_review" && detail?.verdictJson) {
+    return (
+      <div className="flex min-h-full flex-col">
+        <ReviewPanel runId={runId} channelId={channelId} />
+        <details className="border-t border-border px-5 py-3 text-xs text-muted">
+          <summary className="cursor-pointer select-none hover:text-ink">{t("Bitácora completa")} · {detail.events.length}</summary>
+          <ol className="mt-2 space-y-1.5">
+            {detail.events.map((e) => (
+              <li key={e.id} className="flex gap-2">
+                <span className="w-24 shrink-0">{when(e.at)}</span>
+                <span className="min-w-0 text-ink">
+                  {e.actor ? <b>{/^(plan|build|check)$/.test(e.actor) ? `@${e.actor}` : e.actor}</b> : null} {t(EVENT_LABEL[e.type] ?? e.type)}
+                </span>
+              </li>
+            ))}
+          </ol>
+          <button type="button" disabled={busy} onClick={() => act("cancel")} className="mt-3 rounded-full border border-border px-3 py-1 font-semibold hover:text-red-600 disabled:opacity-50">
+            {t("Cancelar pedido")}
+          </button>
+          {err && <span className="ml-2 text-red-600">{err}</span>}
+        </details>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-4 p-4">

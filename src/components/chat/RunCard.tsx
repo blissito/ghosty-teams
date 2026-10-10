@@ -8,9 +8,10 @@ import { ChatCtx } from "./message";
 import { Fragment, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { useT } from "../../i18n";
 import { useRtSubscribe } from "../../utils/rt-bus";
-import { MergeQueued, ReviewBody, type VerdictState } from "./VerdictCard";
+import { type VerdictState } from "./VerdictCard";
 import { FxOverlay } from "./FxOverlay";
-import { factoryVerdictFn, factoryMergeFn, factoryRunCardFn, factoryDecisionFn, factoryRetryPreviewFn, factorySetPreviewOffFn, factoryRunActionFn, factoryRunCiFn, factoryFixCiFn } from "../../server/apps/factory";
+import { DiffBar } from "./ReviewPanel";
+import { factoryVerdictFn, factoryRunCardFn, factoryDecisionFn, factoryRetryPreviewFn, factorySetPreviewOffFn, factoryRunActionFn, factoryRunCiFn, factoryFixCiFn } from "../../server/apps/factory";
 import { prepareRepoFn } from "../../server/apps/readiness";
 import type { RunCardData } from "../../lib/ebdoc";
 
@@ -109,18 +110,7 @@ export function RunCard({ card, channelId, inPanel }: { card: RunCardData; chann
   const boxWaiting = !!st.boxWaiting;
   const closed = st.status === "done" || st.status === "cancelled";
   const reviewing = st.status === "pr_review" && !!review?.verdict;
-  const merge = async () => {
-    setBusy(true);
-    setErr("");
-    try {
-      await factoryMergeFn({ data: { runId: st.runId } });
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-      refresh();
-    }
-  };
+
   const runCi = async () => {
     setBusy(true);
     setErr("");
@@ -161,6 +151,63 @@ export function RunCard({ card, channelId, inPanel }: { card: RunCardData; chann
       setBusy(false);
     }
   };
+
+  // PR listo, en el room: la tarjeta AVISA (a quién le toca, cuánto esfuerzo, qué cambia) y
+  // «Revisar» abre el panel, donde está la revisión y el merge. Antes cargaba la revisión
+  // completa y se sentía abrumadora (propuesta del 10-oct).
+  if (reviewing && review?.verdict && !inPanel) {
+    const v = review.verdict;
+    const e = review.effort;
+    const checks = review.ci?.checks ?? [];
+    const done = checks.filter((c) => c.state !== "pending").length;
+    const ciState = review.ci?.state ?? v.ci;
+    const ringPct = ciState === "pending" && checks.length ? done / checks.length : 1;
+    const ringCls = ciState === "failure" ? "text-red-500" : ciState === "pending" ? "text-amber-500" : "text-emerald-500";
+    const openPanel = () => onOpenArtifact?.({ kind: "run", title: `${t("Pedido")} #${st.runId}`, runId: st.runId, channelId });
+    return (
+      <div className="mt-1.5 max-w-xl overflow-hidden rounded-xl gt-card">
+        <div className="flex items-center gap-3 px-3.5 pb-2.5 pt-3">
+          {/* Anillo del CI: cuántos checks van; color = cómo van. */}
+          <span
+            className={`relative grid h-9 w-9 shrink-0 place-items-center rounded-full ${ringCls}`}
+            style={{ background: `conic-gradient(currentColor ${ringPct * 360}deg, var(--color-surface-3) 0)` }}
+            title={ciState === "pending" ? `${t("CI corriendo")}: ${done}/${checks.length}` : ciState === "failure" ? t("El CI falló") : t("CI en verde")}
+          >
+            <span className="absolute inset-[4px] rounded-full bg-surface" />
+            <span className="relative text-[11px] font-bold">{ciState === "failure" ? "✗" : ciState === "pending" ? `${done}/${checks.length}` : "✓"}</span>
+          </span>
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold text-ink">
+              #{st.runId} · {st.title}
+            </p>
+            <p className="text-[12.5px] font-semibold text-amber-700 dark:text-amber-300">
+              {st.mergeQueued ? t("Merge en cola: entra solo cuando pase el CI") : t("Te toca revisar")}
+              {e ? <span className="font-normal"> · {t("esfuerzo")} {e.score}/5 · ~{e.minutes} min</span> : null}
+            </p>
+          </div>
+        </div>
+        <div className="flex gap-[3px] px-3.5" aria-hidden>
+          {STEPS.map((s) => (
+            <i key={s.key} className={`h-1 flex-1 rounded-full ${s.key === "pr" ? "bg-amber-500" : "bg-emerald-600"}`} />
+          ))}
+        </div>
+        {v.summary ? <p className="px-3.5 pt-2.5 text-[13.5px] leading-snug text-ink">{v.summary}</p> : null}
+        <div className="flex flex-wrap items-center gap-2 px-3.5 pb-3 pt-2.5">
+          <span className="inline-flex items-center gap-1.5 text-xs text-muted">
+            <DiffBar add={v.additions} del={v.deletions} />
+            <span className="font-mono">+{v.additions} −{v.deletions}</span>
+            {v.prNumber ? <span>· PR #{v.prNumber}</span> : null}
+          </span>
+          <a href={st.threadUrl} className="ml-auto text-xs font-semibold text-muted hover:text-ink">
+            {t("Hilo")} →
+          </a>
+          <button type="button" onClick={openPanel} className="rounded-full bg-ink px-3.5 py-1 text-xs font-bold text-surface hover:opacity-90">
+            {t("Revisar")}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="mt-1.5 max-w-xl overflow-hidden rounded-lg gt-card">
@@ -299,15 +346,6 @@ export function RunCard({ card, channelId, inPanel }: { card: RunCardData; chann
                   ? `${t("Vueltas de check")}: ${st.loops}`
                   : ""}
         </p>
-        {reviewing && review && (
-          <div className="mt-2.5 border-t border-border pt-2.5">
-            <p className="text-sm font-semibold text-ink">
-              {t("✅ Listo para tu revisión")}
-              {review.verdict!.prNumber ? <span className="ml-1.5 font-mono text-xs font-normal text-muted">PR #{review.verdict!.prNumber}</span> : null}
-            </p>
-            <ReviewBody st={review} />
-          </div>
-        )}
         {st.status === "escalated" && st.escalation?.points.length ? (
           <div className="mt-2 rounded-lg border border-amber-600/40 bg-amber-500/5 px-3 py-2 text-xs" role="note">
             <p className="font-semibold text-ink">{t("Lo que @check pide decidir:")}</p>
@@ -477,17 +515,6 @@ export function RunCard({ card, channelId, inPanel }: { card: RunCardData; chann
             <a href={st.prUrl} target="_blank" rel="noreferrer" className="rounded-full border border-border px-3 py-1 text-xs font-semibold text-ink hover:bg-surface-3">
               {t("Ver PR")} ↗
             </a>
-          )}
-          {reviewing && st.mergeQueued && <MergeQueued />}
-          {reviewing && !st.mergeQueued && st.ci?.state !== "failure" && (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={merge}
-              className="rounded-full border border-emerald-600 bg-emerald-600 px-3 py-1 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-50"
-            >
-              {busy ? t("Haciendo merge…") : t("Merge")}
-            </button>
           )}
           <a href={st.threadUrl} className="ml-auto text-xs font-semibold text-brand hover:underline">
             {t("Ver hilo")} →

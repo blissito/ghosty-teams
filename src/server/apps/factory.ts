@@ -546,8 +546,9 @@ async function cancelledView(run: { id: number; prUrl: string | null; approvedBy
 }
 
 // La tarjeta se refresca con cada evento del room: GitHub se pregunta como mucho cada minuto por PR.
-const ciCache = new Map<string, { at: number; v: { state: string; repoHasCi: boolean } | null }>();
-async function liveCi(sub: string, prUrl: string, repo: string | null, fallbackSub?: string): Promise<{ state: string; repoHasCi: boolean } | null> {
+type LiveCi = { state: string; repoHasCi: boolean; checks: import("../connectors/github-checks").CheckItem[] };
+const ciCache = new Map<string, { at: number; v: LiveCi | null }>();
+async function liveCi(sub: string, prUrl: string, repo: string | null, fallbackSub?: string): Promise<LiveCi | null> {
   const hit = ciCache.get(prUrl);
   if (hit && Date.now() - hit.at < 60_000) return hit.v;
   const R = await import("./factory-runs.server");
@@ -556,12 +557,12 @@ async function liveCi(sub: string, prUrl: string, repo: string | null, fallbackS
     ci = await R.prCi(fallbackSub, prUrl).catch(() => null);
     if (ci) sub = fallbackSub;
   }
-  let v: { state: string; repoHasCi: boolean } | null = null;
+  let v: LiveCi | null = null;
   if (ci) {
     // Sin checks en el PR: ¿es que el repo no tiene CI, o que el PR todavía no lo corre?
     const { hasWorkflows } = await import("./ci-starter.server");
     const repoHasCi = ci.state === "none" && repo ? await hasWorkflows(sub, repo).catch(() => false) : ci.state !== "none";
-    v = { state: ci.state, repoHasCi };
+    v = { state: ci.state, repoHasCi, checks: ci.checks ?? [] };
   }
   ciCache.set(prUrl, { at: Date.now(), v });
   return v;
@@ -942,7 +943,17 @@ export const factoryVerdictFn = createServerFn({ method: "POST" })
     const ci = run.prUrl && run.status === "pr_review" ? await liveCi(run.approvedBy ?? run.requestedBy ?? me.sub, run.prUrl, run.repo, me.sub) : null;
     const { dbq: q } = await import("../../dbq.server");
     const mergeQueued = run.status === "pr_review" && !!(await q("SELECT merge_queued_by FROM gt_factory_runs WHERE id = ?", [run.id]))[0]?.merge_queued_by;
-    return { runId: run.id, status: run.status, repo: run.repo, prUrl: run.prUrl, verdict, shots, preview: await R.runPreview(run.id), ci, mergeQueued };
+    // Para el panel de revisión: esfuerzo (sin modelo), la estafeta a escala de tiempo y lo que se pidió.
+    const { reviewEffort } = await import("../../lib/review-effort");
+    const { relaySegments } = await import("../../lib/factory-relay");
+    const effort = verdict ? reviewEffort(verdict) : null;
+    const evs = await q("SELECT at, type FROM gt_factory_events WHERE run_id = ? ORDER BY id", [run.id]).catch(() => []);
+    const relay = relaySegments(evs.map((e) => ({ at: Number(e.at), type: String(e.type) })), Math.floor(Date.now() / 1000));
+    const approved = [...evs].reverse().find((e) => String(e.type) === "approve");
+    return {
+      runId: run.id, title: run.title, status: run.status, repo: run.repo, prUrl: run.prUrl, verdict, shots, preview: await R.runPreview(run.id), ci, mergeQueued,
+      effort, relay, approvedAt: approved ? Number(approved.at) : null, branch: run.branch, events: evs.length,
+    };
   });
 
 /**

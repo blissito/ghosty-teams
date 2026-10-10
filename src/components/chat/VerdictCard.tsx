@@ -4,10 +4,11 @@
 //  - ```gt-preview-error```: la preview no arrancó. Paso, causa, qué hacer y el log plegado
 //    (el patrón de Vercel/Render), con el mismo lenguaje visual que la tarjeta de alertas.
 // Las dos leen su estado de la fila del pedido y se refrescan con los `refresh` del room.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useContext, useEffect, useState } from "react";
+import { ChatCtx } from "./message";
 import { useT } from "../../i18n";
 import { useRtSubscribe } from "../../utils/rt-bus";
-import { factoryMergeFn, factoryRetryPreviewFn, factorySetPreviewOffFn, factoryVerdictFn } from "../../server/apps/factory";
+import { factoryRetryPreviewFn, factorySetPreviewOffFn, factoryVerdictFn } from "../../server/apps/factory";
 import { diagnosePreview, STEP_LABEL } from "../../lib/preview-errors";
 
 export type VerdictState = Awaited<ReturnType<typeof factoryVerdictFn>>;
@@ -42,62 +43,29 @@ const btn = "rounded-md border px-2.5 py-1 text-xs font-medium transition disabl
 
 export function VerdictCard({ card, channelId }: { card: { runId: number }; channelId: number }) {
   const t = useT();
-  const { st, refresh } = useRunState(card.runId, channelId);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
-  const [open, setOpen] = useState(false);
+  const { onOpenArtifact } = useContext(ChatCtx);
+  const { st } = useRunState(card.runId, channelId);
   if (!st?.verdict) return null;
   const v = st.verdict;
   const merged = st.status === "done";
-
-  const merge = async () => {
-    setBusy(true);
-    setErr("");
-    try {
-      await factoryMergeFn({ data: { runId: st.runId } });
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-      refresh();
-    }
-  };
-
+  // En el hilo, UNA línea con la acción (como el «finished work» de Copilot en el PR): la
+  // revisión completa vive en el panel del pedido. Antes era la tarjeta entera, repetida.
   return (
-    <div className="mt-0.5 flex max-w-xl overflow-hidden rounded-lg gt-card">
-      <div className={`w-1 shrink-0 ${merged ? "bg-violet-500" : "bg-emerald-500"}`} aria-hidden="true" />
-      <div className="min-w-0 flex-1 p-3">
-        <p className="text-sm font-semibold text-ink">
-          {merged ? t("🟣 Merged") : t("✅ Listo para tu revisión")}
-          {v.prNumber ? <span className="ml-1.5 font-mono text-xs font-normal text-muted">PR #{v.prNumber}</span> : null}
-        </p>
-        <ReviewBody st={st} />
-        <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-          {st.preview.state === "ready" && st.preview.url && (
-            <a href={st.preview.url} target="_blank" rel="noreferrer" className={`${btn} border-brand text-brand hover:bg-brand/10`}>
-              {t("Ver preview")} ↗
-            </a>
-          )}
-          {st.prUrl && (
-            <a href={st.prUrl} target="_blank" rel="noreferrer" className={`${btn} border-border text-ink hover:bg-surface-3`}>
-              {t("Ver PR")} ↗
-            </a>
-          )}
-          {!merged && st.status === "pr_review" && st.mergeQueued && <MergeQueued />}
-          {!merged && st.status === "pr_review" && !st.mergeQueued && st.ci?.state !== "failure" && (
-            <button type="button" disabled={busy} onClick={merge} className={`${btn} border-emerald-600 text-emerald-700 hover:bg-emerald-600/10 dark:text-emerald-400`}>
-              {busy ? t("Haciendo merge…") : t("Merge")}
-            </button>
-          )}
-          {v.findings && (
-            <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="ml-auto text-xs text-muted hover:text-ink">
-              {open ? t("Ocultar detalle") : t("Detalle")} {open ? "▴" : "▾"}
-            </button>
-          )}
-        </div>
-        {err && <p className="mt-1.5 text-xs text-red-600 dark:text-red-400">{err}</p>}
-        {open && v.findings && <p className="mt-2 whitespace-pre-wrap border-t border-border pt-2 text-xs leading-relaxed text-muted">{v.findings}</p>}
-      </div>
+    <div className="mt-0.5 flex max-w-xl flex-wrap items-center gap-x-2 gap-y-1 rounded-lg gt-card px-3 py-2 text-sm">
+      <span className="font-semibold text-ink">{merged ? t("🟣 Merged") : t("✅ @check aprobó el PR")}</span>
+      {v.prNumber ? <span className="font-mono text-xs text-muted">#{v.prNumber}</span> : null}
+      {st.effort && !merged ? (
+        <span className="text-xs text-muted">· {t("esfuerzo")} {st.effort.score}/5 · ~{st.effort.minutes} min</span>
+      ) : null}
+      {onOpenArtifact && (
+        <button
+          type="button"
+          onClick={() => onOpenArtifact({ kind: "run", title: `${t("Pedido")} #${st.runId}`, runId: st.runId, channelId })}
+          className="ml-auto rounded-full bg-ink px-3 py-0.5 text-xs font-bold text-surface hover:opacity-90"
+        >
+          {merged ? t("Ver pedido") : t("Revisar")}
+        </button>
+      )}
     </div>
   );
 }

@@ -17,7 +17,9 @@ describe("aggregateChecks", () => {
       { check_runs: [run("test", "completed", "success"), run("deploy", "completed", "skipped"), run("lint", "completed", "neutral")] },
       { statuses: [{ context: "vercel", state: "success" }] },
     );
-    expect(r).toEqual({ state: "success", total: 4, failed: [], pending: [] });
+    expect(r).toMatchObject({ state: "success", total: 4, failed: [], pending: [] });
+    // Por nombre para la caja de merge: skipped y neutral quedan al final, sin contar como rojo.
+    expect(r.checks.map((c) => `${c.name}:${c.state}`)).toEqual(["test:success", "vercel:success", "deploy:neutral", "lint:neutral"]);
   });
 
   it("un status externo en rojo gana aunque Actions esté en verde", () => {
@@ -55,7 +57,7 @@ describe("aggregateChecks", () => {
 });
 
 const sum = (state: ChecksSummary["state"], total = 3, failed: string[] = []): ChecksSummary => ({
-  state, total, pending: [], failed: failed.map((name) => ({ name, conclusion: "failure", url: null })),
+  state, total, pending: [], checks: [], failed: failed.map((name) => ({ name, conclusion: "failure", url: null })),
 });
 const snap = (over: Partial<PrSnapshot> = {}): PrSnapshot => ({
   merged: false, state: "open", sha: "a1", checks: sum("pending"), autoMerge: false, ...over,
