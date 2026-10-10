@@ -75,10 +75,10 @@ describe("RunCard con el PR listo", () => {
 });
 
 describe("RunCard con merge en cola", () => {
-  it("el anillo dice cuántos checks van y la línea, que el merge entra solo", async () => {
+  it("la línea de estado dice cuántos checks van y que el merge entra solo", async () => {
     render(<RunCard card={{ runId: 12 } as never} channelId={3} />);
     await waitFor(() => expect(screen.getByText("Merge en cola: entra solo cuando pase el CI")).toBeTruthy());
-    expect(screen.getByText("1/2")).toBeTruthy();
+    expect(screen.getByText(/CI 1\/2/)).toBeTruthy();
   });
 });
 

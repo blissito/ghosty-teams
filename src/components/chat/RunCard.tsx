@@ -5,7 +5,7 @@
 // revisión de @check (qué cambia, riesgo, qué leer) y deja hacer merge aquí: antes eso sólo vivía
 // en el hilo y desde el room se veía «el PR espera tu revisión» sin decir qué revisar.
 import { ChatCtx } from "./message";
-import { Fragment, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { useT } from "../../i18n";
 import { useRtSubscribe } from "../../utils/rt-bus";
 import { type VerdictState } from "./VerdictCard";
@@ -24,10 +24,6 @@ const WORKING: Record<string, string> = {
   checking: "@check está revisando el PR…",
 };
 
-// Un pedido cerrado se pinta en UN solo tono: morado «merged» de GitHub al terminar, gris al
-// cancelar. El verde de «paso hecho» junto al morado chocaba (#15 y #17, 7-oct).
-const DONE_CLS = "bg-violet-600/15 text-violet-700 dark:text-violet-300";
-const CANCELLED_DONE_CLS = "bg-surface-3 text-ink/70";
 
 const STEPS = [
   { key: "plan", label: "Plan", statuses: ["planning"] },
@@ -152,45 +148,126 @@ export function RunCard({ card, channelId, inPanel }: { card: RunCardData; chann
     }
   };
 
+  // ── Encabezado común (todos los estados): anillo de avance, título, UNA línea de estado y la
+  // barra de pasos. Antes el pedido en curso y el de PR listo se veían como dos tarjetas
+  // distintas (10-oct): ahora sólo cambia lo de abajo.
+  const yourTurn = st.status === "plan_review" || st.status === "escalated" || st.status === "pr_review" || boxWaiting || waiting || (stalled && !waiting);
+  const ciNow = st.status === "pr_review" ? (review?.ci?.state ?? st.ci?.state) : st.ci?.state;
+  const ciChecks = review?.ci?.checks ?? [];
+  const effort = review?.effort;
+  const tone: "you" | "work" | "done" | "off" | "bad" =
+    st.status === "done" ? "done" : st.status === "cancelled" ? (st.cancelled?.prClosed ? "bad" : "off") : st.status === "pr_review" && ciNow === "failure" ? "bad" : yourTurn ? "you" : "work";
+  const statusText =
+    st.status === "done"
+      ? st.prod?.state === "success" ? t("Terminado: en producción") : t("Terminado: PR merged")
+      : st.status === "cancelled"
+        ? st.cancelled?.prClosed ? t("Cancelado: el PR se cerró sin merge") : t("Cancelado")
+        : waiting
+          ? t("@{rol} te preguntó algo en el hilo").replace("{rol}", String(st.waitingOn))
+          : boxWaiting
+            ? t("En espera de lugar")
+            : stalled
+              ? t("Sin avanzar: nadie está trabajando")
+              : WORKING[st.status]
+                ? st.liveTurnId ? t(WORKING[st.status]) : t("Arrancando a @{rol}…").replace("{rol}", st.status === "planning" ? "plan" : st.status === "building" ? "build" : "check")
+                : st.status === "plan_review"
+                  ? `${t("Te toca firmar el plan")} v${st.planVersion}`
+                  : st.status === "escalated"
+                    ? t("Te toca decidir")
+                    : st.status === "pr_review"
+                      ? st.mergeQueued ? t("Merge en cola: entra solo cuando pase el CI") : ciNow === "failure" ? t("El CI falló en este PR") : t("Te toca revisar")
+                      : "";
+  const statusExtra =
+    st.status === "pr_review"
+      ? [ciNow === "pending" && ciChecks.length ? `CI ${ciChecks.filter((c) => c.state !== "pending").length}/${ciChecks.length}` : "", effort ? `${t("esfuerzo")} ${effort.score}/5 · ~${effort.minutes} min` : ""].filter(Boolean).join(" · ")
+      : WORKING[st.status] && !stalled && !waiting && !boxWaiting
+        ? [st.loops ? `${t("Vueltas de check")}: ${st.loops}` : "", st.currentStep ?? ""].filter(Boolean).join(" · ")
+        : "";
+  const TONE = {
+    // Te toca: en ROJO, el mismo rojo de los cuadros del diff (10-oct).
+    you: { ring: "text-red-500", text: "text-red-600 dark:text-red-400", seg: "bg-red-500" },
+    work: { ring: "text-brand", text: "text-brand", seg: "bg-brand" },
+    done: { ring: "text-violet-500", text: "text-violet-700 dark:text-violet-300", seg: "bg-violet-500" },
+    off: { ring: "text-muted", text: "text-muted", seg: "bg-surface-3" },
+    bad: { ring: "text-red-500", text: "text-red-600 dark:text-red-400", seg: "bg-red-500" },
+  }[tone];
+  // La barra: Plan · Firma · Build · CI · Check · PR (+ Prod tras el merge). El CI es un paso del
+  // camino con su estado EN VIVO, como antes en las pastillas.
+  const TRACK = [
+    { key: "plan", label: "Plan", at: 0 },
+    { key: "sign", label: "Firma", at: 1 },
+    { key: "build", label: "Build", at: 2 },
+    { key: "ci", label: "CI", at: 2.5 },
+    { key: "check", label: "Check", at: 3 },
+    { key: "pr", label: "PR", at: 4 },
+    ...(st.prod ? [{ key: "prod", label: "Prod", at: 5 }] : []),
+  ];
+  const segCls = (seg: (typeof TRACK)[number]) => {
+    if (st.status === "done") return seg.key === "prod" && st.prod?.state === "failure" ? "bg-red-500" : seg.key === "prod" && st.prod?.state === "pending" ? "bg-brand animate-pulse" : "bg-violet-500";
+    if (seg.key === "ci") {
+      if (ciNow === "failure") return "bg-red-500";
+      if (ciNow === "pending") return closed ? "bg-surface-3" : "bg-brand animate-pulse motion-reduce:animate-none";
+      if (ciNow === "success") return st.status === "cancelled" ? "bg-ink/25" : "bg-emerald-600";
+      return current > 2 ? "bg-amber-400/60" : "bg-surface-3"; // sin CI
+    }
+    if (seg.key === "pr" && st.status === "cancelled" && st.cancelled?.prClosed) return "bg-red-500";
+    if (current < 0) return "bg-surface-3";
+    if (seg.at < current) return st.status === "cancelled" ? "bg-ink/25" : "bg-emerald-600";
+    if (seg.at === current) return st.status === "cancelled" ? "border border-dashed border-border" : TONE.seg;
+    return "bg-surface-3";
+  };
+  const progress = st.status === "done" ? 1 : current < 0 ? 0 : (current + (closed ? 0 : 0.5)) / 5;
+  const header = (
+    <>
+      <div className="flex items-center gap-3 px-3.5 pb-2.5 pt-3">
+        <span
+          className={`relative grid h-9 w-9 shrink-0 place-items-center rounded-full ${TONE.ring}`}
+          style={{ background: `conic-gradient(currentColor ${progress * 360}deg, var(--color-surface-3) 0)` }}
+          aria-hidden
+        >
+          <span className="absolute inset-[4px] rounded-full bg-surface" />
+          <span className="relative text-[11px] font-bold">{st.status === "done" ? "✓" : tone === "bad" || st.status === "cancelled" ? "✕" : `${Math.max(1, Math.min(5, current + 1))}/5`}</span>
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold text-ink">
+            #{st.runId} · {st.title}
+          </p>
+          <p className={`flex min-w-0 items-center gap-1.5 text-[12.5px] font-semibold ${TONE.text}`} role="status">
+            {tone === "work" && !closed && (
+              <span className="relative flex h-2 w-2 shrink-0">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand opacity-60 motion-reduce:animate-none" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-brand" />
+              </span>
+            )}
+            <span className="shrink-0">{statusText}</span>
+            {statusExtra ? <span className="min-w-0 truncate font-normal">· {statusExtra}</span> : null}
+          </p>
+        </div>
+      </div>
+      <div className="px-3.5">
+        <div className="flex gap-[3px]" aria-hidden>
+          {TRACK.map((seg) => (
+            <i key={seg.key} className={`h-1 flex-1 rounded-full ${segCls(seg)}`} />
+          ))}
+        </div>
+        <div className="mt-1 flex gap-[3px] text-[10px] text-muted">
+          {TRACK.map((seg) => (
+            <span key={seg.key} className="flex-1 truncate">{t(seg.label)}</span>
+          ))}
+        </div>
+      </div>
+    </>
+  );
+
   // PR listo, en el room: la tarjeta AVISA (a quién le toca, cuánto esfuerzo, qué cambia) y
   // «Revisar» abre el panel, donde está la revisión y el merge. Antes cargaba la revisión
   // completa y se sentía abrumadora (propuesta del 10-oct).
   if (reviewing && review?.verdict && !inPanel) {
     const v = review.verdict;
-    const e = review.effort;
-    const checks = review.ci?.checks ?? [];
-    const done = checks.filter((c) => c.state !== "pending").length;
-    const ciState = review.ci?.state ?? v.ci;
-    const ringPct = ciState === "pending" && checks.length ? done / checks.length : 1;
-    const ringCls = ciState === "failure" ? "text-red-500" : ciState === "pending" ? "text-amber-500" : "text-emerald-500";
     const openPanel = () => onOpenArtifact?.({ kind: "run", title: `${t("Pedido")} #${st.runId}`, runId: st.runId, channelId });
     return (
       <div className="mt-1.5 max-w-xl overflow-hidden rounded-xl gt-card">
-        <div className="flex items-center gap-3 px-3.5 pb-2.5 pt-3">
-          {/* Anillo del CI: cuántos checks van; color = cómo van. */}
-          <span
-            className={`relative grid h-9 w-9 shrink-0 place-items-center rounded-full ${ringCls}`}
-            style={{ background: `conic-gradient(currentColor ${ringPct * 360}deg, var(--color-surface-3) 0)` }}
-            title={ciState === "pending" ? `${t("CI corriendo")}: ${done}/${checks.length}` : ciState === "failure" ? t("El CI falló") : t("CI en verde")}
-          >
-            <span className="absolute inset-[4px] rounded-full bg-surface" />
-            <span className="relative text-[11px] font-bold">{ciState === "failure" ? "✗" : ciState === "pending" ? `${done}/${checks.length}` : "✓"}</span>
-          </span>
-          <div className="min-w-0">
-            <p className="truncate text-sm font-semibold text-ink">
-              #{st.runId} · {st.title}
-            </p>
-            <p className="text-[12.5px] font-semibold text-amber-700 dark:text-amber-300">
-              {st.mergeQueued ? t("Merge en cola: entra solo cuando pase el CI") : t("Te toca revisar")}
-              {e ? <span className="font-normal"> · {t("esfuerzo")} {e.score}/5 · ~{e.minutes} min</span> : null}
-            </p>
-          </div>
-        </div>
-        <div className="flex gap-[3px] px-3.5" aria-hidden>
-          {STEPS.map((s) => (
-            <i key={s.key} className={`h-1 flex-1 rounded-full ${s.key === "pr" ? "bg-amber-500" : "bg-emerald-600"}`} />
-          ))}
-        </div>
+        {header}
         {v.summary ? <p className="px-3.5 pt-2.5 text-[13.5px] leading-snug text-ink">{v.summary}</p> : null}
         <div className="flex flex-wrap items-center gap-2 px-3.5 pb-3 pt-2.5">
           <span className="inline-flex items-center gap-1.5 text-xs text-muted">
@@ -213,68 +290,16 @@ export function RunCard({ card, channelId, inPanel }: { card: RunCardData; chann
     <div className="mt-1.5 max-w-xl overflow-hidden rounded-lg gt-card">
       {/* Id negativo: el «ya celebró» de FxOverlay es por mensaje y éste no es uno. */}
       {party && !inPanel && <FxOverlay messageId={-st.runId} fx="confetti" />}
-      <div className="flex items-center gap-2 border-b border-border px-3 py-2">
-        <span className="text-[11px] font-bold uppercase tracking-wide text-ink">🏭 {t("Pedido")} #{st.runId}</span>
-        <span className="truncate text-sm font-semibold text-ink">{st.title}</span>
-      </div>
-      <div className="p-3">
-        {/* Los pasos: el actual resaltado; los hechos, llenos. */}
-        <ol className="flex items-center gap-1">
-          {STEPS.map((s, i) => {
-            const done = st.status === "done" || (current >= 0 && i < current);
-            const now = !closed && i === current;
-            const stopped = st.status === "cancelled" && i === cancelledAt;
-            // PR cerrado sin merge en GitHub: el paso PR lo dice, no sólo el pie.
-            const prClosed = s.key === "pr" && st.status === "cancelled" && !!st.cancelled?.prClosed;
-            // Escalado: el paso actual ya no es de @check sino de la persona, en ámbar.
-            const deciding = now && (st.status === "escalated" || boxWaiting);
-            return (
-              <Fragment key={s.key}>
-              <li className="flex flex-1 items-center gap-1">
-                <span
-                  className={`flex-1 whitespace-nowrap rounded-full px-1.5 py-1 text-center text-[11px] font-semibold ${
-                    // Mezclado = el morado «merged» de GitHub; en curso, verde por paso hecho.
-                    prClosed
-                      ? "bg-red-600/10 text-red-700/80 dark:text-red-400/80"
-                      : deciding
-                      ? "bg-amber-500 text-white"
-                      : now
-                        ? "bg-brand text-white"
-                        : stopped
-                          ? "border border-dashed border-border text-muted"
-                          : done
-                          ? st.status === "done"
-                            ? DONE_CLS
-                            : st.status === "cancelled"
-                              ? CANCELLED_DONE_CLS
-                              : "bg-emerald-600/15 text-emerald-700"
-                          : "bg-surface-3 text-muted"
-                  }`}
-                >
-                  {prClosed ? `✕ ${t("PR cerrado")}` : (
-                    <>
-                      {done ? "✓ " : stopped ? "⊘ " : ""}
-                      {deciding ? t("Te toca decidir") : t(s.label)}
-                    </>
-                  )}
-                </span>
-              </li>
-              {/* El CI es una etapa del camino: estado en vivo del PR; si el repo ya tiene CI y
-                  este PR no lo ha corrido, el paso mismo lo dispara (MailMask #10, 4-oct). */}
-              {s.key === "build" && <CiStep ci={st.ci} status={st.status} busy={busy} onRun={runCi} t={t} />}
-              {s.key === "pr" && st.prod && <ProdStep prod={st.prod} t={t} />}
-              </Fragment>
-            );
-          })}
-        </ol>
-        {st.status === "done" && (
-          <p className="mt-2 rounded-md bg-violet-600/10 px-2.5 py-1.5 text-xs font-semibold text-violet-700 dark:text-violet-300">
-            🎉 {st.prod?.state === "success" ? t("Terminado: en producción.") : t("Terminado: PR merged.")}
-          </p>
+      {header}
+      <div className="px-3.5 pb-3">
+        {/* «Correr CI»: el repo tiene CI y este PR no lo ha corrido (antes vivía en la pastilla CI). */}
+        {!closed && st.ci?.state === "none" && st.ci.repoHasCi && (
+          <button type="button" disabled={busy} onClick={runCi} className="mt-2 rounded-full border border-amber-600 px-3 py-1 text-xs font-bold text-amber-700 hover:bg-amber-600/10 disabled:opacity-50 dark:text-amber-300">
+            ▶ {t("Correr CI")}
+          </button>
         )}
         {stalled && !waiting && (
-          <p className="mt-2 flex flex-wrap items-center gap-2 text-xs font-semibold text-amber-700 dark:text-amber-300" role="status">
-            {t("Sin avanzar: nadie está trabajando en este pedido.")}
+          <p className="mt-2 flex flex-wrap items-center gap-2">
             <button
               type="button"
               disabled={busy}
@@ -294,29 +319,6 @@ export function RunCard({ card, channelId, inPanel }: { card: RunCardData; chann
             >
               {t("Retomar")}
             </button>
-          </p>
-        )}
-        {waiting && (
-          <p className="mt-2 text-xs font-semibold text-amber-700 dark:text-amber-300" role="status">
-            💬 {t("@{rol} te hizo una pregunta en el hilo: contéstale ahí.").replace("{rol}", String(st.waitingOn))}
-          </p>
-        )}
-        {boxWaiting && (
-          <p className="mt-2 text-xs font-semibold text-amber-700 dark:text-amber-300" role="status">
-            ⏳ {t("En espera de lugar: los lugares de tu plan están ocupados por otros pedidos. Arranca solo en cuanto se libere uno.")}
-          </p>
-        )}
-        {WORKING[st.status] && !stalled && !waiting && !boxWaiting && (
-          <p className="mt-2 flex min-w-0 items-center gap-1.5 text-xs text-ink" role="status">
-            <span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand opacity-60 motion-reduce:animate-none" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-brand" />
-            </span>
-            {/* Sin turno vivo todavía: el relevo va en camino (pasa unos segundos tras firmar). */}
-            {st.liveTurnId ? t(WORKING[st.status]) : t("Arrancando a @{rol}…").replace("{rol}", st.status === "planning" ? "plan" : st.status === "building" ? "build" : "check")}
-            {st.loops ? <span className="text-muted">· {t("Vueltas de check")}: {st.loops}</span> : null}
-            {/* Lo que narra el rol AHORA (mismo dato que la barra del hilo): desde el room se ve que avanza. */}
-            {st.currentStep ? <span className="min-w-0 truncate text-muted">· {st.currentStep}</span> : null}
           </p>
         )}
         <p className={`mt-2 text-xs empty:hidden ${st.status === "escalated" ? "font-semibold text-amber-700 dark:text-amber-300" : "text-muted"}`}>
@@ -543,86 +545,5 @@ export function RunCard({ card, channelId, inPanel }: { card: RunCardData; chann
         {err && <p className="mt-2 text-xs text-danger">{err}</p>}
       </div>
     </div>
-  );
-}
-
-/** El paso «Prod» después del PR: lo que vio el vigilante post-merge en producción. */
-function ProdStep({ prod, t }: { prod: { state: string; url?: string | null }; t: (s: string) => string }) {
-  const base = "flex-1 whitespace-nowrap rounded-full px-1.5 py-1 text-center text-[11px] font-semibold inline-flex items-center justify-center gap-1.5";
-  const look =
-    prod.state === "success"
-      ? { cls: DONE_CLS, txt: `✓ ${t("Prod")}` }
-      : prod.state === "pending"
-        ? { cls: "bg-brand text-white", txt: t("Desplegando"), spin: true }
-        : prod.state === "failure"
-          ? { cls: "bg-red-600/15 text-red-700 dark:text-red-400", txt: `✗ ${t("Prod")}` }
-          : prod.state === "timeout"
-            ? { cls: "bg-amber-500/15 text-amber-700 dark:text-amber-300", txt: t("Deploy lento") }
-            : { cls: "bg-surface-3 text-muted", txt: t("Sin deploy") };
-  const title =
-    prod.state === "none" ? t("El repo no despliega con cada merge a la rama principal.") : prod.state === "failure" ? t("Ver el log del deploy") : prod.url ?? undefined;
-  const body = (
-    <>
-      {"spin" in look && look.spin && (
-        <span className="h-3 w-3 animate-spin rounded-full border-2 border-white/40 border-t-white motion-reduce:animate-none" aria-hidden />
-      )}
-      {look.txt}
-    </>
-  );
-  return (
-    <li className="flex flex-1 items-center gap-1">
-      {prod.url ? (
-        <a href={prod.url} target="_blank" rel="noreferrer" title={title} className={`${base} ${look.cls} hover:underline`}>
-          {body}
-        </a>
-      ) : (
-        <span title={title} className={`${base} ${look.cls}`}>{body}</span>
-      )}
-    </li>
-  );
-}
-
-/** El paso «CI» entre Build y Check: lo que dice GitHub del PR, no lo que declaró un rol. */
-function CiStep({ ci, status, busy, onRun, t }: {
-  ci: { state: string; repoHasCi: boolean } | null | undefined;
-  status: string;
-  busy: boolean;
-  onRun: () => void;
-  t: (s: string) => string;
-}) {
-  const base = "flex-1 whitespace-nowrap rounded-full px-1.5 py-1 text-center text-[11px] font-semibold";
-  const closed = status === "done" || status === "cancelled";
-  if (!closed && ci?.state === "none" && ci.repoHasCi)
-    return (
-      <li className="flex flex-1 items-center gap-1">
-        <button type="button" disabled={busy} onClick={onRun} className={`${base} border border-amber-600 text-amber-700 hover:bg-amber-600/10 disabled:opacity-50 dark:text-amber-300`}>
-          ▶ {t("Correr CI")}
-        </button>
-      </li>
-    );
-  const look =
-    // Merged = el CI pasó; cancelado = como quedó (un CI que seguía corriendo ya no corre).
-    status === "done"
-      ? { cls: DONE_CLS, txt: `✓ ${t("CI")}` }
-      : ci?.state === "success"
-      ? { cls: status === "cancelled" ? CANCELLED_DONE_CLS : "bg-emerald-600/15 text-emerald-700", txt: `✓ ${t("CI")}` }
-      : ci?.state === "pending"
-        ? closed
-          ? { cls: "border border-dashed border-border text-muted", txt: `⊘ ${t("CI")}` }
-          : { cls: "bg-brand text-white", txt: t("CI corriendo"), spin: true }
-        : ci?.state === "failure"
-          ? { cls: "bg-red-600/15 text-red-700 dark:text-red-400", txt: `✗ ${t("CI")}` }
-          : ci?.state === "none"
-            ? { cls: "bg-amber-500/15 text-amber-700 dark:text-amber-300", txt: t("Sin CI") }
-            : { cls: "bg-surface-3 text-muted", txt: t("CI") };
-  return (
-    <li className="flex flex-1 items-center gap-1">
-      <span className={`${base} ${look.cls} inline-flex items-center justify-center gap-1.5`}>
-        {"spin" in look && look.spin && (
-          <span className="h-3 w-3 animate-spin rounded-full border-2 border-white/40 border-t-white motion-reduce:animate-none" aria-hidden />
-        )}
-        {look.txt}
-      </span>
-    </li>
   );
 }

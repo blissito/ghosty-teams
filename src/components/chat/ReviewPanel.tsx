@@ -12,7 +12,7 @@ import { PlanCard } from "./PlanCard";
 
 export const HOLDER: Record<Holder, { label: string; cls: string }> = {
   plan: { label: "@plan", cls: "bg-violet-500" },
-  you: { label: "tú", cls: "bg-amber-500" },
+  you: { label: "tú", cls: "bg-red-500" },
   build: { label: "@build", cls: "bg-sky-500" },
   check: { label: "@check", cls: "bg-emerald-600" },
 };
@@ -24,7 +24,7 @@ export function DiffBar({ add, del }: { add: number; del: number }) {
   return (
     <span className="inline-flex gap-0.5" aria-hidden>
       {Array.from({ length: 5 }, (_, i) => (
-        <i key={i} className={`h-2 w-2 rounded-[2px] ${i < a ? "bg-emerald-600" : i < (total ? 5 : 0) ? "bg-red-600" : "bg-surface-3"}`} />
+        <i key={i} className={`h-2 w-2 rounded-[2px] ${i < a ? "bg-emerald-600" : i < (total ? 5 : 0) ? "bg-red-500" : "bg-surface-3"}`} />
       ))}
     </span>
   );
@@ -70,7 +70,7 @@ export function ReviewPanel({ runId, channelId }: { runId: number; channelId: nu
       <header className="space-y-2.5 border-b border-border px-5 pb-4 pt-1">
         <h2 className="text-base font-bold leading-snug text-ink">{st.title}</h2>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/15 py-0.5 pl-2 pr-2.5 text-xs font-semibold text-amber-700 dark:text-amber-300">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-red-500/12 py-0.5 pl-2 pr-2.5 text-xs font-semibold text-red-600 dark:text-red-400">
             <span className="h-1.5 w-1.5 rounded-full bg-current" />
             {t("Te toca revisar")}
             {waiting ? <span className="font-normal opacity-80">· {shortDuration(waiting)}</span> : null}
