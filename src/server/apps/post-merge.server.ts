@@ -93,6 +93,8 @@ type Row = {
   sub: string;
   startedAt: number;
   noticeMsgId: number | null;
+  /** Mientras corre: el `{name, url}` del deploy que se está esperando. */
+  result: string | null;
 };
 
 /** Publica en el hilo con la cara de quien dio el aviso del merge (o @check si no se sabe). */
@@ -122,9 +124,22 @@ async function finish(row: Row, state: "ok" | "failed" | "timeout", result: stri
 
 export type ProdState = {
   state: "pending" | "success" | "failure" | "timeout" | "none";
+  /** pending/timeout/failure: el run de Actions; success: el sitio. */
   url?: string | null;
+  /** El workflow que corre o tronó («Deploy», «Fly Deploy»…). */
+  name?: string | null;
   at?: number | null;
 };
+
+/** El `{name, url}` que el sondeo deja en `result` mientras el deploy corre. */
+function liveNote(result: unknown): { name: string | null; url: string | null } {
+  try {
+    const j = JSON.parse(String(result ?? "")) as { name?: string; url?: string };
+    return { name: j.name ?? null, url: j.url ?? null };
+  } catch {
+    return { name: null, url: null };
+  }
+}
 
 /**
  * El paso «Prod» de la tarjeta de un pedido con merge: lo que vio el vigilante en producción.
@@ -137,14 +152,14 @@ export async function runProd(run: { id: number; channelId: number; prUrl: strin
   const [row] = await dbq("SELECT state, result FROM gt_post_merge WHERE channel_id = ? AND repo = ? AND pr = ?", [run.channelId, pr.repo, pr.number]).catch(() => []);
   if (!row) return null;
   const st = String(row.state);
-  if (st === "pending") return { state: "pending" };
-  if (st === "timeout") return { state: "timeout" };
+  if (st === "pending") return { state: "pending", ...liveNote(row.result) };
+  if (st === "timeout") return { state: "timeout", ...liveNote(row.result) };
   const [ev] = await dbq(
     "SELECT type, at, data_json FROM gt_factory_events WHERE run_id = ? AND type IN ('deployed','deploy_failed') ORDER BY id DESC LIMIT 1",
     [run.id],
   ).catch(() => []);
-  const data = ev?.data_json ? (JSON.parse(String(ev.data_json)) as { urls?: string[]; url?: string; workflows?: string[] }) : {};
-  if (st === "failed") return { state: "failure", url: data.url ?? null };
+  const data = ev?.data_json ? (JSON.parse(String(ev.data_json)) as { urls?: string[]; url?: string; workflow?: string; workflows?: string[] }) : {};
+  if (st === "failed") return { state: "failure", url: data.url ?? null, name: data.workflow ?? null };
   // Verde sin workflows de deploy en ese sha: el sitio contesta, pero no hubo despliegue que ver.
   if (String(row.result) === "sin workflows") return { state: "none" };
   return { state: "success", url: data.urls?.[0] ?? null, at: ev ? Number(ev.at) : null };
@@ -175,10 +190,21 @@ async function step(row: Row): Promise<void> {
   const runs: WorkflowRun[] = Array.isArray(actions?.workflow_runs) ? actions.workflow_runs : [];
   const verdict = deployVerdict(runs, elapsed);
 
-  if (verdict.kind === "running") return void (await later(POLL_S));
+  if (verdict.kind === "running") {
+    // Cuál deploy corre y su liga: la tarjeta lo enseña en «Prod» («Desplegando… · Ver deploy»).
+    // Sólo se avisa al room cuando cambia, no en cada sondeo.
+    const live = runs.find((r) => r.status !== "completed");
+    const note = live ? JSON.stringify({ name: live.name, url: live.html_url }) : null;
+    if (note && note !== row.result) {
+      await dbq("UPDATE gt_post_merge SET result = ? WHERE id = ?", [note, row.id]);
+      const R = await import("./factory-runs.server");
+      await R.refreshRoom(row.channelId).catch(() => {});
+    }
+    return void (await later(POLL_S));
+  }
   if (verdict.kind === "timeout") {
     await postThread(row, `⏳ El deploy de #${row.pr} sigue corriendo en «${verdict.name}» tras 30 min; dejo de vigilarlo · [ver run](${verdict.url})`);
-    return finish(row, "timeout", verdict.name);
+    return finish(row, "timeout", JSON.stringify({ name: verdict.name, url: verdict.url }));
   }
   if (verdict.kind === "failed") {
     const R = await import("./factory-runs.server");
@@ -243,6 +269,7 @@ export async function sweepPostMerge(): Promise<void> {
         sub: String(r.sub),
         startedAt: Number(r.started_at),
         noticeMsgId: r.notice_msg_id == null ? null : Number(r.notice_msg_id),
+        result: r.result == null ? null : String(r.result),
       };
       try {
         await step(row);

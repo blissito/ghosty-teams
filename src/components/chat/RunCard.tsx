@@ -175,7 +175,15 @@ export function RunCard({ card, channelId, inPanel }: { card: RunCardData; chann
     st.status === "done" ? "done" : st.status === "cancelled" ? (st.cancelled?.prClosed ? "bad" : "off") : st.status === "pr_review" && ciNow === "failure" ? "bad" : yourTurn ? "you" : "work";
   const statusText =
     st.status === "done"
-      ? st.prod?.state === "success" ? t("Terminado: en producción") : t("Terminado: PR merged")
+      ? st.prod?.state === "success"
+        ? t("Terminado: en producción")
+        : st.prod?.state === "pending"
+          ? t("PR merged: desplegando a producción…")
+          : st.prod?.state === "failure"
+            ? t("PR merged, pero el deploy falló")
+            : st.prod?.state === "timeout"
+              ? t("PR merged: el deploy no terminó en 30 min")
+              : t("Terminado: PR merged")
       : st.status === "cancelled"
         ? st.cancelled?.prClosed ? t("Cancelado: el PR se cerró sin merge") : t("Cancelado")
         : waiting
@@ -553,6 +561,17 @@ export function RunCard({ card, channelId, inPanel }: { card: RunCardData; chann
           {st.prUrl && (
             <a href={st.prUrl} target="_blank" rel="noreferrer" className="rounded-full border border-border px-3 py-1 text-xs font-semibold text-ink hover:bg-surface-3">
               {t("Ver PR")} ↗
+            </a>
+          )}
+          {st.status === "done" && st.prod?.url && (
+            // El paso «Prod» con su liga: el run de Actions mientras corre o si tronó, el sitio si quedó.
+            <a
+              href={st.prod.url}
+              target="_blank"
+              rel="noreferrer"
+              className={`rounded-full border px-3 py-1 text-xs font-semibold hover:bg-surface-3 ${st.prod.state === "failure" ? "border-red-500 text-red-600 dark:text-red-400" : "border-border text-ink"}`}
+            >
+              {st.prod.state === "success" ? t("Abrir sitio") : st.prod.state === "failure" ? t("Ver el log") : `${t("Ver deploy")}${st.prod.name ? ` · ${st.prod.name}` : ""}`} ↗
             </a>
           )}
           <a href={st.threadUrl} className="ml-auto text-xs font-semibold text-brand hover:underline">
