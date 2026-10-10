@@ -933,6 +933,8 @@ export const factoryVerdictFn = createServerFn({ method: "POST" })
       // Desde el 10-oct: qué cambia y cómo probarlo, en palabras de @check.
       summary?: string | null;
       tryIt?: string | null;
+      // Desde el 10-oct (noche): lo que @check corrió y qué dio; la tarjeta enseña el resultado.
+      proof?: { cmd: string; ok: boolean; result: string; output: string | null }[];
       shots?: import("./factory-shots.server").Shot[];
       shotPath?: string | null;
     } | null = null;

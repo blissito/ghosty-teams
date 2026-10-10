@@ -514,6 +514,23 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
             type: "string",
             description: "Con pass=true: cómo comprobarlo en 1 frase (en la preview: ruta y qué hacer; sin preview: el comando). Omítelo si no hay nada que probar a mano.",
           },
+          proof: {
+            type: "array",
+            maxItems: 4,
+            description:
+              "Con pass=true: los comandos que CORRISTE en tu caja para comprobarlo, con su resultado real (lo que la persona tendría que correr para creerte). " +
+              "Sustituye a tryIt en la tarjeta: la persona ve el resultado, no la receta. Nunca pongas un comando que no corriste; si no corriste nada, omítelo.",
+            items: {
+              type: "object",
+              properties: {
+                cmd: { type: "string", description: "El comando tal cual (p. ej. npx tsc -v)" },
+                ok: { type: "boolean", description: "true si salió con código 0 y dio lo esperado" },
+                result: { type: "string", description: "El resultado en pocas palabras (p. ej. «Version 7.0.2», «0 errores», «42 pruebas pasan»)" },
+                output: { type: "string", description: "Las últimas líneas de la salida (máx. ~15), para quien quiera verla" },
+              },
+              required: ["cmd", "ok", "result"],
+            },
+          },
           evidencePath: {
             type: "string",
             description: "Con pass=true y preview: la ruta de la pantalla que cambió (p. ej. /agenda). La plataforma la captura en escritorio y móvil para la tarjeta.",
@@ -617,6 +634,17 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
             readFirst: risk.readFirst,
             summary: a.summary ? clipSentence(String(a.summary), 320) : null,
             tryIt: a.tryIt ? clipSentence(String(a.tryIt), 200) : null,
+            proof: Array.isArray(a.proof)
+              ? a.proof
+                  .filter((p: any) => p && typeof p.cmd === "string" && p.cmd.trim())
+                  .slice(0, 4)
+                  .map((p: any) => ({
+                    cmd: String(p.cmd).slice(0, 200),
+                    ok: p.ok === true,
+                    result: clipSentence(String(p.result ?? ""), 120),
+                    output: p.output ? String(p.output).split("\n").slice(-15).join("\n").slice(-1500) : null,
+                  }))
+              : [],
             // La ruta que pidió @check: si las capturas se rehacen con una preview nueva, salen de ahí.
             evidencePath: a.evidencePath ? String(a.evidencePath) : null,
           };

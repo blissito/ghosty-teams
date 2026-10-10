@@ -184,7 +184,46 @@ export function ReviewPanel({ runId, channelId }: { runId: number; channelId: nu
         )}
 
         {v.summary ? <p className="text-[15px] leading-relaxed text-ink">{v.summary}</p> : null}
-        {v.tryIt ? (
+        {/* Prueba en vez de receta: lo que @check corrió y qué dio. Con eso, «Pruébalo» sólo
+            queda para lo que hay que hacer a mano en la preview. */}
+        {v.proof?.length ? (
+          <section className="overflow-hidden rounded-xl border border-border">
+            <p className="flex items-center gap-2 border-b border-border bg-surface-2 px-3 py-1.5 text-[11px] uppercase tracking-wider text-muted">
+              <Terminal size={13} /> {t("Lo que corrió @check")}
+            </p>
+            <ul className="divide-y divide-border">
+              {v.proof.map((p, i) => {
+                const L = CHECK_LOOK[p.ok ? "success" : "failure"];
+                const line = (
+                  <span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2">
+                    <code className="font-mono text-[12.5px] text-ink">{p.cmd}</code>
+                    <span className="text-[12.5px] text-muted">→ {p.result}</span>
+                  </span>
+                );
+                return (
+                  <li key={i}>
+                    {p.output ? (
+                      <details className="group">
+                        <summary className="flex cursor-pointer list-none items-start gap-2.5 px-3 py-2 hover:bg-surface-2">
+                          <L.Icon size={15} className={`mt-0.5 shrink-0 ${L.cls}`} />
+                          {line}
+                          <span className="shrink-0 text-[11px] text-muted group-open:hidden">{t("Ver salida")}</span>
+                        </summary>
+                        <pre className="max-h-56 overflow-auto bg-surface-3/60 px-3 py-2 font-mono text-[11.5px] leading-relaxed text-ink thin-scroll">{p.output}</pre>
+                      </details>
+                    ) : (
+                      <div className="flex items-start gap-2.5 px-3 py-2">
+                        <L.Icon size={15} className={`mt-0.5 shrink-0 ${L.cls}`} />
+                        {line}
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        ) : null}
+        {v.tryIt && !(v.proof?.length && !st.preview.url) ? (
           <div className="flex gap-2.5 rounded-xl bg-surface-3/60 px-3 py-2.5 text-[13px] leading-relaxed">
             <Terminal size={15} className="mt-0.5 shrink-0 text-muted" />
             <p className="min-w-0 text-ink">

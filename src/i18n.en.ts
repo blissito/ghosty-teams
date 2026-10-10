@@ -1484,6 +1484,8 @@ export const en: Record<string, string> = {
   "Con conflictos": "Has conflicts",
   "Auto-merge activado": "Auto-merge enabled",
   "Automerge activado": "Automerge on",
+  "Lo que corrió @check": "What @check ran",
+  "Ver salida": "Show output",
   "listo hace": "ready for",
   "Plan firmado": "Signed plan",
   "Firmado el": "Signed on",
