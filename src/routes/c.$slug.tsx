@@ -72,6 +72,7 @@ import {
   Github,
   Kanban,
   GitPullRequest,
+  GitMerge,
   ExternalLink,
   Brain,
 } from "lucide-react";
@@ -86,6 +87,8 @@ import {
   setRoomRepoNotifyFn,
   removeRoomRepoFn,
   workspaceRoomReposFn,
+  roomAutoMergeFn,
+  setRoomAutoMergeFn,
 } from "../server/room-repos";
 import { roomSalesBoardFn, salesBoardsFn, setRoomSalesBoardFn, clearRoomSalesBoardFn } from "../server/room-sales-board";
 import ConfirmModal from "../components/ConfirmModal";
@@ -5913,6 +5916,8 @@ function RepoButton({ channelId }: { channelId: number }) {
   }, [channelId, atado]);
 
   return (
+    <>
+    {atado && <AutoMergeChip channelId={channelId} />}
     <div className="relative shrink-0">
       <button
         type="button"
@@ -5949,6 +5954,87 @@ function RepoButton({ channelId }: { channelId: number }) {
           onChange={(next) => setMine(next.map((x) => ({ repo: x.repo, connectedBy: x.connectedBy, notify: x.notify })))}
           onLevel={(repo, l) => repo === atado && setLevel(l)}
         />
+      )}
+    </div>
+    </>
+  );
+}
+
+// ── Automerge del room ───────────────────────────────────────────────────────
+// Encendido por default (10-oct): lo que @check aprueba entra solo en cuanto el CI pasa. El
+// estado vive a la vista en el encabezado —pastilla verde si está encendido, ícono apagado si
+// no— y se apaga desde ahí mismo. Sólo en rooms con repo y con la fábrica instalada.
+function AutoMergeChip({ channelId }: { channelId: number }) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const [on, setOn] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    Promise.all([factoryInstalledFn(), roomAutoMergeFn({ data: { channelId } })])
+      .then(([installed, am]) => alive && setOn(installed ? am.on : null))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [channelId]);
+
+  if (on === null) return null;
+
+  const cambiar = async (next: boolean) => {
+    setBusy(true);
+    setErr("");
+    try {
+      const am = await setRoomAutoMergeFn({ data: { channelId, on: next } });
+      setOn(am.on);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const label = on ? t("Automerge activado") : t("Automerge apagado");
+  return (
+    <div className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        title={label}
+        aria-label={label}
+        className={
+          on
+            ? `flex h-7 shrink-0 items-center gap-1.5 rounded-full bg-emerald-600/12 px-2.5 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-600/25 transition hover:bg-emerald-600/20 dark:text-emerald-300 ${open ? "bg-emerald-600/20" : ""}`
+            : `flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted/60 transition hover:bg-surface-3 hover:text-ink ${open ? "bg-surface-3 text-ink" : ""}`
+        }
+      >
+        <GitMerge size={on ? 14 : 17} className="shrink-0" />
+        {on && <span className="hidden @md/hdr:inline">{t("Automerge")}</span>}
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40 bg-black/40 sm:bg-transparent" onClick={() => setOpen(false)} />
+          <div className="fixed inset-x-2 top-14 z-50 max-w-[calc(100vw-1rem)] overflow-hidden rounded-xl border border-border bg-surface shadow-2xl ring-1 ring-black/10 sm:absolute sm:inset-x-auto sm:right-0 sm:top-auto sm:mt-1 sm:w-[20rem] dark:ring-white/10">
+            <div className="flex items-center gap-3 px-3 py-3">
+              <span className={`flex size-8 shrink-0 items-center justify-center rounded-lg ${on ? "bg-emerald-600/12 text-emerald-700 dark:text-emerald-300" : "bg-surface-3 text-muted"}`}>
+                <GitMerge size={16} />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold text-ink">{t("Automerge")}</p>
+                <p className="text-xs text-muted">{on ? t("Encendido en este room") : t("Apagado en este room")}</p>
+              </div>
+              <Toggle on={on} onChange={cambiar} disabled={busy} label={t("Automerge")} />
+            </div>
+            <p className="border-t border-border px-3 py-2 text-[11px] leading-snug text-muted">
+              {on
+                ? t("Lo que @check aprueba entra solo en cuanto el CI pasa, a nombre de quien firmó el plan. Un CI en rojo nunca entra.")
+                : t("Cada PR aprobado por @check espera a que alguien pique «Merge».")}
+            </p>
+            {err && <p className="px-3 pb-2 text-xs text-red-600 dark:text-red-400">{err}</p>}
+          </div>
+        </>
       )}
     </div>
   );

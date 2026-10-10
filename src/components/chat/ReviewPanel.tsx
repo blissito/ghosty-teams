@@ -9,10 +9,12 @@ import { EFFORT_LABELS } from "../../lib/review-effort";
 import { shortDuration, type Holder } from "../../lib/factory-relay";
 import { MergeQueued, useRunState, type VerdictState } from "./VerdictCard";
 import { PlanCard } from "./PlanCard";
+import { checkSentence, explainCheck } from "../../lib/ci-check-explain";
+import { ArrowUpRight, CircleCheck, CircleDashed, CircleX, FileSignature, Globe, Minus, ShieldCheck, Terminal, type LucideIcon } from "lucide-react";
 
 export const HOLDER: Record<Holder, { label: string; cls: string }> = {
   plan: { label: "@plan", cls: "bg-violet-500" },
-  you: { label: "tú", cls: "bg-red-500" },
+  you: { label: "tú", cls: "bg-amber-500" },
   build: { label: "@build", cls: "bg-sky-500" },
   check: { label: "@check", cls: "bg-emerald-600" },
 };
@@ -30,12 +32,47 @@ export function DiffBar({ add, del }: { add: number; del: number }) {
   );
 }
 
-const CHECK_LOOK = {
-  failure: { s: "✗", cls: "text-red-600 dark:text-red-400" },
-  pending: { s: "◌", cls: "text-amber-600 dark:text-amber-400" },
-  success: { s: "✓", cls: "text-emerald-600 dark:text-emerald-400" },
-  neutral: { s: "–", cls: "text-muted" },
-} as const;
+const CHECK_LOOK: Record<"failure" | "pending" | "success" | "neutral", { Icon: LucideIcon; cls: string }> = {
+  failure: { Icon: CircleX, cls: "text-red-600 dark:text-red-400" },
+  pending: { Icon: CircleDashed, cls: "animate-spin text-amber-600 motion-reduce:animate-none dark:text-amber-400" },
+  success: { Icon: CircleCheck, cls: "text-emerald-600 dark:text-emerald-400" },
+  neutral: { Icon: Minus, cls: "text-muted" },
+};
+
+/**
+ * Fila con ícono de las piezas del panel (plan firmado, preview): ícono en cuadro con tinte,
+ * título, una línea de detalle y la acción a la derecha. Una sola forma para todas.
+ */
+function InfoRow({ icon: Icon, tint, title, sub, action, children }: { icon: LucideIcon; tint: string; title: React.ReactNode; sub?: React.ReactNode; action?: React.ReactNode; children?: React.ReactNode }) {
+  return (
+    <section className="overflow-hidden rounded-xl border border-border bg-surface">
+      <div className="flex items-center gap-3 px-3 py-2.5">
+        <span className={`flex size-9 shrink-0 items-center justify-center rounded-lg ${tint}`}>
+          <Icon size={17} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[13.5px] font-semibold text-ink">{title}</p>
+          {sub ? <p className="truncate text-xs text-muted">{sub}</p> : null}
+        </div>
+        {action}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+/** `código` entre comillas invertidas → <code>: «Pruébalo» trae comandos y se leen mejor así. */
+function withCode(text: string) {
+  return text.split(/(`[^`]+`)/g).map((part, i) =>
+    part.startsWith("`") && part.endsWith("`") ? (
+      <code key={i} className="rounded bg-surface-3 px-1 py-px font-mono text-[12px] text-ink">{part.slice(1, -1)}</code>
+    ) : (
+      part
+    ),
+  );
+}
+
+const ROW_ACTION = "inline-flex shrink-0 items-center gap-1 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs font-semibold text-ink hover:bg-surface-3";
 
 export function ReviewPanel({ runId, channelId }: { runId: number; channelId: number }) {
   const t = useT();
@@ -72,11 +109,13 @@ export function ReviewPanel({ runId, channelId }: { runId: number; channelId: nu
       <header className="space-y-2.5 border-b border-border px-5 pb-4 pt-1">
         <h2 className="text-base font-bold leading-snug text-ink">{st.title}</h2>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-red-500/12 py-0.5 pl-2 pr-2.5 text-xs font-semibold text-red-600 dark:text-red-400">
+          {/* Sin presión: el estado dice qué sigue y la espera va aparte, en gris (patrón de
+              Devin/Copilot/Graphite: el color es para los hallazgos, no para el reloj). */}
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/15 py-0.5 pl-2 pr-2.5 text-xs font-semibold text-amber-700 dark:text-amber-300">
             <span className="h-1.5 w-1.5 rounded-full bg-current" />
             {t("Te toca revisar")}
-            {waiting ? <span className="font-normal opacity-80">· {shortDuration(waiting)}</span> : null}
           </span>
+          {waiting ? <span className="text-xs text-muted">{t("listo hace")} {shortDuration(waiting)}</span> : null}
           <span className="text-xs text-muted">
             {t("Pedido")} #{st.runId}
             {v.prNumber ? <> · PR <span className="font-mono">#{v.prNumber}</span></> : null}
@@ -146,9 +185,12 @@ export function ReviewPanel({ runId, channelId }: { runId: number; channelId: nu
 
         {v.summary ? <p className="text-[15px] leading-relaxed text-ink">{v.summary}</p> : null}
         {v.tryIt ? (
-          <p className="text-sm text-ink">
-            <span className="font-semibold">{t("Pruébalo")}:</span> <span className="text-muted">{v.tryIt}</span>
-          </p>
+          <div className="flex gap-2.5 rounded-xl bg-surface-3/60 px-3 py-2.5 text-[13px] leading-relaxed">
+            <Terminal size={15} className="mt-0.5 shrink-0 text-muted" />
+            <p className="min-w-0 text-ink">
+              <span className="font-semibold">{t("Pruébalo")}:</span> <span className="text-muted">{withCode(v.tryIt)}</span>
+            </p>
+          </div>
         ) : null}
 
         {!!v.readFirst?.length && (
@@ -177,39 +219,43 @@ export function ReviewPanel({ runId, channelId }: { runId: number; channelId: nu
           </section>
         )}
 
-        {/* El plan firmado, en una línea: antes era una pestaña «Plan v2» que no decía nada. */}
-        <section className="rounded-xl border border-dashed border-border px-3 py-2.5 text-[13px]">
-          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
-            <span className="text-muted">{t("Lo que pediste")}</span>
-            <span className="min-w-0 flex-1 text-ink">
-              «{st.title}»
-              {st.approvedAt ? <span className="text-muted"> · {t("firmado")} {new Date(st.approvedAt * 1000).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span> : null}
-            </span>
-            {v.planVersion ? (
-              <button type="button" onClick={() => setShowPlan((s) => !s)} className="whitespace-nowrap text-xs font-semibold text-brand hover:underline">
-                {showPlan ? t("Ocultar plan") : t("Ver plan")} {showPlan ? "▴" : "→"}
+        {/* El plan firmado: lo que se pidió y quién lo firmó; el plan entero se despliega aquí. */}
+        <InfoRow
+          icon={FileSignature}
+          tint="bg-violet-500/12 text-violet-700 dark:text-violet-300"
+          title={<>{t("Plan firmado")}{v.planVersion ? <span className="font-normal text-muted"> · v{v.planVersion}</span> : null}</>}
+          sub={st.approvedAt ? `${t("Firmado el")} ${new Date(st.approvedAt * 1000).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}` : `«${st.title}»`}
+          action={
+            v.planVersion ? (
+              <button type="button" onClick={() => setShowPlan((s) => !s)} className={ROW_ACTION}>
+                {showPlan ? t("Ocultar") : t("Ver plan")}
               </button>
-            ) : null}
-          </div>
+            ) : null
+          }
+        >
           {showPlan && v.planVersion ? (
-            <div className="mt-2">
+            <div className="border-t border-border p-2">
               <PlanCard card={{ runId, version: v.planVersion }} channelId={channelId} expanded />
             </div>
           ) : null}
-        </section>
+        </InfoRow>
 
         {(st.shots.length > 0 || (st.preview.state === "ready" && st.preview.url)) && (
-          <section>
-            <h3 className="mb-2 flex justify-between gap-3 text-[11px] uppercase tracking-wider text-muted">
-              <span>{t("Preview")}</span>
-              {st.preview.url ? (
-                <a href={st.preview.url} target="_blank" rel="noreferrer" className="truncate font-mono normal-case tracking-normal text-brand hover:underline">
-                  {st.preview.url.replace(/^https?:\/\//, "")} ↗
+          <InfoRow
+            icon={Globe}
+            tint="bg-brand/12 text-brand"
+            title={t("Preview de esta rama")}
+            sub={st.preview.url ? t("Pruébala en vivo antes del merge") : t("Capturas de @check")}
+            action={
+              st.preview.url ? (
+                <a href={st.preview.url} target="_blank" rel="noreferrer" className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90">
+                  {t("Abrir")} <ArrowUpRight size={13} />
                 </a>
-              ) : null}
-            </h3>
+              ) : null
+            }
+          >
             {st.shots.length > 0 && (
-              <div className="flex items-start gap-2.5">
+              <div className="flex items-start gap-2.5 border-t border-border p-2.5">
                 {st.shots.map((s) => (
                   <a key={s.label} href={s.url} target="_blank" rel="noreferrer" className={`block overflow-hidden rounded-lg border border-border hover:border-brand ${s.label === "mobile" ? "w-20 shrink-0" : "min-w-0 flex-1"}`}>
                     <img src={s.url} alt={s.label === "mobile" ? t("Preview en móvil") : t("Preview en escritorio")} loading="lazy" className="h-40 w-full object-cover object-top" />
@@ -217,31 +263,51 @@ export function ReviewPanel({ runId, channelId }: { runId: number; channelId: nu
                 ))}
               </div>
             )}
-          </section>
+          </InfoRow>
+        )}
+
+        {/* Los checks del CI con lo que cuida cada uno: un nombre como «verify-cli» no le dice
+            nada a quien decide el merge. Los rojos arriba. */}
+        {checks.length > 0 && (
+          <InfoRow
+            icon={ShieldCheck}
+            tint={ci?.state === "failure" ? "bg-red-500/12 text-red-600 dark:text-red-400" : ci?.state === "pending" ? "bg-amber-500/12 text-amber-700 dark:text-amber-300" : "bg-emerald-600/12 text-emerald-700 dark:text-emerald-400"}
+            title={t("Lo que verificó el CI")}
+            sub={`${checks.filter((c) => c.state === "success").length} ${t("de")} ${checks.length} ${t("en verde")}`}
+          >
+            <ul className="divide-y divide-border border-t border-border">
+              {[...checks].sort((a, b) => Number(b.state === "failure") - Number(a.state === "failure")).map((c) => {
+                const look = CHECK_LOOK[c.state];
+                const why = explainCheck(c.name);
+                const row = (
+                  <>
+                    <look.Icon size={15} className={`mt-px shrink-0 ${look.cls}`} />
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-baseline gap-2">
+                        <span className="truncate font-mono text-[12.5px] font-medium text-ink">{c.name}</span>
+                        {c.seconds != null ? <span className="font-mono text-[11px] text-muted">{shortDuration(c.seconds)}</span> : null}
+                      </span>
+                      {why ? <span className="block text-xs leading-snug text-muted">{checkSentence(why, t)}</span> : null}
+                    </span>
+                  </>
+                );
+                return (
+                  <li key={c.name}>
+                    {c.url ? (
+                      <a href={c.url} target="_blank" rel="noreferrer" className="flex items-start gap-2.5 px-3 py-2 hover:bg-surface-2">{row}</a>
+                    ) : (
+                      <div className="flex items-start gap-2.5 px-3 py-2">{row}</div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </InfoRow>
         )}
       </div>
 
-      {/* Caja de merge pegada abajo: los checks por nombre (rojos arriba) y UNA acción. */}
+      {/* Caja de merge pegada abajo: el estado del CI en una línea y UNA acción. */}
       <footer className="sticky bottom-0 space-y-2.5 border-t border-border bg-surface-2 px-5 py-3">
-        {checks.length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
-            {checks.map((c) => {
-              const look = CHECK_LOOK[c.state];
-              const body = (
-                <>
-                  <span className={`font-sans font-bold ${look.cls}`}>{look.s}</span>
-                  {c.name}
-                  {c.seconds != null ? <span className="text-muted">{shortDuration(c.seconds)}</span> : null}
-                </>
-              );
-              return c.url ? (
-                <a key={c.name} href={c.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-2 py-0.5 font-mono text-[11.5px] text-ink hover:border-brand">{body}</a>
-              ) : (
-                <span key={c.name} className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-2 py-0.5 font-mono text-[11.5px] text-ink">{body}</span>
-              );
-            })}
-          </div>
-        )}
         <div className="flex flex-wrap items-center gap-3">
           <p className="min-w-[12rem] flex-1 text-[12.5px] text-muted">
             {ci?.state === "pending" ? (
@@ -299,11 +365,19 @@ export function MergeBox({ st, busy, onMerge, onClose }: { st: VerdictState; bus
         <p className="px-3.5 pb-1 pt-2 text-[11.5px] text-muted">{label}</p>
         <ul>
           {items.map((c) => (
-            <li key={c.name} className="flex items-center gap-2.5 px-3.5 py-1 text-[12.5px]">
-              <span className={`font-bold ${CHECK_LOOK[c.state].cls}`}>{CHECK_LOOK[c.state].s}</span>
-              {c.url ? <a href={c.url} target="_blank" rel="noreferrer" className="font-medium text-ink hover:underline">{c.name}</a> : <span className="font-medium text-ink">{c.name}</span>}
-              <span className="truncate text-muted">
-                {c.state === "pending" ? `${t("Empezó hace")} ${c.seconds != null ? shortDuration(c.seconds) : "…"}` : c.state === "failure" ? t("Falló") : `${t("Exitoso en")} ${c.seconds != null ? shortDuration(c.seconds) : "—"}`}
+            <li key={c.name} className="flex items-start gap-2.5 px-3.5 py-1 text-[12.5px]">
+              {(() => {
+                const L = CHECK_LOOK[c.state];
+                return <L.Icon size={14} className={`mt-0.5 shrink-0 ${L.cls}`} />;
+              })()}
+              <span className="min-w-0 flex-1">
+                <span className="flex items-baseline gap-2.5">
+                  {c.url ? <a href={c.url} target="_blank" rel="noreferrer" className="font-medium text-ink hover:underline">{c.name}</a> : <span className="font-medium text-ink">{c.name}</span>}
+                  <span className="truncate text-muted">
+                    {c.state === "pending" ? `${t("Empezó hace")} ${c.seconds != null ? shortDuration(c.seconds) : "…"}` : c.state === "failure" ? t("Falló") : `${t("Exitoso en")} ${c.seconds != null ? shortDuration(c.seconds) : "—"}`}
+                  </span>
+                </span>
+                {explainCheck(c.name) ? <span className="block text-[11.5px] leading-snug text-muted">{checkSentence(explainCheck(c.name)!, t)}</span> : null}
               </span>
             </li>
           ))}

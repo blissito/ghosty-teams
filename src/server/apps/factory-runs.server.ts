@@ -1357,8 +1357,25 @@ export async function closeFinishedRuns(): Promise<void> {
     const ci = outcome === "open" && run.status === "pr_review" ? await prCi(run.approvedBy ?? run.requestedBy, run.prUrl!) : null;
     if (ci?.state === "failure") {
       // Un rojo cancela el merge en cola: lo que entra tiene que haber pasado.
-      if (row.merge_queued_by) await dbq("UPDATE gt_factory_runs SET merge_queued_by = NULL WHERE id = ?", [run.id]).catch(() => {});
+      // Y el automerge vuelve a mirarlo cuando @build lo arregle y @check lo apruebe otra vez.
+      if (row.merge_queued_by || Number(row.merge_queued_auto) === 1)
+        await dbq("UPDATE gt_factory_runs SET merge_queued_by = NULL, merge_queued_auto = NULL WHERE id = ?", [run.id]).catch(() => {});
       await onPrCiRed(run, pr?.headSha ?? null, ci.failed);
+    }
+    // Automerge del room (default encendido): lo que @check aprobó se forma en la cola de merge
+    // a nombre de quien firmó el plan, y el bloque de abajo lo mete en cuanto el CI pasa.
+    if (outcome === "open" && run.status === "pr_review" && !row.merge_queued_by && row.merge_queued_auto == null && ci?.state !== "failure") {
+      const { getRoomAutoMerge } = await import("../../db.server");
+      const am = await getRoomAutoMerge(run.channelId).catch(() => null);
+      const by = run.approvedBy ?? run.requestedBy;
+      const took = am?.on && by
+        ? await dbq("UPDATE gt_factory_runs SET merge_queued_by = ?, merge_queued_auto = 1 WHERE id = ? AND merge_queued_by IS NULL AND merge_queued_auto IS NULL RETURNING id", [by, run.id]).catch(() => [])
+        : [];
+      if (took.length) {
+        row.merge_queued_by = by;
+        await logEvent(run.id, "merge_queued", by, { auto: true });
+        void refreshRoom(run.channelId);
+      }
     }
     // Merge en cola (picado con el CI corriendo): entra solo en cuanto pasa, con las credenciales
     // de quien lo picó. Antes había que volver a picar y nadie avisaba cuándo (MailMask #34, 10-oct).

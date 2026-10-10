@@ -1034,6 +1034,26 @@ async function migrate(): Promise<void> {
     updated_by  TEXT,
     updated_at  INTEGER NOT NULL DEFAULT (unixepoch())
   )`);
+  // Automerge del room (10-oct): ENCENDIDO por default en todo room; la fila sólo existe cuando
+  // alguien lo tocó desde el encabezado. Lo que @check aprueba entra solo en cuanto el CI pasa,
+  // con las credenciales de quien firmó el plan.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_room_auto_merge (
+    channel_id INTEGER PRIMARY KEY,
+    enabled    INTEGER NOT NULL,
+    set_by     TEXT NOT NULL,
+    set_at     INTEGER NOT NULL DEFAULT (unixepoch())
+  )`);
+  // NULL = el automerge aún no lo ve · 1 = él dejó el merge en cola (apagarlo la suelta) ·
+  // 0 = no le toca. Al nacer la columna, los PRs que ya esperaban revisión quedan en 0: un
+  // default nuevo no mergea de golpe lo que la gente estaba revisando.
+  {
+    let had = true;
+    try {
+      had = (await tableColumns("gt_factory_runs")).has("merge_queued_auto");
+    } catch { /* addColumn registra la falla */ }
+    await addColumn("gt_factory_runs", "merge_queued_auto", "INTEGER");
+    if (!had) await exec("UPDATE gt_factory_runs SET merge_queued_auto = 0 WHERE status = 'pr_review'");
+  }
   // Cada versión del plan con su firma: la tarjeta de un plan viejo dice «reemplazado por vN».
   await exec(`CREATE TABLE IF NOT EXISTS gt_factory_plans (
     run_id     INTEGER NOT NULL,

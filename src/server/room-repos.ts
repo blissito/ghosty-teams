@@ -132,6 +132,26 @@ export const setRoomRepoNotifyFn = createServerFn({ method: "POST" })
     return await db.listRoomRepos(Number(data.channelId));
   });
 
+/** Automerge del room (encendido por default). Lo pinta el encabezado. */
+export const roomAutoMergeFn = createServerFn({ method: "POST" })
+  .validator((d: { channelId: number }) => d)
+  .handler(async ({ data }) => {
+    const { db } = await visibleChannel(Number(data.channelId));
+    return await db.getRoomAutoMerge(Number(data.channelId));
+  });
+
+/**
+ * Enciende o apaga el automerge del room. Lo puede tocar cualquiera que vea el room (como
+ * conectar el repo): es reversible y queda registrado quién lo tocó.
+ */
+export const setRoomAutoMergeFn = createServerFn({ method: "POST" })
+  .validator((d: { channelId: number; on: boolean }) => d)
+  .handler(async ({ data }) => {
+    const { me, db } = await visibleChannel(Number(data.channelId));
+    await db.setRoomAutoMerge(Number(data.channelId), data.on === true, me.sub);
+    return await db.getRoomAutoMerge(Number(data.channelId));
+  });
+
 /** Para la card del home: cada repo con los rooms donde está conectado. */
 export const workspaceRoomReposFn = createServerFn({ method: "GET" }).handler(async () => {
   const me = await sessionUser();

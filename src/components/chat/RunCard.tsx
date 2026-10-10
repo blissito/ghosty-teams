@@ -208,8 +208,8 @@ export function RunCard({ card, channelId, inPanel }: { card: RunCardData; chann
         ? [st.loops ? `${t("Vueltas de check")}: ${st.loops}` : "", st.currentStep ?? ""].filter(Boolean).join(" · ")
         : "";
   const TONE = {
-    // Te toca: en ROJO, el mismo rojo de los cuadros del diff (10-oct).
-    you: { ring: "text-red-500", text: "text-red-600 dark:text-red-400", seg: "bg-red-500" },
+    // Te toca: en ÁMBAR (petición, no problema); el rojo queda sólo para lo que falló (10-oct).
+    you: { ring: "text-amber-500", text: "text-amber-700 dark:text-amber-300", seg: "bg-amber-500" },
     work: { ring: "text-brand", text: "text-brand", seg: "bg-brand" },
     done: { ring: "text-violet-500", text: "text-violet-700 dark:text-violet-300", seg: "bg-violet-500" },
     off: { ring: "text-muted", text: "text-muted", seg: "bg-surface-3" },

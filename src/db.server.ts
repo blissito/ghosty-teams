@@ -2368,6 +2368,29 @@ export async function setRoomRepoNotify(channelId: number, repo: string, on: boo
   ]);
 }
 
+// Automerge del room (gt_room_auto_merge): encendido salvo que alguien lo haya apagado.
+export async function getRoomAutoMerge(channelId: number): Promise<{ on: boolean; setBy: string | null; setAt: number | null }> {
+  const rows = await dbq("SELECT enabled, set_by, set_at FROM gt_room_auto_merge WHERE channel_id = ?", [channelId]);
+  if (!rows[0]) return { on: true, setBy: null, setAt: null };
+  return { on: Number(rows[0].enabled) === 1, setBy: String(rows[0].set_by), setAt: Number(rows[0].set_at) };
+}
+
+/** Apagarlo suelta lo que el automerge dejó en cola; lo que una persona picó a mano se queda. */
+export async function setRoomAutoMerge(channelId: number, on: boolean, by: string): Promise<void> {
+  await dbq(
+    "INSERT INTO gt_room_auto_merge (channel_id, enabled, set_by) VALUES (?, ?, ?) ON CONFLICT(channel_id) DO UPDATE SET enabled = excluded.enabled, set_by = excluded.set_by, set_at = unixepoch()",
+    [channelId, on ? 1 : 0, by],
+  );
+  // Encenderlo a mano también alcanza a los que esperaban revisión desde antes del default.
+  if (on)
+    await dbq("UPDATE gt_factory_runs SET merge_queued_auto = NULL WHERE channel_id = ? AND status = 'pr_review' AND merge_queued_auto = 0", [channelId]);
+  else
+    await dbq(
+      "UPDATE gt_factory_runs SET merge_queued_by = NULL, merge_queued_auto = NULL WHERE channel_id = ? AND status = 'pr_review' AND merge_queued_auto = 1",
+      [channelId],
+    );
+}
+
 // Para la card del home: un repo por fila con los rooms donde está conectado. Se agrupa por
 // repo en minúsculas (mismo motivo que arriba) pero se enseña la caja original.
 //
