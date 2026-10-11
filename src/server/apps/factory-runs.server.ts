@@ -1464,6 +1464,16 @@ export async function onPrCiRed(run: Run, headSha: string | null, failed: string
     await postInThread(run, "build", `⚠️ El CI del PR ${run.prUrl ?? ""} sigue en rojo (${what}; ${por}). Necesita que una persona revise el log o le diga a @build qué cambiar.`);
   };
   if (prevs.length >= 2) return pideAyuda("ya se lo regresé a @build dos veces");
+  // Dependabot no tiene @build detrás: un rojo se le dice a una persona, con la pista de si viene
+  // de main (la plataforma puso la rama al día) o de la subida misma.
+  if (String(run.taskRef ?? "").startsWith("dependabot:")) {
+    const ya = await dbq("SELECT 1 FROM gt_factory_events WHERE run_id = ? AND type = 'ci_red_help' AND json_extract(data_json, '$.sha') IS ?", [run.id, headSha]).catch(() => []);
+    if (ya.length) return;
+    await logEvent(run.id, "ci_red_help", null, { sha: headSha, por: "dependabot" });
+    await postInThread(run, "check", `⚠️ El CI de este PR de Dependabot salió en rojo (${what}), así que no entra solo. Mira si el mismo check truena en main (entonces no es la subida); si es la subida, «Pedir arreglo a @build» lo corrige en esta rama. ${run.prUrl ?? ""}`);
+    void refreshRoom(run.channelId);
+    return;
+  }
   const [w] = await dbq("SELECT origin FROM gt_agent_wakeups WHERE key LIKE ? AND origin IS NOT NULL AND origin != '' ORDER BY rowid DESC LIMIT 1", [`factory:${run.id}:%`]).catch(() => []);
   const origin = String(w?.origin ?? "");
   if (!origin) return pideAyuda("no pude mandarle el encargo a @build");
