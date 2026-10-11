@@ -624,7 +624,10 @@ export async function runLive(run: import("./factory-runs.server").Run) {
   // El rol preguntó y espera a la persona (`waiting_person` es el último evento).
   const [ev] = await dbq("SELECT type, actor FROM gt_factory_events WHERE run_id = ? ORDER BY id DESC LIMIT 1", [run.id]).catch(() => []);
   const waitingOn = !live && ev?.type === "waiting_person" ? String(ev.actor ?? "") || null : null;
-  const view = viewState(run, { lastActivityAt, now, busy: !!live, waitingOn });
+  const [mq] = run.status === "pr_review" ? await dbq("SELECT merge_queued_by, merge_queued_auto FROM gt_factory_runs WHERE id = ?", [run.id]).catch(() => []) : [];
+  const { mergeMode } = await import("./factory-flow");
+  const merge = mq ? mergeMode(mq.merge_queued_by, mq.merge_queued_auto, (await (await import("../../db.server")).getRoomAutoMerge(run.channelId).catch(() => null))?.on ?? false) : null;
+  const view = viewState(run, { lastActivityAt, now, busy: !!live, waitingOn, merge });
   return {
     view,
     waitingOn,
@@ -824,7 +827,7 @@ export const factoryOverviewFn = createServerFn({ method: "GET" })
   const { dbq } = await import("../../dbq.server");
   const rows = room
     ? await dbq(
-        `SELECT id, channel_id, root_msg_id, title, status, repo, loops, created_at, pr_ready_at, first_review_at, first_review_state, merged_at, pr_url, kind, requested_by, approved_by, box_state,
+        `SELECT id, channel_id, root_msg_id, title, status, repo, loops, created_at, pr_ready_at, first_review_at, first_review_state, merged_at, pr_url, kind, requested_by, approved_by, box_state, merge_queued_by, merge_queued_auto,
                 MAX(COALESCE((SELECT MAX(at) FROM gt_factory_events e WHERE e.run_id = gt_factory_runs.id), 0),
                     COALESCE((SELECT MAX(created_at) FROM gc_messages m WHERE m.channel_id = gt_factory_runs.channel_id AND m.parent_id = gt_factory_runs.root_msg_id), 0),
                     updated_at) AS last_at
@@ -834,16 +837,22 @@ export const factoryOverviewFn = createServerFn({ method: "GET" })
     : [];
   // El tablero es una VISTA: la columna sale de `viewState` (estado + última actividad + turno
   // en vuelo), igual que la barra del hilo. Sin datos propios.
-  const { viewState } = await import("./factory-flow");
+  const { viewState, mergeMode } = await import("./factory-flow");
   const turns = await import("../turns.server");
   const { currentNamespace } = await import("../tenant.server");
   const live = turns.allLiveTurnStates(await currentNamespace());
+  const roomAuto = room ? ((await db.getRoomAutoMerge(room.id).catch(() => null))?.on ?? false) : false;
   const now = Math.floor(Date.now() / 1000);
   const viewOf = (r: Record<string, any>) => {
     if (["done", "cancelled"].includes(String(r.status))) return { column: null, label: null, turnSub: null };
     const v = viewState(
       { status: r.status, requestedBy: String(r.requested_by), approvedBy: r.approved_by ?? null, boxWaiting: r.box_state === "waiting" },
-      { lastActivityAt: Number(r.last_at ?? now), now, busy: live.some((t) => t.channelId === Number(r.channel_id) && t.parentId === Number(r.root_msg_id)) },
+      {
+        lastActivityAt: Number(r.last_at ?? now),
+        now,
+        busy: live.some((t) => t.channelId === Number(r.channel_id) && t.parentId === Number(r.root_msg_id)),
+        merge: r.status === "pr_review" ? mergeMode(r.merge_queued_by, r.merge_queued_auto, roomAuto) : null,
+      },
     );
     return { column: v.column, label: v.label, turnSub: v.whoseTurn?.kind === "person" ? v.whoseTurn.sub : null };
   };

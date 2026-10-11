@@ -128,7 +128,15 @@ export type RunView = {
 
 export function viewState(
   run: { status: RunStatus; requestedBy: string; approvedBy?: string | null; boxWaiting?: boolean },
-  opts: { lastActivityAt: number; now: number; busy: boolean; staleAfter?: number; waitingOn?: string | null },
+  opts: {
+    lastActivityAt: number;
+    now: number;
+    busy: boolean;
+    staleAfter?: number;
+    waitingOn?: string | null;
+    /** PR aprobado que entra solo: `auto` = automerge del room, `queued` = alguien picó «Merge» con el CI corriendo. */
+    merge?: "auto" | "queued" | null;
+  },
 ): RunView {
   const open = !["done", "cancelled"].includes(run.status);
   // Firmado pero sin lugar en el tier: espera su caja. No es «Construyendo» ni «Sin avanzar», y
@@ -152,6 +160,8 @@ export function viewState(
     case "checking":
       return { column: stale ? "waiting" : "checking", label: stale ? "Sin avanzar" : "En revisión", stale, whoseTurn: stale ? owner : { kind: "agent", handle: "check" }, primary: stale ? "resume" : "stop" };
     case "pr_review":
+      // Entra solo: no le toca a nadie (no cuenta en «Sólo lo mío») y no se pide «Merge».
+      if (opts.merge) return { column: "ready", label: opts.merge === "auto" ? "Se mergea solo" : "Merge en cola", stale: false, whoseTurn: null, primary: null };
       return { column: "ready", label: "Listo para merge", stale: false, whoseTurn: reviewer, primary: "merge" };
     case "escalated":
       return { column: "waiting", label: "Necesita tu decisión", stale: false, whoseTurn: owner, primary: "decide" };
@@ -168,4 +178,14 @@ export function withClosingRef(body: string | null | undefined, n: number): stri
   const b = String(body ?? "");
   if (new RegExp(`\\b(close[sd]?|fix(e[sd])?|resolve[sd]?)\\s*:?\\s+#${n}\\b`, "i").test(b)) return b;
   return `${b.replace(/\s+$/, "")}${b.trim() ? "\n\n" : ""}Closes #${n}`;
+}
+
+/**
+ * Si un PR aprobado entra solo. `queuedBy`/`queuedAuto` son las columnas del pedido; `roomAuto`,
+ * el automerge del room. Con el room encendido y el pedido aún sin ver (NULL) también es `auto`:
+ * el tick lo forma en la cola en la siguiente vuelta. `queuedAuto = 0` = anterior al default.
+ */
+export function mergeMode(queuedBy: unknown, queuedAuto: unknown, roomAuto: boolean): "auto" | "queued" | null {
+  if (queuedBy) return Number(queuedAuto) === 1 ? "auto" : "queued";
+  return roomAuto && queuedAuto == null ? "auto" : null;
 }

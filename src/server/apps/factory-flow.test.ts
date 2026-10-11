@@ -118,3 +118,14 @@ describe("pedido en espera de caja", () => {
     expect(normal.label).toBe("Construyendo");
   });
 });
+
+describe("mergeMode", () => {
+  it("la cola del automerge, la de una persona y el room encendido sin ver", async () => {
+    const { mergeMode } = await import("./factory-flow");
+    expect(mergeMode("u1", 1, false)).toBe("auto");
+    expect(mergeMode("u1", null, false)).toBe("queued");
+    expect(mergeMode(null, null, true)).toBe("auto");
+    expect(mergeMode(null, 0, true)).toBeNull();
+    expect(mergeMode(null, null, false)).toBeNull();
+  });
+});

@@ -5962,7 +5962,7 @@ function RepoButton({ channelId }: { channelId: number }) {
 
 // ── Automerge del room ───────────────────────────────────────────────────────
 // Encendido por default (10-oct): lo que @check aprueba entra solo en cuanto el CI pasa. El
-// estado vive a la vista en el encabezado —pastilla verde si está encendido, ícono apagado si
+// estado vive a la vista en el encabezado —pastilla violeta (el color de merge) si está encendido, ícono apagado si
 // no— y se apaga desde ahí mismo. Sólo en rooms con repo y con la fábrica instalada.
 function AutoMergeChip({ channelId }: { channelId: number }) {
   const t = useT();
@@ -6006,7 +6006,7 @@ function AutoMergeChip({ channelId }: { channelId: number }) {
         aria-label={label}
         className={
           on
-            ? `flex h-7 shrink-0 items-center gap-1.5 rounded-full bg-emerald-600/12 px-2.5 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-600/25 transition hover:bg-emerald-600/20 dark:text-emerald-300 ${open ? "bg-emerald-600/20" : ""}`
+            ? `flex h-7 shrink-0 items-center gap-1.5 rounded-full bg-violet-600/12 px-2.5 text-xs font-semibold text-violet-700 ring-1 ring-violet-600/25 transition hover:bg-violet-600/20 dark:text-violet-300 ${open ? "bg-violet-600/20" : ""}`
             : `flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted/60 transition hover:bg-surface-3 hover:text-ink ${open ? "bg-surface-3 text-ink" : ""}`
         }
       >
@@ -6018,14 +6018,14 @@ function AutoMergeChip({ channelId }: { channelId: number }) {
           <div className="fixed inset-0 z-40 bg-black/40 sm:bg-transparent" onClick={() => setOpen(false)} />
           <div className="fixed inset-x-2 top-14 z-50 max-w-[calc(100vw-1rem)] overflow-hidden rounded-xl border border-border bg-surface shadow-2xl ring-1 ring-black/10 sm:absolute sm:inset-x-auto sm:right-0 sm:top-auto sm:mt-1 sm:w-[20rem] dark:ring-white/10">
             <div className="flex items-center gap-3 px-3 py-3">
-              <span className={`flex size-8 shrink-0 items-center justify-center rounded-lg ${on ? "bg-emerald-600/12 text-emerald-700 dark:text-emerald-300" : "bg-surface-3 text-muted"}`}>
+              <span className={`flex size-8 shrink-0 items-center justify-center rounded-lg ${on ? "bg-violet-600/12 text-violet-700 dark:text-violet-300" : "bg-surface-3 text-muted"}`}>
                 <GitMerge size={16} />
               </span>
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-semibold text-ink">{t("Automerge")}</p>
                 <p className="text-xs text-muted">{on ? t("Encendido en este room") : t("Apagado en este room")}</p>
               </div>
-              <Toggle on={on} onChange={cambiar} disabled={busy} label={t("Automerge")} />
+              <Toggle on={on} onChange={cambiar} disabled={busy} label={t("Automerge")} onClass="bg-violet-600" />
             </div>
             <p className="border-t border-border px-3 py-2 text-[11px] leading-snug text-muted">
               {on

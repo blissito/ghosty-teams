@@ -11,12 +11,15 @@ export function Toggle({
   onChange,
   disabled,
   label,
+  onClass = "bg-brand",
 }: {
   on: boolean;
   onChange: (v: boolean) => void;
   disabled?: boolean;
   /** Para cuando el texto de al lado no es un `<label>` asociado. */
   label?: string;
+  /** Color del track encendido, cuando el switch representa algo con color propio (merge = violeta). */
+  onClass?: string;
 }) {
   return (
     <button
@@ -30,7 +33,7 @@ export function Toggle({
       // bolita —que mide 20 y no encoge— se salía por la derecha. Se veía roto justo donde
       // el interruptor convive con texto largo, que es casi siempre.
       className={`relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-50 ${
-        on ? "bg-brand" : "bg-surface-3"
+        on ? onClass : "bg-surface-3"
       }`}
     >
       {/* El desplazamiento va por `translate` y no por `left`: así depende del ancho real

@@ -593,7 +593,7 @@ function FactoryPage() {
                 .replace("{d}", String(data.stats.escalated))}
             </p>
 
-            {/* Como la lista de issues/PRs de GitHub: «N Pendientes · N Cerrados» en la cabecera. */}
+            {/* Como la lista de issues/PRs de GitHub: «N abiertos · N cerrados» en la cabecera. */}
             <div className="mt-3 overflow-hidden rounded-xl border border-border">
               <div className="flex gap-4 border-b border-border bg-surface-2 px-3 py-2" role="tablist">
                 {(["open", "closed"] as const).map((f) => {
@@ -609,15 +609,15 @@ function FactoryPage() {
                       className={`inline-flex items-center gap-1.5 text-sm ${filter === f ? "font-semibold text-ink" : "text-muted hover:text-ink"}`}
                     >
                       <Icon size={15} className="shrink-0" />
-                      {n} {f === "open" ? t("Pendientes") : t("Cerrados")}
+                      {n} {f === "open" ? (n === 1 ? t("abierto") : t("abiertos")) : n === 1 ? t("cerrado") : t("cerrados")}
                     </button>
                   );
                 })}
               </div>
             {filter === "open" && (
               <div className="flex items-center gap-2 border-b border-border px-3 py-1.5">
-                <span className="text-xs text-muted">{t("Me toca")}</span>
-                <Toggle on={onlyMine} onChange={setOnlyMine} label={t("Me toca")} />
+                <span className="text-xs text-muted">{t("Sólo lo mío")}</span>
+                <Toggle on={onlyMine} onChange={setOnlyMine} label={t("Sólo lo mío")} />
               </div>
             )}
             {runs.length === 0 && <p className="px-3 py-4 text-sm text-muted">{filter === "open" ? t("Nadie está trabajando en un pedido ahora.") : t("Todavía no hay pedidos cerrados.")}</p>}
@@ -651,7 +651,7 @@ function FactoryPage() {
                   </div>
                   <span
                     className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                      r.status === "done"
+                      r.status === "done" || r.label === "Se mergea solo" || r.label === "Merge en cola"
                         ? "bg-violet-600/15 text-violet-700 dark:text-violet-300"
                         : r.status === "cancelled"
                           ? "bg-surface-3 text-muted"
