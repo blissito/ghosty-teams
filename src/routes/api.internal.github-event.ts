@@ -135,6 +135,11 @@ export const Route = createFileRoute("/api/internal/github-event")({
             return Response.json({ ok: true, recorded, asked });
           }
           const { enqueuePostMerge } = await import("../server/apps/post-merge.server");
+          // Un PR de Dependabot recién abierto se vuelve pedido de revisión (no aviso suelto).
+          if (ev.action === "opened" && !ev.draft) {
+            const { adoptDependabotPr } = await import("../server/apps/dependabot.server");
+            for (const c of await adoptDependabotPr(ev)) runRooms.add(c);
+          }
           const prRuns = await runsByPr(ev.repo, ev.number);
           // PR sin pedido: si alguien le levantó preview con el botón de su tarjeta, su caja aparte
           // se tira al mezclar o cerrar (la de un pedido la tira `onPrEvent`). Sin caja, gs no hace nada.

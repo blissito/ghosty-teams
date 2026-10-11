@@ -118,7 +118,7 @@ export function ReviewBody({ st }: { st: NonNullable<State> }) {
     [t("Cambios"), <span className="font-mono">{v.files} {v.files === 1 ? t("archivo") : t("archivos")} · <span className="text-emerald-600">+{v.additions}</span> <span className="text-red-500">−{v.deletions}</span></span>],
     ["CI", <span className={ci.cls}>{ci.txt}</span>],
     // Antes decía «contra el plan v2», que no dice si pasó: @check sólo llega aquí si lo aprobó.
-    ["@check", <span>{t("✓ cumple el plan")} v{v.planVersion}{v.loops ? ` · ${v.loops} ${v.loops === 1 ? t("vuelta de corrección") : t("vueltas de corrección")}` : ` · ${t("a la primera")}`}</span>],
+    ["@check", <span>{v.planVersion ? <>{t("✓ cumple el plan")} v{v.planVersion}</> : t("✓ aprobado")}{v.loops ? ` · ${v.loops} ${v.loops === 1 ? t("vuelta de corrección") : t("vueltas de corrección")}` : ` · ${t("a la primera")}`}</span>],
   ];
   // Riesgo: dice cuánto cuidado pide la revisión humana (veredictos anteriores al 28-sep no lo traen).
   if (v.risk) {

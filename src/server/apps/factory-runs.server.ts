@@ -1368,7 +1368,9 @@ export async function closeFinishedRuns(): Promise<void> {
       const { getRoomAutoMerge } = await import("../../db.server");
       const am = await getRoomAutoMerge(run.channelId).catch(() => null);
       const by = run.approvedBy ?? run.requestedBy;
-      const took = am?.on && by
+      // Un major de Dependabot nunca entra solo: semver dice que puede romper.
+      const { blocksAutoMerge } = await import("./dependabot.server");
+      const took = am?.on && by && !blocksAutoMerge(run.taskRef)
         ? await dbq("UPDATE gt_factory_runs SET merge_queued_by = ?, merge_queued_auto = 1 WHERE id = ? AND merge_queued_by IS NULL AND merge_queued_auto IS NULL RETURNING id", [by, run.id]).catch(() => [])
         : [];
       if (took.length) {

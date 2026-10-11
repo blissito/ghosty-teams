@@ -438,7 +438,7 @@ export function MergeBox({ st, busy, onMerge, onClose }: { st: VerdictState; bus
         {dot("bg-emerald-600", "✓")}
         <div className="min-w-0 flex-1">
           <p className="text-[13.5px] font-semibold text-ink">{t("@check aprobó el PR")}</p>
-          <p className="text-xs text-muted">{st.verdict.loops ? `${t("tras")} ${st.verdict.loops} ${st.verdict.loops === 1 ? t("vuelta") : t("vueltas")}` : t("a la primera")} · {t("cumple el plan")} v{st.verdict.planVersion}</p>
+          <p className="text-xs text-muted">{st.verdict.loops ? `${t("tras")} ${st.verdict.loops} ${st.verdict.loops === 1 ? t("vuelta") : t("vueltas")}` : t("a la primera")}{st.verdict.planVersion ? <> · {t("cumple el plan")} v{st.verdict.planVersion}</> : null}</p>
         </div>
         <button type="button" onClick={onClose} className="text-muted hover:text-ink" aria-label={t("Cerrar")}>×</button>
       </div>
