@@ -5,7 +5,7 @@
 // revisión de @check (qué cambia, riesgo, qué leer) y deja hacer merge aquí: antes eso sólo vivía
 // en el hilo y desde el room se veía «el PR espera tu revisión» sin decir qué revisar.
 import { ChatCtx } from "./message";
-import { useCallback, useContext, useEffect, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useT } from "../../i18n";
 import { useRtSubscribe } from "../../utils/rt-bus";
 import { type VerdictState } from "./VerdictCard";
@@ -43,7 +43,40 @@ export function escalationLine(loops: number, t: (s: string) => string): string 
     : t("@build no puede resolverlo con sus herramientas: ¿otra vuelta o replanear?");
 }
 
-export function RunCard({ card, channelId, inPanel }: { card: RunCardData; channelId: number; inPanel?: boolean }) {
+/**
+ * La tarjeta cambia de forma al avanzar (PR listo → merge → terminado) y antes saltaba de golpe:
+ * se perdía de vista. Este marco anima su ALTURA entre un estado y otro (FLIP con ResizeObserver)
+ * y el contenido entra con un fundido corto (`gt-morph-in`, en la tarjeta).
+ */
+function Morph({ children }: { children: ReactNode }) {
+  const outer = useRef<HTMLDivElement>(null);
+  const inner = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = inner.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    let last = el.offsetHeight;
+    const ro = new ResizeObserver(() => {
+      const h = el.offsetHeight;
+      const prev = last;
+      last = h;
+      if (!prev || Math.abs(h - prev) < 6 || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+      outer.current?.animate([{ height: `${prev}px` }, { height: `${h}px` }], { duration: 420, easing: "cubic-bezier(.2,.8,.2,1)" });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return (
+    <div ref={outer} className="overflow-clip [overflow-clip-margin:8px]">
+      <div ref={inner} className="flow-root">{children}</div>
+    </div>
+  );
+}
+
+export function RunCard(props: { card: RunCardData; channelId: number; inPanel?: boolean }) {
+  return props.inPanel ? <RunCardBody {...props} /> : <Morph><RunCardBody {...props} /></Morph>;
+}
+
+function RunCardBody({ card, channelId, inPanel }: { card: RunCardData; channelId: number; inPanel?: boolean }) {
   const { onOpenArtifact } = useContext(ChatCtx);
   const t = useT();
   const [st, setSt] = useState<State>(null);
@@ -261,7 +294,7 @@ export function RunCard({ card, channelId, inPanel }: { card: RunCardData; chann
       <div className="px-3.5">
         <div className="flex gap-[3px]" aria-hidden>
           {TRACK.map((seg) => (
-            <i key={seg.key} className={`h-1 flex-1 rounded-full ${segCls(seg)}`} />
+            <i key={seg.key} className={`h-1 flex-1 rounded-full transition-colors duration-700 ${segCls(seg)}`} />
           ))}
         </div>
         <div className="mt-1 flex gap-[3px] text-[10px] text-muted">
@@ -332,7 +365,9 @@ export function RunCard({ card, channelId, inPanel }: { card: RunCardData; chann
   }
 
   return (
-    <div className="mt-1.5 max-w-xl overflow-hidden rounded-lg gt-card">
+    // `party` = esta pestaña vio el merge: entra con fundido y se queda con el anillo violeta
+    // (clase activa) para que no se pierda entre el resto del room.
+    <div className={`mt-1.5 max-w-xl overflow-hidden rounded-lg gt-card ${party && !inPanel ? "gt-merged" : ""}`}>
       {/* Id negativo: el «ya celebró» de FxOverlay es por mensaje y éste no es uno. */}
       {party && !inPanel && <FxOverlay messageId={-st.runId} fx="confetti" />}
       {header}

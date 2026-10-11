@@ -213,6 +213,21 @@ body {
   from { opacity: 0; transform: translateY(-4px) scaleY(.96); }
   to { opacity: 1; transform: none; }
 }
+/* Tarjeta del pedido que se acaba de mergear a la vista: entra con un fundido y se QUEDA con un
+   anillo violeta (el color de merge) mientras la pestaña viva. `outline` y no borde: no mueve el
+   layout ni lo tapa un hijo. */
+@keyframes gt-merged-in {
+  0% { opacity: .55; transform: scale(.985); outline-color: color-mix(in oklab, var(--color-violet-500) 70%, transparent); background-color: color-mix(in oklab, var(--color-violet-500) 14%, var(--color-card)); }
+  100% { opacity: 1; transform: none; outline-color: color-mix(in oklab, var(--color-violet-500) 40%, transparent); background-color: var(--color-card); }
+}
+.gt-merged {
+  outline: 2px solid color-mix(in oklab, var(--color-violet-500) 40%, transparent);
+  outline-offset: -1px;
+  animation: gt-merged-in .7s cubic-bezier(.2,.8,.2,1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .gt-merged { animation: none; }
+}
 @keyframes gc-flash {
   0% { background-color: color-mix(in oklab, var(--color-brand) 28%, transparent); }
   100% { background-color: transparent; }
