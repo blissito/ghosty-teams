@@ -148,8 +148,15 @@ export function ReviewPanel({ runId, channelId }: { runId: number; channelId: nu
         {/* El esfuerzo manda: dice cuánto tiempo apartar antes de abrir el diff. Un solo tono que
             se llena (patrón de Qodo, en tinta y no en azul): el tamaño no es una alerta, y el color
             queda libre para lo que sí avisa (10-oct). */}
+        {/* Un clic en la tarjeta abre el diff del PR (pedido de bliss, 10-oct). */}
         {e && (
-          <section className="grid grid-cols-[auto_1fr] items-center gap-x-5 gap-y-3 rounded-2xl bg-surface-2 p-4">
+          <a
+            href={st.prUrl ? `${st.prUrl}/files` : undefined}
+            target="_blank"
+            rel="noreferrer"
+            title={st.prUrl ? t("Abrir el PR en GitHub") : undefined}
+            className={`grid grid-cols-[auto_1fr] items-center gap-x-5 gap-y-3 rounded-2xl bg-surface-2 p-4 ${st.prUrl ? "cursor-pointer ring-brand/40 transition hover:bg-surface-3 hover:ring-1" : ""}`}
+          >
             <div className="text-6xl font-bold leading-[.9] tracking-tight text-ink tabular-nums">
               {e.score}
               <span className="text-xl font-medium tracking-normal text-muted">/5</span>
@@ -182,7 +189,7 @@ export function ReviewPanel({ runId, channelId }: { runId: number; channelId: nu
                 ✓ @check {v.loops ? `${t("tras")} ${v.loops} ${v.loops === 1 ? t("vuelta") : t("vueltas")}` : t("a la primera")}
               </span>
             </div>
-          </section>
+          </a>
         )}
 
         {v.summary ? <p className="text-[15px] leading-relaxed text-ink">{v.summary}</p> : null}
