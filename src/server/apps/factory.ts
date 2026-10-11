@@ -849,7 +849,19 @@ export const factoryOverviewFn = createServerFn({ method: "GET" })
   const roomAuto = room ? ((await db.getRoomAutoMerge(room.id).catch(() => null))?.on ?? false) : false;
   const { blocksAutoMerge } = await import("./dependabot.server");
   const now = Math.floor(Date.now() / 1000);
+  // Mergeado pero todavía desplegando (o el deploy falló en las últimas 24 h): sigue ABIERTO en el
+  // tablero. Antes pasaba directo a «cerrados» y nadie veía que prod no había llegado.
+  const deploys = new Map<number, string>();
+  if (room)
+    for (const d of await dbq("SELECT pr, state FROM gt_post_merge WHERE channel_id = ? AND started_at > unixepoch() - 86400", [room.id]).catch(() => []))
+      deploys.set(Number(d.pr), String(d.state));
   const viewOf = (r: Record<string, any>) => {
+    if (String(r.status) === "done") {
+      const prNum = Number(String(r.pr_url ?? "").match(/\/pull\/(\d+)/)?.[1] ?? 0);
+      const st = deploys.get(prNum);
+      if (st === "pending") return { column: "deploying", label: "Desplegando…", turnSub: null };
+      if (st === "failed") return { column: "deploying", label: "El deploy falló", turnSub: null };
+    }
     if (["done", "cancelled"].includes(String(r.status))) return { column: null, label: null, turnSub: null };
     const v = viewState(
       { status: r.status, requestedBy: String(r.requested_by), approvedBy: r.approved_by ?? null, boxWaiting: r.box_state === "waiting" },

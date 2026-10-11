@@ -49,11 +49,15 @@ export const Route = createFileRoute("/factory")({
 /** Columnas del tablero, en orden: lo que espera a una persona arriba. Ver `viewState`. */
 const COLUMNS = [
   { key: "waiting", label: "Espera a una persona" },
+  { key: "deploying", label: "Desplegando a producción" },
   { key: "ready", label: "Listo para merge" },
   { key: "planning", label: "Planeando" },
   { key: "building", label: "Construyendo" },
   { key: "checking", label: "En revisión" },
 ] as const;
+
+/** Cerrado = terminado o cancelado, salvo el mergeado que sigue desplegando (o cuyo deploy falló). */
+const isClosed = (r: { status: string; column: string | null }) => ["done", "cancelled"].includes(r.status) && r.column !== "deploying";
 
 const STAGE: Record<string, string> = {
   planning: "Plan",
@@ -496,7 +500,7 @@ function FactoryPage() {
   const runs = useMemo(
     () =>
       (data?.runs ?? [])
-        .filter((r) => ["done", "cancelled"].includes(r.status) === (filter === "closed"))
+        .filter((r) => isClosed(r) === (filter === "closed"))
         .filter((r) => filter === "closed" || !onlyMine || r.turnSub === data?.meSub),
     [data, filter, onlyMine],
   );
@@ -597,7 +601,7 @@ function FactoryPage() {
             <div className="mt-3 overflow-hidden rounded-xl border border-border">
               <div className="flex gap-4 border-b border-border bg-surface-2 px-3 py-2" role="tablist">
                 {(["open", "closed"] as const).map((f) => {
-                  const n = (data.runs ?? []).filter((r) => ["done", "cancelled"].includes(r.status) === (f === "closed")).length;
+                  const n = (data.runs ?? []).filter((r) => isClosed(r) === (f === "closed")).length;
                   const Icon = f === "open" ? CircleDot : Check;
                   return (
                     <button
@@ -651,8 +655,10 @@ function FactoryPage() {
                   </div>
                   <span
                     className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                      r.status === "done" || r.label === "Se mergea solo" || r.label === "Merge en cola"
-                        ? "bg-violet-600/15 text-violet-700 dark:text-violet-300"
+                      r.label === "El deploy falló"
+                        ? "bg-red-500/12 text-red-600 dark:text-red-400"
+                        : r.status === "done" || r.label === "Se mergea solo" || r.label === "Merge en cola"
+                        ? `bg-violet-600/15 text-violet-700 dark:text-violet-300${r.label === "Desplegando…" ? " animate-pulse motion-reduce:animate-none" : ""}`
                         : r.status === "cancelled"
                           ? "bg-surface-3 text-muted"
                           : r.status === "escalated"
