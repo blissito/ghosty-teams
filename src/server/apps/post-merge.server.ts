@@ -252,8 +252,65 @@ async function step(row: Row): Promise<void> {
   return finish(row, "ok", verdict.kind === "green" ? `${runs.length} workflow(s) verdes` : "sin workflows");
 }
 
+/**
+ * Un deploy que falló y luego se RELANZÓ en verde (a mano con «Run workflow», o el de un merge
+ * posterior que ya incluye este commit): el paso «Prod» seguía en rojo para siempre, porque la
+ * fila se cerraba al primer fallo y sólo se leían runs de `push` (mailmask #40/#41, 10-oct, con
+ * prod ya sirviendo el commit). Se vuelve a mirar cada 2 min durante 24 h. Las fallas de la
+ * smoke (el sitio no responde) no se recuperan aquí: ésas sí piden a una persona.
+ */
+async function recoverFailedDeploys(): Promise<void> {
+  const rows = await dbq(
+    `SELECT * FROM gt_post_merge WHERE state = 'failed' AND merge_sha IS NOT NULL AND started_at > unixepoch() - 86400
+       AND next_at <= unixepoch() AND COALESCE(result, '') NOT LIKE 'smoke:%' ORDER BY next_at LIMIT 5`,
+  ).catch(() => []);
+  const { githubApi } = await import("../connectors/github.server");
+  for (const r of rows) {
+    const row: Row = {
+      id: Number(r.id), channelId: Number(r.channel_id), parentId: r.parent_id == null ? null : Number(r.parent_id), repo: String(r.repo),
+      pr: Number(r.pr), mergeSha: String(r.merge_sha), sub: String(r.sub), startedAt: Number(r.started_at),
+      noticeMsgId: r.notice_msg_id == null ? null : Number(r.notice_msg_id), result: r.result == null ? null : String(r.result),
+    };
+    await dbq("UPDATE gt_post_merge SET next_at = unixepoch() + 120 WHERE id = ?", [row.id]).catch(() => {});
+    try {
+      const workflow = String(row.result ?? "").split(":")[0].trim();
+      const repoInfo = await githubApi(row.sub, `/repos/${row.repo}`);
+      if (repoInfo?.error) continue;
+      const branch = encodeURIComponent(String(repoInfo?.default_branch ?? "main"));
+      const list = await githubApi(row.sub, `/repos/${row.repo}/actions/runs?branch=${branch}&status=success&per_page=20`);
+      const runs: (WorkflowRun & { head_sha: string; created_at: string })[] = Array.isArray(list?.workflow_runs) ? list.workflow_runs : [];
+      let ok: (typeof runs)[number] | null = null;
+      for (const run of runs) {
+        if (workflow && run.name !== workflow) continue;
+        if (Date.parse(run.created_at) / 1000 < row.startedAt) continue;
+        if (run.head_sha === row.mergeSha) { ok = run; break; }
+        // Un run de un commit posterior que CONTIENE el del merge también lo desplegó.
+        const cmp = await githubApi(row.sub, `/repos/${row.repo}/compare/${row.mergeSha}...${run.head_sha}`);
+        if (cmp?.status === "ahead" || cmp?.status === "identical") { ok = run; break; }
+      }
+      if (!ok) continue;
+      await finish(row, "ok", `relanzado: ${ok.name} verde`);
+      const R = await import("./factory-runs.server");
+      for (const run of await R.runsByPr(row.repo, row.pr)) {
+        if (run.channelId === row.channelId) await R.logEvent(run.id, "deployed", null, { sha: row.mergeSha, urls: [], workflows: [ok.name], recovered: ok.html_url });
+      }
+      if (row.noticeMsgId) {
+        const db = await import("../../db.server");
+        const notice = await db.getMessage(row.noticeMsgId);
+        const { currentNamespace } = await import("../tenant.server");
+        const { agentReact } = await import("../agent-ack.server");
+        if (notice) await agentReact(await currentNamespace(), notice.id, notice.agent_handle ?? "check", "✅");
+      }
+      await postThread(row, `✅ #${row.pr} ya está en producción: «${ok.name}» se relanzó y salió verde · [ver run](${ok.html_url})`);
+    } catch (e) {
+      console.warn(`[post-merge] recuperar ${row.repo}#${row.pr}: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+}
+
 /** Lo llama el tick de wakeups. Un PR que truena no frena a los demás. */
 export async function sweepPostMerge(): Promise<void> {
+  await recoverFailedDeploys().catch(() => {});
   const rows = await dbq(
     "SELECT * FROM gt_post_merge WHERE state = 'pending' AND next_at <= unixepoch() ORDER BY next_at LIMIT 10",
   ).catch(() => []);
