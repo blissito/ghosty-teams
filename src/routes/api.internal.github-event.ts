@@ -120,6 +120,9 @@ export const Route = createFileRoute("/api/internal/github-event")({
             const runs = await runsByPr(ev.repo, ev.number);
             const { sweepRunNow } = await import("../server/apps/factory-runs.server");
             for (const run of runs) if (run.status === "pr_review") await sweepRunNow(run);
+            // Terminó un CI: las tarjetas de esos pedidos se repintan ya (paso CI y «entra solo»).
+            const { refreshRoom } = await import("../server/apps/factory-runs.server");
+            for (const c of new Set(runs.map((r) => r.channelId))) void refreshRoom(c);
             await (await import("../server/pr-watches.server")).sweepPrWatchesNow();
             return Response.json({ ok: true, runs: runs.length });
           }

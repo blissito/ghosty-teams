@@ -79,9 +79,9 @@ export function MergeQueued({ st }: { st?: State }) {
   const done = checks.filter((c) => c.state !== "pending").length;
   return (
     <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
-      <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/15 px-3 py-1 text-xs font-semibold text-amber-700 dark:text-amber-300" role="status">
-        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500 motion-reduce:animate-none" aria-hidden />
-        {t("Merge en cola: entra solo cuando pase el CI")}
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-violet-500/15 px-3 py-1 text-xs font-semibold text-violet-700 dark:text-violet-300" role="status">
+        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-violet-500 motion-reduce:animate-none" aria-hidden />
+        {st?.mergeAuto ? t("Automerge: entra solo en cuanto pase el CI") : t("Merge en cola: entra solo cuando pase el CI")}
         {checks.length ? <span className="font-normal opacity-80">· {done}/{checks.length} {t("checks")}</span> : null}
       </span>
       {st?.prUrl && (

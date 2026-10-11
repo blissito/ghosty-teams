@@ -535,7 +535,9 @@ export const factoryRunCardFn = createServerFn({ method: "POST" })
       // Firmado pero sin lugar en el tier: la tarjeta dice «En espera de lugar», no «Arrancando…».
       boxWaiting: !!run.boxWaiting && run.status === "building",
       // «Merge» picado con el CI corriendo: entra solo al pasar.
-      mergeQueued: run.status === "pr_review" ? !!(await (await import("../../dbq.server")).dbq("SELECT merge_queued_by FROM gt_factory_runs WHERE id = ?", [run.id]))[0]?.merge_queued_by : false,
+      ...(await mergeStateOf(run)),
+      // Dependabot entra directo a revisión: Plan y Firma no existieron (la barra los apaga).
+      kind: (await (await import("../../dbq.server")).dbq("SELECT kind FROM gt_factory_runs WHERE id = ?", [run.id]).catch(() => []))[0]?.kind ?? null,
       // Cancelado: en qué etapa iba y por qué, para conservar las ✓ de lo que sí se hizo.
       cancelled: run.status === "cancelled" ? await cancelledView(run, me.sub) : null,
       ...(await runLive(run)),
@@ -994,7 +996,7 @@ export const factoryVerdictFn = createServerFn({ method: "POST" })
     // ¿Choca con la rama base? Para la caja de merge («Sin conflictos con main»), como GitHub.
     const mergeable = run.prUrl && run.status === "pr_review" ? await liveMergeable(run.approvedBy ?? run.requestedBy ?? me.sub, run.prUrl) : null;
     const { dbq: q } = await import("../../dbq.server");
-    const mergeQueued = run.status === "pr_review" && !!(await q("SELECT merge_queued_by FROM gt_factory_runs WHERE id = ?", [run.id]))[0]?.merge_queued_by;
+    const { mergeQueued, mergeAuto } = await mergeStateOf(run);
     // Para el panel de revisión: esfuerzo (sin modelo), la estafeta a escala de tiempo y lo que se pidió.
     const { reviewEffort } = await import("../../lib/review-effort");
     const { relaySegments } = await import("../../lib/factory-relay");
@@ -1003,7 +1005,7 @@ export const factoryVerdictFn = createServerFn({ method: "POST" })
     const relay = relaySegments(evs.map((e) => ({ at: Number(e.at), type: String(e.type) })), Math.floor(Date.now() / 1000));
     const approved = [...evs].reverse().find((e) => String(e.type) === "approve");
     return {
-      runId: run.id, title: run.title, status: run.status, repo: run.repo, prUrl: run.prUrl, verdict, shots, preview: await R.runPreview(run.id), ci, mergeQueued,
+      runId: run.id, title: run.title, status: run.status, repo: run.repo, prUrl: run.prUrl, verdict, shots, preview: await R.runPreview(run.id), ci, mergeQueued, mergeAuto,
       mergeable, effort, relay, approvedAt: approved ? Number(approved.at) : null, branch: run.branch, events: evs.length,
     };
   });
@@ -1461,3 +1463,19 @@ export const factoryUptimeRemoveFn = createServerFn({ method: "POST" })
     await U.removeUptimeCheck(Number(data.channelId), Number(data.id));
     return await U.listUptimeChecks(Number(data.channelId));
   });
+
+/**
+ * ¿El PR aprobado entra solo? `mergeQueued` = hay merge en cola; `mergeAuto` = lo puso (o lo va
+ * a poner en la siguiente vuelta) el automerge del room, no una persona. La tarjeta lo pinta en
+ * violeta y deja de decir «te toca».
+ */
+async function mergeStateOf(run: import("./factory-runs.server").Run): Promise<{ mergeQueued: boolean; mergeAuto: boolean }> {
+  if (run.status !== "pr_review") return { mergeQueued: false, mergeAuto: false };
+  const { dbq } = await import("../../dbq.server");
+  const [r] = await dbq("SELECT merge_queued_by, merge_queued_auto, task_ref FROM gt_factory_runs WHERE id = ?", [run.id]).catch(() => []);
+  const { mergeMode } = await import("./factory-flow");
+  const { blocksAutoMerge } = await import("./dependabot.server");
+  const roomAuto = !blocksAutoMerge(r?.task_ref) && ((await (await import("../../db.server")).getRoomAutoMerge(run.channelId).catch(() => null))?.on ?? false);
+  const mode = r ? mergeMode(r.merge_queued_by, r.merge_queued_auto, roomAuto) : null;
+  return { mergeQueued: mode !== null, mergeAuto: mode === "auto" };
+}

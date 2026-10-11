@@ -1799,6 +1799,8 @@ export async function maybeMergeReply(opts: { channelId: number; rootId: number;
 export async function queueMerge(runId: number, sub: string): Promise<void> {
   await dbq("UPDATE gt_factory_runs SET merge_queued_by = ? WHERE id = ?", [sub, runId]);
   await logEvent(runId, "merge_queued", sub);
+  const run = await getRun(runId);
+  if (run) void refreshRoom(run.channelId);
 }
 
 /** `queue`: no entró por el CI (corriendo, o recién lanzado al poner la rama al día); puede quedar en cola. */
@@ -1818,6 +1820,8 @@ export async function mergeRun(run: Run, sub: string): Promise<{ ok: true } | { 
         const up = await githubApi(sub, `/repos/${pr.repo}/pulls/${pr.number}/update-branch`, { method: "PUT", body: "{}" }).catch(() => null);
         await dbq("UPDATE gt_factory_runs SET merge_asked = NULL WHERE id = ?", [run.id]).catch(() => {});
         await logEvent(run.id, "behind_main", null, { behindBy: Number(cmp.behind_by), updated: !up?.error });
+        // La rama se puso al día y el CI vuelve a correr: la tarjeta lo dice ya, no en su siguiente consulta.
+        void refreshRoom(run.channelId);
         // Choques: GitHub no puede ponerlo al día solo. Antes sólo se decía en la tarjeta y el
         // pedido se quedaba en PR (MailMask #17, 5-oct); ahora va a @build como cualquier choque.
         if (up?.error && /conflict/i.test(String(up.error))) {

@@ -35,7 +35,8 @@ export type SoundCategory =
   | "delete"
   | "system"
   | "artifact"
-  | "artifactReady";
+  | "artifactReady"
+  | "yourTurn";
 export const SOUND_CATEGORIES: { key: SoundCategory; label: string }[] = [
   { key: "message", label: "Mensajes de sala" },
   { key: "mention", label: "Menciones" },
@@ -45,10 +46,11 @@ export const SOUND_CATEGORIES: { key: SoundCategory; label: string }[] = [
   { key: "artifact", label: "Abrir artefacto" },
   { key: "artifactReady", label: "Artefacto terminado" },
   { key: "system", label: "Sistema (envío · listo)" },
+  { key: "yourTurn", label: "Te toca (firmar, revisar, decidir)" },
 ];
 export type SoundPrefs = { all: boolean } & Record<SoundCategory, boolean>;
 const SOUND_KEY = "gc_sound_prefs";
-const DEFAULT_PREFS: SoundPrefs = { all: true, message: true, mention: true, dm: true, agent: true, delete: true, system: true, artifact: true, artifactReady: true };
+const DEFAULT_PREFS: SoundPrefs = { all: true, message: true, mention: true, dm: true, agent: true, delete: true, system: true, artifact: true, artifactReady: true, yourTurn: true };
 let prefsCache: SoundPrefs | null = null;
 
 export function getSoundPrefs(): SoundPrefs {
@@ -550,8 +552,47 @@ export function previewSound(cat: SoundCategory): void {
       system: () => playReadySound(),
       artifact: () => playArtifactOpen(),
       artifactReady: () => playArtifactReady(),
+      yourTurn: () => playYourTurnSound(),
     })[cat]();
   } finally {
     prefsCache = prev;
   }
+}
+
+/**
+ * «TE TOCA»: la fábrica le pasa la estafeta a una persona (firmar el plan, revisar el PR,
+ * decidir). Dos campanitas que suben una quinta (Sol5 → Re6) con timbre de campana: seno +
+ * parcial inarmónico (×2.76) que se apaga antes, y una cola larga. Distinto a propósito del
+ * knock de mensajes y del arpegio de «listo»: se reconoce sin mirar.
+ * @param volume 0–1 (default 0.55).
+ */
+export function playYourTurnSound(volume = 0.55): void {
+  if (!soundOn("yourTurn")) return;
+  const audio = getCtx();
+  if (!audio) return;
+  const now = audio.currentTime;
+  const master = audio.createGain();
+  master.gain.value = volume;
+  master.connect(audio.destination);
+  const bell = (t0: number, freq: number, vol: number) => {
+    for (const [mult, v, dur] of [
+      [1, vol, 1.4],
+      [2, vol * 0.28, 0.7],
+      [2.76, vol * 0.18, 0.35],
+    ] as const) {
+      const o = audio.createOscillator();
+      const g = audio.createGain();
+      o.type = "sine";
+      o.frequency.setValueAtTime(freq * mult, t0);
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(v, t0 + 0.008);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      o.connect(g);
+      g.connect(master);
+      o.start(t0);
+      o.stop(t0 + dur + 0.05);
+    }
+  };
+  bell(now, 783.99, 0.5); // Sol5
+  bell(now + 0.13, 1174.66, 0.42); // Re6
 }

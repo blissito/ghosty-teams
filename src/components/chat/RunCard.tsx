@@ -10,6 +10,11 @@ import { useT } from "../../i18n";
 import { useRtSubscribe } from "../../utils/rt-bus";
 import { type VerdictState } from "./VerdictCard";
 import { FxOverlay } from "./FxOverlay";
+import { playYourTurnSound } from "../../utils/notificationSound";
+
+// «Te toca» suena una vez por pedido y estado en esta pestaña, aunque la tarjeta esté pintada
+// dos veces (en el hilo y «también en el room»).
+const turnChimed = new Set<string>();
 import { DiffBar, MergeBox } from "./ReviewPanel";
 import { factoryVerdictFn, factoryMergeFn, factoryRunCardFn, factoryDecisionFn, factoryRetryPreviewFn, factorySetPreviewOffFn, factoryRunActionFn, factoryRunCiFn, factoryFixCiFn } from "../../server/apps/factory";
 import { prepareRepoFn } from "../../server/apps/readiness";
@@ -77,7 +82,10 @@ export function RunCard(props: { card: RunCardData; channelId: number; inPanel?:
 }
 
 function RunCardBody({ card, channelId, inPanel }: { card: RunCardData; channelId: number; inPanel?: boolean }) {
-  const { onOpenArtifact } = useContext(ChatCtx);
+  const { onOpenArtifact, me } = useContext(ChatCtx);
+  // En ref: `refresh` es un useCallback y no debe recrearse (ni re-suscribirse) por esto.
+  const meSub = useRef<string | null>(null);
+  meSub.current = me?.sub ?? null;
   const t = useT();
   const [st, setSt] = useState<State>(null);
   const [busy, setBusy] = useState(false);
@@ -105,6 +113,16 @@ function RunCardBody({ card, channelId, inPanel }: { card: RunCardData; channelI
       factoryRunCardFn({ data: { runId: card.runId } })
         .then(async (s) => {
           if (s?.status === "done" && prevStatus.current && prevStatus.current !== "done") setParty(true);
+          // La estafeta llegó a MÍ (firmar, revisar, decidir): campanitas. Sólo en la transición,
+          // nunca al pintar un pedido que ya esperaba; y no si entra solo (automerge: nadie).
+          const turn = s?.view?.whoseTurn;
+          if (s && prevStatus.current && prevStatus.current !== s.status && turn?.kind === "person" && turn.sub === meSub.current) {
+            const key = `${s.runId}:${s.status}`;
+            if (!turnChimed.has(key)) {
+              turnChimed.add(key);
+              playYourTurnSound();
+            }
+          }
           if (s?.status !== "pr_review") setMerging(false);
           prevStatus.current = s?.status ?? null;
           setSt(s);
@@ -200,12 +218,16 @@ function RunCardBody({ card, channelId, inPanel }: { card: RunCardData; channelI
   // ── Encabezado común (todos los estados): anillo de avance, título, UNA línea de estado y la
   // barra de pasos. Antes el pedido en curso y el de PR listo se veían como dos tarjetas
   // distintas (10-oct): ahora sólo cambia lo de abajo.
-  const yourTurn = st.status === "plan_review" || st.status === "escalated" || st.status === "pr_review" || boxWaiting || waiting || (stalled && !waiting);
+  // Entra solo (merge en cola o automerge del room): ya no le toca a nadie, se espera al CI.
+  const mergeQueued = st.status === "pr_review" && !!(review?.mergeQueued ?? st.mergeQueued);
+  const mergeAuto = mergeQueued && !!(review?.mergeAuto ?? st.mergeAuto);
+  // «En espera de lugar» NO es tuyo: arranca solo cuando se libera un lugar (viewState: nadie).
+  const yourTurn = st.status === "plan_review" || st.status === "escalated" || (st.status === "pr_review" && !mergeQueued) || waiting || (stalled && !waiting);
   const ciNow = st.status === "pr_review" ? (review?.ci?.state ?? st.ci?.state) : st.ci?.state;
   const ciChecks = review?.ci?.checks ?? [];
   const effort = review?.effort;
-  const tone: "you" | "work" | "done" | "off" | "bad" =
-    st.status === "done" ? "done" : st.status === "cancelled" ? (st.cancelled?.prClosed ? "bad" : "off") : st.status === "pr_review" && ciNow === "failure" ? "bad" : yourTurn ? "you" : "work";
+  const tone: "you" | "work" | "done" | "off" | "bad" | "merge" =
+    st.status === "done" ? "done" : st.status === "cancelled" ? (st.cancelled?.prClosed ? "bad" : "off") : st.status === "pr_review" && ciNow === "failure" ? "bad" : mergeQueued ? "merge" : yourTurn ? "you" : "work";
   const statusText =
     st.status === "done"
       ? st.prod?.state === "success"
@@ -232,7 +254,7 @@ function RunCardBody({ card, channelId, inPanel }: { card: RunCardData; channelI
                   : st.status === "escalated"
                     ? t("Te toca decidir")
                     : st.status === "pr_review"
-                      ? st.mergeQueued ? t("Merge en cola: entra solo cuando pase el CI") : ciNow === "failure" ? t("El CI falló en este PR") : t("Te toca revisar")
+                      ? ciNow === "failure" ? t("El CI falló en este PR") : mergeAuto ? t("Se mergea solo en cuanto pase el CI") : mergeQueued ? t("Merge en cola: entra solo cuando pase el CI") : t("Te toca revisar")
                       : "";
   const statusExtra =
     st.status === "pr_review"
@@ -247,6 +269,8 @@ function RunCardBody({ card, channelId, inPanel }: { card: RunCardData; channelI
     done: { ring: "text-violet-500", text: "text-violet-700 dark:text-violet-300", seg: "bg-violet-500" },
     off: { ring: "text-muted", text: "text-muted", seg: "bg-surface-3" },
     bad: { ring: "text-red-500", text: "text-red-600 dark:text-red-400", seg: "bg-red-500" },
+    // Entra solo: el violeta de merge, el mismo de la pastilla «Automerge» y de «Terminado».
+    merge: { ring: "text-violet-500", text: "text-violet-700 dark:text-violet-300", seg: "bg-violet-500 animate-pulse motion-reduce:animate-none" },
   }[tone];
   // La barra: Plan · Firma · Build · CI · Check · PR (+ Prod tras el merge). El CI es un paso del
   // camino con su estado EN VIVO, como antes en las pastillas.
@@ -260,6 +284,8 @@ function RunCardBody({ card, channelId, inPanel }: { card: RunCardData; channelI
     ...(st.prod ? [{ key: "prod", label: "Prod", at: 5 }] : []),
   ];
   const segCls = (seg: (typeof TRACK)[number]) => {
+    // Dependabot entra directo a revisión: Plan y Firma no ocurrieron y no se pintan como hechos.
+    if (st.kind === "dependabot" && (seg.key === "plan" || seg.key === "sign")) return "bg-surface-3";
     if (st.status === "done") return seg.key === "prod" && st.prod?.state === "failure" ? "bg-red-500" : seg.key === "prod" && st.prod?.state === "pending" ? "bg-brand animate-pulse" : "bg-violet-500";
     if (seg.key === "ci") {
       if (ciNow === "failure") return "bg-red-500";

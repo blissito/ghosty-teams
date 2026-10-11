@@ -111,10 +111,17 @@ export function ReviewPanel({ runId, channelId }: { runId: number; channelId: nu
         <div className="flex flex-wrap items-center gap-2">
           {/* Sin presión: el estado dice qué sigue y la espera va aparte, en gris (patrón de
               Devin/Copilot/Graphite: el color es para los hallazgos, no para el reloj). */}
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/15 py-0.5 pl-2 pr-2.5 text-xs font-semibold text-amber-700 dark:text-amber-300">
-            <span className="h-1.5 w-1.5 rounded-full bg-current" />
-            {t("Te toca revisar")}
-          </span>
+          {st.mergeQueued ? (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-violet-500/15 py-0.5 pl-2 pr-2.5 text-xs font-semibold text-violet-700 dark:text-violet-300">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current motion-reduce:animate-none" />
+              {st.mergeAuto ? t("Se mergea solo") : t("Merge en cola")}
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/15 py-0.5 pl-2 pr-2.5 text-xs font-semibold text-amber-700 dark:text-amber-300">
+              <span className="h-1.5 w-1.5 rounded-full bg-current" />
+              {t("Te toca revisar")}
+            </span>
+          )}
           {waiting ? <span className="text-xs text-muted">{t("listo hace")} {shortDuration(waiting)}</span> : null}
           <span className="text-xs text-muted">
             {t("Pedido")} #{st.runId}
