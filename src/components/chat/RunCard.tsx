@@ -274,8 +274,22 @@ function RunCardBody({ card, channelId, inPanel }: { card: RunCardData; channelI
     return "bg-surface-3";
   };
   const progress = st.status === "done" ? 1 : current < 0 ? 0 : (current + (closed ? 0 : 0.5)) / 5;
+  // Clic en el encabezado (anillo, título, barra y estado) = el pedido completo en el panel
+  // lateral: plan, firma, revisión y bitácora. Los botones de abajo siguen siendo suyos.
+  const openDetail = !inPanel && onOpenArtifact ? () => onOpenArtifact({ kind: "run", title: `${t("Pedido")} #${st.runId}`, runId: st.runId, channelId }) : null;
   const header = (
-    <>
+    <div
+      {...(openDetail
+        ? {
+            role: "button",
+            tabIndex: 0,
+            title: t("Ver el pedido completo"),
+            onClick: openDetail,
+            onKeyDown: (e: React.KeyboardEvent) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), openDetail()),
+            className: "cursor-pointer transition-colors hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:outline-none",
+          }
+        : {})}
+    >
       <div className="flex items-center gap-3 px-3.5 pb-2.5 pt-3">
         <span
           className={`relative grid h-9 w-9 shrink-0 place-items-center rounded-full ${TONE.ring}`}
@@ -313,7 +327,7 @@ function RunCardBody({ card, channelId, inPanel }: { card: RunCardData; channelI
           {statusExtra ? <span className="min-w-0 truncate font-normal">· {statusExtra}</span> : null}
         </p>
       </div>
-    </>
+    </div>
   );
 
   // PR listo, en el room: la tarjeta AVISA (a quién le toca, cuánto esfuerzo, qué cambia) y
