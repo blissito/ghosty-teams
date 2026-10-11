@@ -120,6 +120,10 @@ export const Route = createFileRoute("/api/internal/github-event")({
             const runs = await runsByPr(ev.repo, ev.number);
             const { sweepRunNow } = await import("../server/apps/factory-runs.server");
             for (const run of runs) if (run.status === "pr_review") await sweepRunNow(run);
+            // GitHub avisa del fin de un check antes de que su estado combinado lo refleje: una
+            // segunda mirada a los 10 s agarra el verde final sin esperar al tick.
+            const later = runs.filter((r) => r.status === "pr_review");
+            if (later.length) setTimeout(() => void Promise.all(later.map((r) => sweepRunNow(r))).catch(() => {}), 10_000).unref?.();
             // Terminó un CI: las tarjetas de esos pedidos se repintan ya (paso CI y «entra solo»).
             const { refreshRoom } = await import("../server/apps/factory-runs.server");
             for (const c of new Set(runs.map((r) => r.channelId))) void refreshRoom(c);

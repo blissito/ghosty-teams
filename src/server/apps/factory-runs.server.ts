@@ -1347,7 +1347,9 @@ export async function closeFinishedRuns(): Promise<void> {
   for (const row of rows) {
     const run = toRun(row);
     const last = lastPrCheck.get(run.id) ?? 0;
-    if (Date.now() - last < PR_CHECK_EVERY_MS) continue;
+    // Con merge en cola se mira en CADA vuelta (30 s): entre el último check en verde y el merge
+    // había hasta 2 min de «Merge en cola» con todo verde (MailMask #43, 10-oct).
+    if (Date.now() - last < (row.merge_queued_by ? 0 : PR_CHECK_EVERY_MS)) continue;
     lastPrCheck.set(run.id, Date.now());
     const pr = await prOutcome(run.approvedBy ?? run.requestedBy, run.prUrl!);
     const outcome = pr?.outcome ?? null;
