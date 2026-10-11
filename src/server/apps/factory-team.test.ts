@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { knowledgeLine, parseTeamFile, parseMessageOverrides, resolveModel, setupLine, teamFileTemplate } from "./factory-team";
+import { ENGINE_MODELS, engineOfModel, knowledgeLine, parseTeamFile, parseMessageOverrides, resolveModel, setupLine, teamFileTemplate } from "./factory-team";
 
 describe("parseTeamFile", () => {
   it("lee las dos formas del frontmatter y el cuerpo", () => {
@@ -116,5 +116,21 @@ Convenciones.
   it("la línea para @build trae la llamada exacta", () => {
     const line = setupLine("o/r", { services: ["postgres"], db: "app", env: { A: "1" } });
     expect(line).toContain('await prepare(box.id, {"services":["postgres"],"db":"app","env":{"A":"1"}})');
+  });
+});
+
+describe("modelos elegibles por rol (Equipo del espacio)", () => {
+  it("acepta los ids del catálogo de Studio que no tenían alias", () => {
+    expect(resolveModel("claude", "claude-sonnet-5-5")).toBe("claude-sonnet-5-5");
+    expect(resolveModel("claude", "claude-haiku-5-5")).toBe("claude-haiku-5-5");
+    expect(resolveModel("claude", "haiku")).toBe("claude-haiku-5-5");
+    expect(resolveModel("claude", "opus-5.5")).toBe("claude-opus-5-5");
+  });
+  it("rechaza un modelo de otro motor", () => {
+    expect(resolveModel("deepseek", "claude-opus-5-5")).toBeNull();
+    expect(engineOfModel("gpt-5.6-sol")).toBe("codex");
+  });
+  it("cada modelo del catálogo pertenece a su motor", () => {
+    for (const [engine, list] of Object.entries(ENGINE_MODELS)) for (const m of list) expect(resolveModel(engine, m.id)).toBe(m.id);
   });
 });

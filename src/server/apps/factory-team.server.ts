@@ -173,6 +173,16 @@ export async function factoryTurnFor(handle: string, dest: ToolDest | null | und
     }
     modelSource = ov.models?.[h] ? "message" : "repo";
   }
+  // El modelo elegido en «Equipo del espacio» (Apps → Fábrica): debajo del mensaje y del repo.
+  if (!model && engine) {
+    const { getAppConfig } = await import("./installed.server");
+    const cfg = await getAppConfig<{ roleModels?: Partial<Record<string, string>> }>("factory").catch(() => null);
+    const chosen = cfg?.roleModels?.[h];
+    if (chosen) {
+      model = resolveModel(engine, chosen);
+      if (!model) console.warn(`[factory] @${h}: ${chosen} no es de ${engine} (cambió el agente); corre con el default`);
+    }
+  }
   if (!model) {
     const { ROLE_DEFAULT_MODEL } = await import("./factory-team");
     const def = ROLE_DEFAULT_MODEL[h];
@@ -198,7 +208,12 @@ export async function factoryTurnFor(handle: string, dest: ToolDest | null | und
 }
 
 /** El equipo efectivo de un repo, para la página: rol → agente, modelo y de dónde sale. */
-export async function effectiveTeam(repo: string, connectedBy: string, space: Partial<Record<FactoryHandle, string | null>>) {
+export async function effectiveTeam(
+  repo: string,
+  connectedBy: string,
+  space: Partial<Record<FactoryHandle, string | null>>,
+  spaceModels: Partial<Record<FactoryHandle, string>> = {},
+) {
   const file = await repoTeamFile(repo, connectedBy).catch(() => null);
   const agents = await studioAgentsCached();
   return {
@@ -208,13 +223,14 @@ export async function effectiveTeam(repo: string, connectedBy: string, space: Pa
       const fromFile = spec.agent ? agents.find((x) => x.id === spec.agent || x.name.toLowerCase() === spec.agent!.toLowerCase()) : null;
       const a = fromFile ?? agents.find((x) => x.id === space[h]) ?? null;
       const model = spec.model && a ? resolveModel(a.engine, spec.model) : null;
+      const chosen = spaceModels[h] && a ? resolveModel(a.engine, spaceModels[h]!) : null;
       // Sin modelo en el repo, el rol corre con su default (@plan/@check en Opus), no con el del
       // agente: es lo mismo que decide `resolveFactoryTurn`, y la página lo decía mal.
       const def = ROLE_DEFAULT_MODEL[h];
       return {
         handle: h,
         agent: a ? { id: a.id, name: a.name, engine: a.engine } : null,
-        model: model ?? (def && a && def.engine === a.engine ? def.model : null) ?? a?.model ?? null,
+        model: model ?? chosen ?? (def && a && def.engine === a.engine ? def.model : null) ?? a?.model ?? null,
         agentSource: (spec.agent ? "repo" : "space") as RoleSource,
         modelSource: (model ? "repo" : "space") as RoleSource,
         problem: spec.agent && !fromFile ? `no hay agente «${spec.agent}»` : spec.model && a && !model ? `${spec.model} no es de ${a.engine}` : null,

@@ -240,25 +240,29 @@ function defaultRoles(status: FactoryStatus): Record<string, string> {
   return { plan: claude?.id ?? "", build: claude?.id ?? "", check: other?.id ?? "" };
 }
 
+type ModelsProps = { models?: Record<string, string>; onModelsChange?: (v: Record<string, string>) => void };
+
 function RolePickers({
   status,
   value,
   onChange,
+  models,
+  onModelsChange,
 }: {
   status: FactoryStatus;
   value: Record<string, string>;
   onChange: (v: Record<string, string>) => void;
-}) {
+} & ModelsProps) {
   const t = useT();
   if (!status.candidates.length) {
     return (
       <div className="mt-1">
         <p className="mb-2 text-muted">{t("Todavía no hay agentes con Claude, DeepSeek o Codex: crea uno para cada rol aquí mismo.")}</p>
-        <RolePickersList status={status} value={value} onChange={onChange} />
+        <RolePickersList status={status} value={value} onChange={onChange} models={models} onModelsChange={onModelsChange} />
       </div>
     );
   }
-  return <RolePickersList status={status} value={value} onChange={onChange} />;
+  return <RolePickersList status={status} value={value} onChange={onChange} models={models} onModelsChange={onModelsChange} />;
 }
 
 const NEW_AGENT = "__new__";
@@ -327,11 +331,13 @@ function RolePickersList({
   status,
   value,
   onChange,
+  models,
+  onModelsChange,
 }: {
   status: FactoryStatus;
   value: Record<string, string>;
   onChange: (v: Record<string, string>) => void;
-}) {
+} & ModelsProps) {
   const t = useT();
   // Los que se crean aquí mismo se suman a la lista sin recargar el panel.
   const [created, setCreated] = useState<FactoryStatus["candidates"]>([]);
@@ -352,7 +358,13 @@ function RolePickersList({
               value={value[h] ?? ""}
               onChange={(e) => {
                 if (e.target.value === NEW_AGENT) setCreatingFor(h);
-                else onChange({ ...value, [h]: e.target.value });
+                else {
+                  const before = status.candidates.find((x) => x.id === value[h])?.engine;
+                  const after = status.candidates.find((x) => x.id === e.target.value)?.engine;
+                  // Otro motor: el modelo elegido ya no aplica.
+                  if (models && onModelsChange && before !== after && models[h]) onModelsChange({ ...models, [h]: "" });
+                  onChange({ ...value, [h]: e.target.value });
+                }
               }}
               className="min-w-0 flex-1 rounded-md border border-border bg-surface-2 px-2 py-1 text-sm text-ink"
             >
@@ -375,10 +387,37 @@ function RolePickersList({
               </a>
             )}
             {(() => {
-              // @plan y @check corren en su modelo de rol (Opus) aunque el agente diga otro.
+              // Modelo del rol: lo elige el dueño aquí; vacío = el default del rol o el del agente.
               const a = status.candidates.find((x) => x.id === value[h]);
               const def = ROLE_DEFAULT_MODEL[h];
-              return a && def && def.engine === a.engine && def.model !== a.model ? (
+              if (!a || !models || !onModelsChange) return null;
+              const list = status.engineModels?.[a.engine] ?? [];
+              const label = (id: string) => list.find((m) => m.id === id)?.label ?? id;
+              const fallback = def && def.engine === a.engine ? `${t("Por defecto del rol")} · ${label(def.model)}` : `${t("El del agente")} · ${label(a.model)}`;
+              return (
+                <label className="flex w-full items-center gap-2 sm:pl-[9.5rem]">
+                  <span className="w-14 shrink-0 text-xs text-muted">{t("Modelo")}</span>
+                  <select
+                    value={models[h] ?? ""}
+                    onChange={(e) => onModelsChange({ ...models, [h]: e.target.value })}
+                    aria-label={`${t("Modelo de")} @${h}`}
+                    className="min-w-0 flex-1 rounded-md border border-border bg-surface-2 px-2 py-1 text-sm text-ink"
+                  >
+                    <option value="">{fallback}</option>
+                    {list.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              );
+            })()}
+            {(() => {
+              // Sin selector de modelo (instalación): @plan y @check corren en su modelo de rol.
+              const a = status.candidates.find((x) => x.id === value[h]);
+              const def = ROLE_DEFAULT_MODEL[h];
+              return !onModelsChange && a && def && def.engine === a.engine && def.model !== a.model ? (
                 <span className="w-full pl-[9.5rem] text-[11px] text-muted">
                   {t("En este rol corre en")} <span className="font-mono">{def.model}</span>
                 </span>
@@ -408,14 +447,16 @@ function RolePickersList({
 export function RolesEditor({ status, onChange }: { status: FactoryStatus; onChange: () => void }) {
   const t = useT();
   const current = Object.fromEntries(status.roles.map((r) => [r.handle, r.agentId ?? ""]));
+  const currentModels = Object.fromEntries(HANDLES_UI.map((h) => [h, (status.roleModels as Record<string, string | undefined>)?.[h] ?? ""]));
   const [draft, setDraft] = useState<Record<string, string>>(current);
+  const [models, setModels] = useState<Record<string, string>>(currentModels);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const dirty = HANDLES_UI.some((h) => draft[h] !== current[h]);
+  const dirty = HANDLES_UI.some((h) => draft[h] !== current[h] || (models[h] ?? "") !== currentModels[h]);
   return (
     <div className="mt-2 space-y-2">
-      <p className="text-xs font-semibold text-muted">{t("Qué agente hace cada rol")}</p>
-      <RolePickers status={status} value={draft} onChange={setDraft} />
+      <p className="text-xs font-semibold text-muted">{t("Qué agente y qué modelo hace cada rol")}</p>
+      <RolePickers status={status} value={draft} onChange={setDraft} models={models} onModelsChange={setModels} />
       {error && <p className="text-xs text-danger">{error}</p>}
       {dirty && (
         <button
@@ -425,7 +466,7 @@ export function RolesEditor({ status, onChange }: { status: FactoryStatus; onCha
             setBusy(true);
             setError(null);
             try {
-              await setFactoryRolesFn({ data: { roles: draft } });
+              await setFactoryRolesFn({ data: { roles: draft, models } });
               onChange();
             } catch (e) {
               setError(e instanceof Error ? e.message : String(e));

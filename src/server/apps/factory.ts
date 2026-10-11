@@ -28,6 +28,8 @@ type FactoryCfg = {
   /** Etiqueta del runner de la caja de CI del espacio (`ws-<slug>`), una vez pedida a gs. */
   ciLabel?: string;
   roles?: Partial<Record<FactoryHandle, string>>;
+  /** Modelo elegido por rol en «Equipo del espacio». Sin entrada = el default del rol o el del agente. */
+  roleModels?: Partial<Record<FactoryHandle, string>>;
   ownedHandles?: string[];
   roomId?: number;
   boardId?: number | null;
@@ -173,6 +175,10 @@ export type FactoryStatus = {
   roles: FactoryRoleView[];
   /** @eval, el juez opcional de los evals (null = juzga @check). */
   judgeAgentId?: string | null;
+  /** Modelo elegido por rol (vacío = el de siempre). */
+  roleModels: Partial<Record<FactoryHandle, string>>;
+  /** Modelos elegibles por motor (catálogo de Studio). */
+  engineModels: Record<string, { id: string; label: string }[]>;
   candidates: StudioAgentOption[];
   studioAgentsUrl: string;
 };
@@ -216,7 +222,8 @@ export const factoryStatusFn = createServerFn({ method: "GET" }).handler(async (
   const { getAppConfig } = await import("./installed.server");
   const cfg = await getAppConfig<FactoryCfg>("factory");
   const candidates = await studioAgents();
-  const base = { candidates, studioAgentsUrl: `${IDP()}/app/agents` };
+  const { ENGINE_MODELS } = await import("./factory-team");
+  const base = { candidates, studioAgentsUrl: `${IDP()}/app/agents`, engineModels: ENGINE_MODELS, roleModels: cfg?.roleModels ?? {} };
   if (!cfg) return { installed: false, room: null, repos: [], boardId: null, roles: [], ...base };
   const db = await import("../../db.server");
   const ch = cfg.roomId ? await db.getChannelById(cfg.roomId) : null;
@@ -283,21 +290,33 @@ export const installFactoryFn = createServerFn({ method: "POST" })
     const ciLabel = (await requestCiBox((await db.listRoomRepos(roomId)).map((r) => r.repo))) ?? prev?.ciLabel;
 
     // 5. La fila que enciende las tools.
-    await recordInstall("factory", user.sub, { ...assigned, roomId, ...(ciLabel ? { ciLabel } : {}) });
+    await recordInstall("factory", user.sub, { ...assigned, roomId, ...(ciLabel ? { ciLabel } : {}), ...(prev?.roleModels ? { roleModels: prev.roleModels } : {}) });
     const ch = await db.getChannelById(roomId);
     return { ok: true as const, room: ch ? { id: ch.id, slug: ch.slug, name: ch.name } : null };
   });
 
 /** Cambia a qué agente apunta cada rol, sin reinstalar. El siguiente turno ya corre en él. */
 export const setFactoryRolesFn = createServerFn({ method: "POST" })
-  .validator((d: { roles: Partial<Record<FactoryHandle, string>> }) => d)
+  .validator((d: { roles: Partial<Record<FactoryHandle, string>>; models?: Partial<Record<FactoryHandle, string>> }) => d)
   .handler(async ({ data }) => {
     const user = await requireOwner();
     const { getAppConfig, recordInstall } = await import("./installed.server");
     const cfg = await getAppConfig<FactoryCfg>("factory");
     if (!cfg) throw new Error("la fábrica no está instalada");
     const assigned = await assignRoles(user.sub, data.roles ?? {}, cfg);
-    await recordInstall("factory", user.sub, { roomId: cfg.roomId, boardId: cfg.boardId ?? null, ...(cfg.ciLabel ? { ciLabel: cfg.ciLabel } : {}), ...assigned });
+    // El modelo de cada rol tiene que ser del motor de SU agente; vacío = el de siempre.
+    const { resolveModel } = await import("./factory-team");
+    const agents = await studioAgents();
+    const roleModels: Partial<Record<FactoryHandle, string>> = {};
+    for (const h of HANDLES) {
+      const asked = (data.models ?? cfg.roleModels ?? {})[h]?.trim();
+      if (!asked) continue;
+      const engine = agents.find((a) => a.id === assigned.roles[h])?.engine ?? "";
+      const id = resolveModel(engine, asked);
+      if (!id) throw new Error(`${asked} no es un modelo de ${engine || "ese motor"}: elige otro para @${h}`);
+      roleModels[h] = id;
+    }
+    await recordInstall("factory", user.sub, { roomId: cfg.roomId, boardId: cfg.boardId ?? null, ...(cfg.ciLabel ? { ciLabel: cfg.ciLabel } : {}), ...assigned, roleModels });
     return { ok: true as const };
   });
 
@@ -1382,7 +1401,9 @@ export const factoryRepoTeamFn = createServerFn({ method: "POST" })
     if (data.fresh) T.invalidateRepoTeamFile(row.repo);
     const rows = await db.listAgents();
     const space = Object.fromEntries(HANDLES.map((h) => [h, rows.find((a) => a.handle === h && a.enabled)?.fleet_id ?? null]));
-    const team = await T.effectiveTeam(row.repo, row.connectedBy, space);
+    const { getAppConfig } = await import("./installed.server");
+    const fcfg = await getAppConfig<FactoryCfg>("factory").catch(() => null);
+    const team = await T.effectiveTeam(row.repo, row.connectedBy, space, fcfg?.roleModels ?? {});
     const { githubApi } = await import("../connectors/github.server");
     const info = await githubApi(row.connectedBy, `/repos/${row.repo}`).catch(() => null);
     const branch = encodeURIComponent(String(info?.default_branch ?? "main"));

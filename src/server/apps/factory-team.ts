@@ -247,10 +247,40 @@ export const MODEL_ALIASES: Record<string, Record<string, string>> = {
     "fable-5": "claude-fable-5",
     sonnet: "claude-sonnet-5",
     "sonnet-5": "claude-sonnet-5",
+    "sonnet-5.5": "claude-sonnet-5-5",
+    haiku: "claude-haiku-5-5",
+    "haiku-5.5": "claude-haiku-5-5",
     "sonnet-4.6": "claude-sonnet-4-6",
   },
   deepseek: { pro: "deepseek-v4-pro", flash: "deepseek-v4-flash" },
   codex: { sol: "gpt-5.6-sol", terra: "gpt-5.6-terra", luna: "gpt-5.6-luna" },
+};
+
+/**
+ * Los modelos que se pueden elegir por rol en «Equipo del espacio», por motor. Copia del catálogo
+ * de Studio (`app/lib/runtime/engines.ts` en gs): si allá se agrega uno, se agrega aquí.
+ */
+export const ENGINE_MODELS: Record<string, { id: string; label: string }[]> = {
+  claude: [
+    { id: "claude-opus-5-5", label: "Opus 5.5 (más capaz)" },
+    { id: "claude-opus-5", label: "Opus 5" },
+    { id: "claude-opus-4-8", label: "Opus 4.8" },
+    { id: "claude-fable-5-1", label: "Fable 5.1" },
+    { id: "claude-fable-5", label: "Fable 5" },
+    { id: "claude-sonnet-5-5", label: "Sonnet 5.5 (equilibrado)" },
+    { id: "claude-sonnet-5", label: "Sonnet 5" },
+    { id: "claude-sonnet-4-6", label: "Sonnet 4.6" },
+    { id: "claude-haiku-5-5", label: "Haiku 5.5 (más rápido)" },
+  ],
+  deepseek: [
+    { id: "deepseek-v4-pro", label: "V4 Pro (tope · agentic)" },
+    { id: "deepseek-v4-flash", label: "V4 Flash (más rápido)" },
+  ],
+  codex: [
+    { id: "gpt-5.6-sol", label: "Sol (más capaz)" },
+    { id: "gpt-5.6-terra", label: "Terra (equilibrado)" },
+    { id: "gpt-5.6-luna", label: "Luna (más rápido)" },
+  ],
 };
 
 /** Motor al que pertenece un alias o un id conocido (para decir «eso es de otro motor»). */
@@ -258,6 +288,9 @@ export function engineOfModel(model: string): string | null {
   const m = model.toLowerCase();
   for (const [engine, aliases] of Object.entries(MODEL_ALIASES)) {
     if (m in aliases || Object.values(aliases).includes(m)) return engine;
+  }
+  for (const [engine, list] of Object.entries(ENGINE_MODELS)) {
+    if (list.some((x) => x.id === m)) return engine;
   }
   if (m.startsWith("claude-")) return "claude";
   if (m.startsWith("deepseek-")) return "deepseek";
