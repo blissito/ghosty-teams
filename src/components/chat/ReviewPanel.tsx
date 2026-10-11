@@ -145,10 +145,12 @@ export function ReviewPanel({ runId, channelId }: { runId: number; channelId: nu
       </header>
 
       <div className="flex-1 space-y-5 px-5 py-5">
-        {/* El esfuerzo manda: dice cuánto tiempo apartar antes de abrir el diff. */}
+        {/* El esfuerzo manda: dice cuánto tiempo apartar antes de abrir el diff. Un solo tono que
+            se llena (patrón de Qodo, en tinta y no en azul): el tamaño no es una alerta, y el color
+            queda libre para lo que sí avisa (10-oct). */}
         {e && (
-          <section className={`grid grid-cols-[auto_1fr] items-center gap-x-5 gap-y-3 rounded-2xl p-4 ${e.score >= 4 ? "bg-amber-500/12" : e.score === 3 ? "bg-sky-500/10" : "bg-emerald-600/10"}`}>
-            <div className={`text-6xl font-bold leading-[.9] tracking-tight tabular-nums ${e.score >= 4 ? "text-amber-600 dark:text-amber-400" : e.score === 3 ? "text-sky-700 dark:text-sky-300" : "text-emerald-700 dark:text-emerald-400"}`}>
+          <section className="grid grid-cols-[auto_1fr] items-center gap-x-5 gap-y-3 rounded-2xl bg-surface-2 p-4">
+            <div className="text-6xl font-bold leading-[.9] tracking-tight text-ink tabular-nums">
               {e.score}
               <span className="text-xl font-medium tracking-normal text-muted">/5</span>
             </div>
@@ -158,7 +160,7 @@ export function ReviewPanel({ runId, channelId }: { runId: number; channelId: nu
               </p>
               <div className="grid grid-cols-5 gap-1" aria-hidden>
                 {EFFORT_LABELS.map((_, i) => (
-                  <i key={i} className={`h-2.5 rounded-[3px] ${i < e.score ? (e.score >= 4 ? "bg-amber-500" : e.score === 3 ? "bg-sky-500" : "bg-emerald-600") : "bg-surface-3"}`} />
+                  <i key={i} className={`h-2.5 rounded-[3px] ${i < e.score ? "bg-ink/70" : "bg-ink/10"}`} />
                 ))}
               </div>
               <div className="grid grid-cols-5 gap-1 text-[10px] uppercase tracking-wide text-muted">
