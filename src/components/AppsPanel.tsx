@@ -347,61 +347,63 @@ function RolePickersList({
   const engines = new Set(HANDLES_UI.map((h) => status.candidates.find((a) => a.id === value[h])?.engine));
   const checkEngine = status.candidates.find((a) => a.id === value.check)?.engine;
   const buildEngine = status.candidates.find((a) => a.id === value.build)?.engine;
+  const withModels = Boolean(models && onModelsChange);
   return (
     <div className="mt-1 space-y-2">
-      <div className="divide-y divide-border rounded-lg border border-border bg-surface">
-        {HANDLES_UI.map((h) => (
-          <div key={h} className="flex flex-wrap items-center gap-2 px-3 py-2">
-            <span className="w-16 font-mono text-sm font-semibold text-ink">@{h}</span>
-            <span className="w-20 text-xs text-muted">{t(ROLE_LABEL[h])}</span>
-            <select
-              value={value[h] ?? ""}
-              onChange={(e) => {
-                if (e.target.value === NEW_AGENT) setCreatingFor(h);
-                else {
-                  const before = status.candidates.find((x) => x.id === value[h])?.engine;
-                  const after = status.candidates.find((x) => x.id === e.target.value)?.engine;
-                  // Otro motor: el modelo elegido ya no aplica.
-                  if (models && onModelsChange && before !== after && models[h]) onModelsChange({ ...models, [h]: "" });
-                  onChange({ ...value, [h]: e.target.value });
-                }
-              }}
-              className="min-w-0 flex-1 rounded-md border border-border bg-surface-2 px-2 py-1 text-sm text-ink"
-            >
-              <option value="">{t("Elige un agente")}</option>
-              {status.candidates.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {agentLabel(a)}
-                </option>
-              ))}
-              <option value={NEW_AGENT}>{t("+ Crear agente nuevo…")}</option>
-            </select>
-            {value[h] && (
-              <a
-                href={`${status.studioAgentsUrl}/${value[h]}`}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1 text-xs text-brand hover:underline"
-              >
-                {t("Afinar en Studio")} <ExternalLink className="size-3" />
-              </a>
-            )}
-            {(() => {
-              // Modelo del rol: lo elige el dueño aquí; vacío = el default del rol o el del agente.
-              const a = status.candidates.find((x) => x.id === value[h]);
-              const def = ROLE_DEFAULT_MODEL[h];
-              if (!a || !models || !onModelsChange) return null;
-              const list = status.engineModels?.[a.engine] ?? [];
-              const label = (id: string) => list.find((m) => m.id === id)?.label ?? id;
-              const fallback = def && def.engine === a.engine ? `${t("Por defecto del rol")} · ${label(def.model)}` : `${t("El del agente")} · ${label(a.model)}`;
-              return (
-                <label className="flex w-full items-center gap-2 sm:pl-[9.5rem]">
-                  <span className="w-14 shrink-0 text-xs text-muted">{t("Modelo")}</span>
+      <div className="overflow-hidden rounded-lg border border-border bg-surface">
+        {/* Una fila por rol, con las mismas columnas: rol · agente · modelo · Studio. En móvil se
+            apilan. El modelo va en su propia columna: el rótulo del agente ya no lo repite. */}
+        {withModels && (
+          <div className="hidden grid-cols-[8.5rem_minmax(0,1fr)_minmax(0,1fr)_2rem] gap-3 border-b border-border bg-surface-2/60 px-3 py-1.5 text-[11px] font-medium uppercase tracking-wide text-muted sm:grid">
+            <span>{t("Rol")}</span>
+            <span>{t("Agente")}</span>
+            <span>{t("Modelo")}</span>
+            <span />
+          </div>
+        )}
+        {HANDLES_UI.map((h) => {
+          const a = status.candidates.find((x) => x.id === value[h]);
+          const def = ROLE_DEFAULT_MODEL[h];
+          const list = a ? (status.engineModels?.[a.engine] ?? []) : [];
+          const label = (id: string) => list.find((m) => m.id === id)?.label ?? id;
+          const fallback = a ? (def && def.engine === a.engine ? `${t("Por defecto")} · ${label(def.model)}` : `${t("El del agente")} · ${label(a.model)}`) : "—";
+          const selectCls = "w-full min-w-0 rounded-md border border-border bg-surface-2 px-2 py-1.5 text-sm text-ink";
+          return (
+            <div key={h} className="border-b border-border px-3 py-2.5 last:border-b-0">
+              <div className={`grid items-center gap-x-3 gap-y-2 ${withModels ? "grid-cols-[1fr_2rem] sm:grid-cols-[8.5rem_minmax(0,1fr)_minmax(0,1fr)_2rem]" : "grid-cols-[8.5rem_minmax(0,1fr)_2rem]"}`}>
+                <div className="flex items-baseline gap-2 max-sm:col-span-1">
+                  <span className="font-mono text-sm font-semibold text-ink">@{h}</span>
+                  <span className="text-xs text-muted">{t(ROLE_LABEL[h])}</span>
+                </div>
+                <select
+                  value={value[h] ?? ""}
+                  aria-label={`${t("Agente de")} @${h}`}
+                  onChange={(e) => {
+                    if (e.target.value === NEW_AGENT) setCreatingFor(h);
+                    else {
+                      const after = status.candidates.find((x) => x.id === e.target.value)?.engine;
+                      // Otro motor: el modelo elegido ya no aplica.
+                      if (models && onModelsChange && a?.engine !== after && models[h]) onModelsChange({ ...models, [h]: "" });
+                      onChange({ ...value, [h]: e.target.value });
+                    }
+                  }}
+                  className={`${selectCls} max-sm:col-span-2`}
+                >
+                  <option value="">{t("Elige un agente")}</option>
+                  {status.candidates.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {withModels ? `${c.name} · ${ENGINE_LABEL[c.engine] ?? c.engine}` : agentLabel(c)}
+                    </option>
+                  ))}
+                  <option value={NEW_AGENT}>{t("+ Crear agente nuevo…")}</option>
+                </select>
+                {withModels && (
                   <select
-                    value={models[h] ?? ""}
-                    onChange={(e) => onModelsChange({ ...models, [h]: e.target.value })}
+                    value={models![h] ?? ""}
+                    disabled={!a}
+                    onChange={(e) => onModelsChange!({ ...models!, [h]: e.target.value })}
                     aria-label={`${t("Modelo de")} @${h}`}
-                    className="min-w-0 flex-1 rounded-md border border-border bg-surface-2 px-2 py-1 text-sm text-ink"
+                    className={`${selectCls} disabled:opacity-50 max-sm:col-span-2`}
                   >
                     <option value="">{fallback}</option>
                     {list.map((m) => (
@@ -410,32 +412,43 @@ function RolePickersList({
                       </option>
                     ))}
                   </select>
-                </label>
-              );
-            })()}
-            {(() => {
-              // Sin selector de modelo (instalación): @plan y @check corren en su modelo de rol.
-              const a = status.candidates.find((x) => x.id === value[h]);
-              const def = ROLE_DEFAULT_MODEL[h];
-              return !onModelsChange && a && def && def.engine === a.engine && def.model !== a.model ? (
-                <span className="w-full pl-[9.5rem] text-[11px] text-muted">
+                )}
+                {value[h] ? (
+                  <a
+                    href={`${status.studioAgentsUrl}/${value[h]}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    title={t("Afinar en Studio")}
+                    aria-label={t("Afinar en Studio")}
+                    className="inline-flex size-8 items-center justify-center rounded-md text-muted hover:bg-surface-2 hover:text-brand max-sm:col-start-2 max-sm:row-start-1"
+                  >
+                    <ExternalLink className="size-4" />
+                  </a>
+                ) : (
+                  <span />
+                )}
+              </div>
+              {!withModels && a && def && def.engine === a.engine && def.model !== a.model ? (
+                <p className="mt-1 pl-[9.25rem] text-[11px] text-muted">
                   {t("En este rol corre en")} <span className="font-mono">{def.model}</span>
-                </span>
-              ) : null;
-            })()}
-            {creatingFor === h && (
-              <NewAgentForm
-                handle={h}
-                onCancel={() => setCreatingFor(null)}
-                onCreated={(a) => {
-                  setCreated((prev) => [...prev, a]);
-                  onChange({ ...value, [h]: a.id });
-                  setCreatingFor(null);
-                }}
-              />
-            )}
-          </div>
-        ))}
+                </p>
+              ) : null}
+              {creatingFor === h && (
+                <div className="mt-2">
+                  <NewAgentForm
+                    handle={h}
+                    onCancel={() => setCreatingFor(null)}
+                    onCreated={(na) => {
+                      setCreated((prev) => [...prev, na]);
+                      onChange({ ...value, [h]: na.id });
+                      setCreatingFor(null);
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
       {engines.size === 1 || checkEngine === buildEngine ? (
         <p className="text-xs text-muted">{t("Consejo: @check con un agente de otro motor revisa mejor; el mismo modelo comparte los puntos ciegos de quien construyó.")}</p>
@@ -504,24 +517,27 @@ function JudgePicker({ status, onChange }: { status: FactoryStatus; onChange: ()
     }
   };
   return (
-    <div className="mt-3 border-t border-border pt-3">
-      <div className="flex items-center gap-2 text-xs">
-        <span className="w-14 shrink-0 font-mono font-semibold text-ink">@eval</span>
-        <span className="w-20 shrink-0 text-muted">{t("Juzga evals")}</span>
+    <div className="mt-4">
+      <p className="mb-1 text-xs font-semibold text-muted">{t("Juez de evals (opcional)")}</p>
+      <div className="grid grid-cols-[1fr_2rem] items-center gap-x-3 gap-y-2 rounded-lg border border-border bg-surface px-3 py-2.5 sm:grid-cols-[8.5rem_minmax(0,1fr)_2rem]">
+        <div className="flex items-baseline gap-2">
+          <span className="font-mono text-sm font-semibold text-ink">@eval</span>
+          <span className="text-xs text-muted">{t("Juzga evals")}</span>
+        </div>
+        <span className="flex justify-center sm:order-last">{busy && <Loader2 className="size-4 animate-spin text-muted" />}</span>
         <select
           value={status.judgeAgentId ?? ""}
           disabled={busy}
           onChange={(e) => void pick(e.target.value)}
-          className="min-w-0 flex-1 rounded-md border border-border bg-surface-2 px-2 py-1 text-ink"
+          className="w-full min-w-0 rounded-md border border-border bg-surface-2 px-2 py-1.5 text-sm text-ink max-sm:col-span-2"
         >
           <option value="">{t("Usa @check")}</option>
           {status.candidates.map((a) => (
             <option key={a.id} value={a.id}>
-              {a.name} · {a.engine} · {a.model}
+              {a.name} · {ENGINE_LABEL[a.engine] ?? a.engine} · {a.model}
             </option>
           ))}
         </select>
-        {busy && <Loader2 className="size-3.5 animate-spin text-muted" />}
       </div>
       <p className="mt-1 text-[11px] text-muted">
         {t("Opcional. Un juez fijo hace comparables los evals en el tiempo; uno de otro motor y más barato basta: califica, no programa.")}
