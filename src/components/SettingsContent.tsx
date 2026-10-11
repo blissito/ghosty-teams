@@ -2872,7 +2872,7 @@ function EditAgentForm({
                         // Va por el SERVIDOR: la caja no manda cabeceras CORS, así que un
                         // fetch del navegador falla antes de poder leer nada.
                         const b = await probeAcpBoxFn({
-                          data: { wsUrl: wsUrl.trim(), token: acpToken.trim() || undefined },
+                          data: { wsUrl: wsUrl.trim(), token: acpToken.trim() || undefined, agentId: agent.id },
                         });
                         setProbe({
                           name: b.agentName ? `${b.agentName}${b.agentVersion ? ` ${b.agentVersion}` : ""}` : t("Agente ACP vivo"),

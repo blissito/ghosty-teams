@@ -75,16 +75,24 @@ export const answerAgentAskFn = createServerFn({ method: "POST" })
  * teniendo el WebSocket sano. Ver `acpHandshake`.
  */
 export const probeAcpBoxFn = createServerFn({ method: "POST" })
-  .validator((d: { wsUrl: string; token?: string }) => d)
+  .validator((d: { wsUrl: string; token?: string; agentId?: number }) => d)
   .handler(async ({ data }) => {
     const user = await sessionUser();
     if (!user) throw new Error("sesión requerida");
 
     const raw = normalizeWsUrl(data.wsUrl);
+    // Un agente ya guardado: el campo del token nace vacío (el token nunca viaja al cliente), así
+    // que se prueba con el guardado. Sólo si la URL es la suya: no se manda a otra caja.
+    let token = data.token?.trim() || undefined;
+    if (!token && data.agentId) {
+      const db = await import("../db.server");
+      const row = await db.getAgentById(Number(data.agentId)).catch(() => null);
+      if (row?.fleet_token && row.runtime_url && normalizeWsUrl(row.runtime_url) === raw) token = row.fleet_token;
+    }
     const { acpHandshake, acpBusy } = await import("./acp-client.server");
     const { currentNamespace } = await import("./tenant.server");
     const ns = await currentNamespace();
-    const hs = await acpHandshake({ wsUrl: raw, ns, sub: user.sub, token: data.token?.trim() || undefined }).catch((e) => {
+    const hs = await acpHandshake({ wsUrl: raw, ns, sub: user.sub, token }).catch((e) => {
       throw new Error(`no responde: ${e instanceof Error ? e.message : e}`);
     });
     // Dato extra, nunca requisito: un 404 aquí sólo dice que no es nuestro relé.
