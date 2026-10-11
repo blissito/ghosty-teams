@@ -4387,7 +4387,7 @@ function Sidebar({
                   onClick={() => onMarkRoomRead(c.id)}
                   title={t("Marcar como leído")}
                   aria-label={t("Marcar como leído")}
-                  className="p-1 text-muted opacity-100 transition hover:text-ink md:opacity-0 md:group-hover:opacity-100"
+                  className="p-1 text-muted transition hover:text-ink md:hidden md:group-hover:inline-flex md:group-focus-within:inline-flex"
                 >
                   <CheckCheck size={14} />
                 </button>
@@ -4395,14 +4395,14 @@ function Sidebar({
               <button
                 onClick={() => togglePinRoom(c.id)}
                 title={isPinned ? t("Quitar de fijados") : t("Fijar arriba")}
-                className={`p-1 transition hover:text-ink ${isPinned ? "text-brand" : "text-muted opacity-100 md:opacity-0 md:group-hover:opacity-100"}`}
+                className={`p-1 transition hover:text-ink ${isPinned ? "text-brand" : "text-muted md:hidden md:group-hover:inline-flex md:group-focus-within:inline-flex"}`}
               >
                 <Pin size={14} className={isPinned ? "fill-current" : ""} />
               </button>
               <button
                 onClick={() => onToggleMute("room", c.id)}
                 title={muted ? t("Reactivar notificaciones") : t("Silenciar room")}
-                className="p-1 text-muted opacity-100 transition hover:text-ink md:opacity-0 md:group-hover:opacity-100"
+                className="p-1 text-muted transition hover:text-ink md:hidden md:group-hover:inline-flex md:group-focus-within:inline-flex"
               >
                 {muted ? <BellOff size={15} /> : <Bell size={15} />}
               </button>
@@ -4410,7 +4410,7 @@ function Sidebar({
                 <button
                   onClick={() => setSettingsSlug(c.slug)}
                   title={t("Ajustes del room")}
-                  className="p-1 text-muted opacity-100 transition hover:text-ink md:opacity-0 md:group-hover:opacity-100"
+                  className="p-1 text-muted transition hover:text-ink md:hidden md:group-hover:inline-flex md:group-focus-within:inline-flex"
                 >
                   <Settings size={15} />
                 </button>
@@ -4546,7 +4546,7 @@ function Sidebar({
                   <button
                     onClick={() => onToggleMute("dm", dm.id)}
                     title={muted ? t("Reactivar notificaciones") : t("Silenciar conversación")}
-                    className="p-1 text-muted opacity-100 transition hover:text-ink md:opacity-0 md:group-hover:opacity-100"
+                    className="p-1 text-muted transition hover:text-ink md:hidden md:group-hover:inline-flex md:group-focus-within:inline-flex"
                   >
                     {muted ? <BellOff size={15} /> : <Bell size={15} />}
                   </button>
@@ -4554,7 +4554,7 @@ function Sidebar({
                     onClick={() => cerrarDm(dm.id)}
                     title={t("Quitar de la lista (vuelve si te escriben)")}
                     aria-label={t("Quitar de la lista")}
-                    className="p-1 text-muted opacity-100 transition hover:text-ink md:opacity-0 md:group-hover:opacity-100"
+                    className="p-1 text-muted transition hover:text-ink md:hidden md:group-hover:inline-flex md:group-focus-within:inline-flex"
                   >
                     <X size={15} />
                   </button>
