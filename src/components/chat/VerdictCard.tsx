@@ -39,23 +39,27 @@ const RISK_REASON: Record<string, string> = {
 
 const btn = "rounded-md border px-2.5 py-1 text-xs font-medium transition disabled:opacity-50";
 
-export function VerdictCard({ card, channelId }: { card: { runId: number }; channelId: number }) {
+/** `inPanel`: ya se ve dentro del panel del pedido; «Revisar» abriría el mismo panel (no hacía nada). */
+export function VerdictCard({ card, channelId, inPanel = false }: { card: { runId: number }; channelId: number; inPanel?: boolean }) {
   const t = useT();
   const { onOpenArtifact } = useContext(ChatCtx);
   const { st } = useRunState(card.runId, channelId);
   if (!st?.verdict) return null;
   const v = st.verdict;
   const merged = st.status === "done";
+  // El pedido volvió a trabajo (rojo, cambios pedidos desde GitHub o la preview): esa aprobación es
+  // la anterior y @check revisará otra vez. Antes seguía diciendo «aprobó» con @build construyendo.
+  const stale = st.status === "planning" || st.status === "plan_review" || st.status === "building" || st.status === "checking";
   // En el hilo, UNA línea con la acción (como el «finished work» de Copilot en el PR): la
   // revisión completa vive en el panel del pedido. Antes era la tarjeta entera, repetida.
   return (
     <div className="mt-0.5 flex max-w-xl flex-wrap items-center gap-x-2 gap-y-1 rounded-lg gt-card px-3 py-2 text-sm">
-      <span className="font-semibold text-ink">{merged ? t("🟣 Merged") : t("✅ @check aprobó el PR")}</span>
+      <span className={stale ? "text-muted" : "font-semibold text-ink"}>{merged ? t("🟣 Merged") : stale ? t("@check había aprobado; revisa otra vez cuando @build termine") : t("✅ @check aprobó el PR")}</span>
       {v.prNumber ? <span className="font-mono text-xs text-muted">#{v.prNumber}</span> : null}
       {st.effort && !merged ? (
         <span className="text-xs text-muted">· {t("esfuerzo")} {st.effort.score}/5 · ~{st.effort.minutes} min</span>
       ) : null}
-      {onOpenArtifact && (
+      {onOpenArtifact && !inPanel && !stale && (
         <button
           type="button"
           onClick={() => onOpenArtifact({ kind: "run", title: `${t("Pedido")} #${st.runId}`, runId: st.runId, channelId })}

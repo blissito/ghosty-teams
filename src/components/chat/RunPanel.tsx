@@ -139,7 +139,7 @@ export function RunPanel({ runId, channelId }: { runId: number; channelId: numbe
       )}
 
       {detail?.planVersion ? <PlanCard card={{ runId, version: detail.planVersion }} channelId={channelId} expanded /> : null}
-      {detail?.verdictJson ? <VerdictCard card={{ runId }} channelId={channelId} /> : null}
+      {detail?.verdictJson ? <VerdictCard card={{ runId }} channelId={channelId} inPanel /> : null}
 
       {!!detail?.events.length && (
         <section>

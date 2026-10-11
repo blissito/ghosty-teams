@@ -647,6 +647,7 @@ export const en: Record<string, string> = {
   "Revisar": "Review",
   "esfuerzo": "effort",
   "✅ @check aprobó el PR": "✅ @check approved the PR",
+  "@check había aprobado; revisa otra vez cuando @build termine": "@check had approved; it reviews again when @build finishes",
   "Lee primero": "Read first",
   "Preview en móvil": "Preview on mobile",
   "Preview en escritorio": "Preview on desktop",
