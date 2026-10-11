@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { Factory, Loader2, ExternalLink } from "lucide-react";
 import { useT } from "../i18n";
 import { createFactoryAgentFn, factorySchedulesFn, factorySuggestFn, setFactoryJudgeFn, setFactoryScheduleFn, factoryStatusFn, installFactoryFn, setFactoryRolesFn, uninstallFactoryFn, type FactoryStatus } from "../server/apps/factory";
-import { ROLE_DEFAULT_MODEL } from "../server/apps/factory-team";
+import { modelsFor, roleDefaultFor } from "../server/apps/factory-team";
 import { githubInstallationReposFn } from "../server/room-repos";
 import { listChannelsFn } from "../server/chat";
 import ConfirmModal from "./ConfirmModal";
@@ -363,10 +363,12 @@ function RolePickersList({
         )}
         {HANDLES_UI.map((h) => {
           const a = status.candidates.find((x) => x.id === value[h]);
-          const def = ROLE_DEFAULT_MODEL[h];
-          const list = a ? (status.engineModels?.[a.engine] ?? []) : [];
+          // Los modelos que ESTE agente puede correr (un DeepSeek sobre el arnés de Claude sólo
+          // corre DeepSeek), y su default real de rol (a un DeepSeek no se le sube a Opus).
+          const list = a ? modelsFor(a.engine, a.model) : [];
           const label = (id: string) => list.find((m) => m.id === id)?.label ?? id;
-          const fallback = a ? (def && def.engine === a.engine ? `${t("Por defecto")} · ${label(def.model)}` : `${t("El del agente")} · ${label(a.model)}`) : "—";
+          const roleDef = a ? roleDefaultFor(h, a.engine, a.model) : null;
+          const fallback = a ? (roleDef ? `${t("Por defecto")} · ${label(roleDef)}` : `${t("El del agente")} · ${label(a.model)}`) : "—";
           const selectCls = "w-full min-w-0 rounded-md border border-border bg-surface-2 px-2 py-1.5 text-sm text-ink";
           return (
             <div key={h} className="border-b border-border px-3 py-2.5 last:border-b-0">
@@ -381,9 +383,9 @@ function RolePickersList({
                   onChange={(e) => {
                     if (e.target.value === NEW_AGENT) setCreatingFor(h);
                     else {
-                      const after = status.candidates.find((x) => x.id === e.target.value)?.engine;
-                      // Otro motor: el modelo elegido ya no aplica.
-                      if (models && onModelsChange && a?.engine !== after && models[h]) onModelsChange({ ...models, [h]: "" });
+                      const next = status.candidates.find((x) => x.id === e.target.value);
+                      // Si el modelo elegido no lo corre el agente nuevo, vuelve a «el de siempre».
+                      if (models && onModelsChange && models[h] && !(next && modelsFor(next.engine, next.model).some((m) => m.id === models[h]))) onModelsChange({ ...models, [h]: "" });
                       onChange({ ...value, [h]: e.target.value });
                     }
                   }}
@@ -428,9 +430,9 @@ function RolePickersList({
                   <span />
                 )}
               </div>
-              {!withModels && a && def && def.engine === a.engine && def.model !== a.model ? (
+              {!withModels && a && roleDef && roleDef !== a.model ? (
                 <p className="mt-1 pl-[9.25rem] text-[11px] text-muted">
-                  {t("En este rol corre en")} <span className="font-mono">{def.model}</span>
+                  {t("En este rol corre en")} <span className="font-mono">{roleDef}</span>
                 </p>
               ) : null}
               {creatingFor === h && (

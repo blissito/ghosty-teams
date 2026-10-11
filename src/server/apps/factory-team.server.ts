@@ -8,7 +8,7 @@
 import { dbq } from "../../dbq.server";
 import type { ToolDest } from "../connectors/tool-token.server";
 import { FACTORY_HANDLES, type FactoryHandle } from "./factory-roles";
-import { KNOWLEDGE_DIR, ROLE_DEFAULT_MODEL, TEAM_FILE, engineOfModel, parseMessageOverrides, parseTeamFile, resolveModel, type TeamFile, type TurnOverrides } from "./factory-team";
+import { KNOWLEDGE_DIR, TEAM_FILE, engineOfModel, parseMessageOverrides, parseTeamFile, resolveModelFor, roleDefaultFor, type TeamFile, type TurnOverrides } from "./factory-team";
 
 type StudioAgent = { id: string; name: string; engine: string; model: string };
 export type RoleSource = "message" | "repo" | "space";
@@ -155,12 +155,13 @@ export async function factoryTurnFor(handle: string, dest: ToolDest | null | und
     agentSource = ov.agents?.[h] ? "message" : "repo";
   }
   const engine = agents.find((x) => x.id === fleetId)?.engine ?? null;
+  const agentModel = agents.find((x) => x.id === fleetId)?.model ?? null;
 
   let model: string | null = null;
   let modelSource: RoleSource = "space";
   const asked = ov.models?.[h] ?? spec.model ?? null;
   if (asked && engine) {
-    model = resolveModel(engine, asked);
+    model = resolveModelFor(engine, agentModel, asked);
     if (!model) {
       const other = engineOfModel(asked);
       const where = ov.models?.[h] ? "en tu mensaje" : `en \`${TEAM_FILE}\` de ${repo}`;
@@ -179,15 +180,11 @@ export async function factoryTurnFor(handle: string, dest: ToolDest | null | und
     const cfg = await getAppConfig<{ roleModels?: Partial<Record<string, string>> }>("factory").catch(() => null);
     const chosen = cfg?.roleModels?.[h];
     if (chosen) {
-      model = resolveModel(engine, chosen);
+      model = resolveModelFor(engine, agentModel, chosen);
       if (!model) console.warn(`[factory] @${h}: ${chosen} no es de ${engine} (cambió el agente); corre con el default`);
     }
   }
-  if (!model) {
-    const { ROLE_DEFAULT_MODEL } = await import("./factory-team");
-    const def = ROLE_DEFAULT_MODEL[h];
-    if (def && def.engine === engine) model = def.model;
-  }
+  if (!model && engine) model = roleDefaultFor(h, engine, agentModel);
 
   return {
     handle: h,
@@ -222,15 +219,15 @@ export async function effectiveTeam(
       const spec = file?.roles[h] ?? {};
       const fromFile = spec.agent ? agents.find((x) => x.id === spec.agent || x.name.toLowerCase() === spec.agent!.toLowerCase()) : null;
       const a = fromFile ?? agents.find((x) => x.id === space[h]) ?? null;
-      const model = spec.model && a ? resolveModel(a.engine, spec.model) : null;
-      const chosen = spaceModels[h] && a ? resolveModel(a.engine, spaceModels[h]!) : null;
+      const model = spec.model && a ? resolveModelFor(a.engine, a.model, spec.model) : null;
+      const chosen = spaceModels[h] && a ? resolveModelFor(a.engine, a.model, spaceModels[h]!) : null;
       // Sin modelo en el repo, el rol corre con su default (@plan/@check en Opus), no con el del
       // agente: es lo mismo que decide `resolveFactoryTurn`, y la página lo decía mal.
-      const def = ROLE_DEFAULT_MODEL[h];
+      const def = a ? roleDefaultFor(h, a.engine, a.model) : null;
       return {
         handle: h,
         agent: a ? { id: a.id, name: a.name, engine: a.engine } : null,
-        model: model ?? chosen ?? (def && a && def.engine === a.engine ? def.model : null) ?? a?.model ?? null,
+        model: model ?? chosen ?? def ?? a?.model ?? null,
         agentSource: (spec.agent ? "repo" : "space") as RoleSource,
         modelSource: (model ? "repo" : "space") as RoleSource,
         problem: spec.agent && !fromFile ? `no hay agente «${spec.agent}»` : spec.model && a && !model ? `${spec.model} no es de ${a.engine}` : null,

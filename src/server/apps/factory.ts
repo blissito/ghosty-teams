@@ -305,14 +305,15 @@ export const setFactoryRolesFn = createServerFn({ method: "POST" })
     if (!cfg) throw new Error("la fábrica no está instalada");
     const assigned = await assignRoles(user.sub, data.roles ?? {}, cfg);
     // El modelo de cada rol tiene que ser del motor de SU agente; vacío = el de siempre.
-    const { resolveModel } = await import("./factory-team");
+    const { resolveModelFor } = await import("./factory-team");
     const agents = await studioAgents();
     const roleModels: Partial<Record<FactoryHandle, string>> = {};
     for (const h of HANDLES) {
       const asked = (data.models ?? cfg.roleModels ?? {})[h]?.trim();
       if (!asked) continue;
-      const engine = agents.find((a) => a.id === assigned.roles[h])?.engine ?? "";
-      const id = resolveModel(engine, asked);
+      const ag = agents.find((a) => a.id === assigned.roles[h]);
+      const engine = ag?.engine ?? "";
+      const id = resolveModelFor(engine, ag?.model, asked);
       if (!id) throw new Error(`${asked} no es un modelo de ${engine || "ese motor"}: elige otro para @${h}`);
       roleModels[h] = id;
     }

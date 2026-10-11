@@ -134,3 +134,16 @@ describe("modelos elegibles por rol (Equipo del espacio)", () => {
     for (const [engine, list] of Object.entries(ENGINE_MODELS)) for (const m of list) expect(resolveModel(engine, m.id)).toBe(m.id);
   });
 });
+
+describe("DeepSeek con el arnés de Claude", () => {
+  it("sólo corre DeepSeek y no hereda el Opus de @plan", async () => {
+    const { modelsFor, roleDefaultFor, resolveModelFor } = await import("./factory-team");
+    expect(modelsFor("claude", "deepseek-flash").map((m) => m.id)).toEqual(["deepseek-flash", "deepseek-v4-pro"]);
+    expect(roleDefaultFor("plan", "claude", "deepseek-flash")).toBeNull();
+    expect(roleDefaultFor("plan", "claude", "claude-sonnet-5-5")).toBe("claude-opus-5-5");
+    expect(resolveModelFor("claude", "deepseek-flash", "opus")).toBeNull();
+    expect(resolveModelFor("claude", "deepseek-flash", "pro")).toBe("deepseek-v4-pro");
+    expect(resolveModelFor("claude", "claude-sonnet-5-5", "deepseek-flash")).toBeNull();
+    expect(resolveModelFor("claude", "claude-sonnet-5-5", "opus-5.5")).toBe("claude-opus-5-5");
+  });
+});

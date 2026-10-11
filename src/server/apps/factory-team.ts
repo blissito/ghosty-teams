@@ -283,6 +283,41 @@ export const ENGINE_MODELS: Record<string, { id: string; label: string }[]> = {
   ],
 };
 
+/**
+ * DeepSeek con el arnés de Claude (experimento de Studio, 10-oct): el agente es del motor claude
+ * pero su caja habla con DeepSeek, así que SÓLO puede correr modelos de DeepSeek. Un Opus ahí
+ * llegaría a un endpoint que no lo conoce.
+ */
+export const DEEPSEEK_ON_CLAUDE: { id: string; label: string }[] = [
+  { id: "deepseek-flash", label: "DeepSeek V4.1 Flash" },
+  { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro" },
+];
+const isDeepseekOnClaude = (engine: string, agentModel?: string | null) => engine === "claude" && /^deepseek/i.test(agentModel ?? "");
+
+/** Los modelos que puede correr ESTE agente (su motor y, dentro de claude, su proveedor). */
+export function modelsFor(engine: string, agentModel?: string | null): { id: string; label: string }[] {
+  return isDeepseekOnClaude(engine, agentModel) ? DEEPSEEK_ON_CLAUDE : (ENGINE_MODELS[engine] ?? []);
+}
+
+/** El modelo de casa del rol para ESTE agente, o null (un agente DeepSeek no se sube a Opus). */
+export function roleDefaultFor(handle: string, engine: string, agentModel?: string | null): string | null {
+  const def = ROLE_DEFAULT_MODEL[handle];
+  return def && def.engine === engine && !isDeepseekOnClaude(engine, agentModel) ? def.model : null;
+}
+
+/** `asked` resuelto para este agente, o null si no lo puede correr (otro motor u otro proveedor). */
+export function resolveModelFor(engine: string, agentModel: string | null | undefined, asked: string): string | null {
+  if (isDeepseekOnClaude(engine, agentModel)) {
+    const m = asked.trim().toLowerCase();
+    const alias: Record<string, string> = { flash: "deepseek-flash", "v4-flash": "deepseek-flash", pro: "deepseek-v4-pro", "v4-pro": "deepseek-v4-pro" };
+    const id = alias[m] ?? m;
+    return DEEPSEEK_ON_CLAUDE.some((x) => x.id === id) ? id : null;
+  }
+  const id = resolveModel(engine, asked);
+  // Un agente Claude normal no puede pasarse a DeepSeek por el modelo (su caja habla con Anthropic).
+  return id && !/^deepseek/i.test(id) ? id : engine === "claude" ? null : id;
+}
+
 /** Motor al que pertenece un alias o un id conocido (para decir «eso es de otro motor»). */
 export function engineOfModel(model: string): string | null {
   const m = model.toLowerCase();
