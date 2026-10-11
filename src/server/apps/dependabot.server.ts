@@ -34,7 +34,7 @@ const LEVEL_TEXT: Record<BumpLevel, string> = {
  * avisos del repo (el primero con la fábrica). Devuelve los rooms que ya quedaron cubiertos para
  * que no reciban también el aviso suelto. Nunca lanza.
  */
-export async function adoptDependabotPr(ev: PrOpened): Promise<number[]> {
+export async function adoptDependabotPr(ev: PrOpened, opts: { room?: number } = {}): Promise<number[]> {
   if (!isDependabot(ev.author)) return [];
   try {
     const { isInstalled } = await import("./installed.server");
@@ -42,7 +42,7 @@ export async function adoptDependabotPr(ev: PrOpened): Promise<number[]> {
     const R = await import("./factory-runs.server");
     if ((await R.runsByPr(ev.repo, ev.number)).length) return [];
     const db = await import("../../db.server");
-    const [room] = await db.notifyRoomsOfRepo(ev.repo);
+    const room = opts.room ?? (await db.notifyRoomsOfRepo(ev.repo))[0];
     if (!room) return [];
     // Con las credenciales de quien conectó el repo: es quien alcanza el PR en GitHub.
     const row = (await db.listRoomRepos(room)).find((r) => r.repo.toLowerCase() === ev.repo.toLowerCase());
@@ -96,5 +96,48 @@ export async function adoptDependabotPr(ev: PrOpened): Promise<number[]> {
   } catch (e) {
     console.error(`[dependabot] no pude adoptar ${ev.repo}#${ev.number}`, e);
     return [];
+  }
+}
+
+/**
+ * Barrido (tick de la fábrica): los PRs de Dependabot abiertos sin pedido se adoptan. Cubre los
+ * que ya estaban abiertos antes de la adopción automática y los avisos que GitHub no entregó.
+ * Una vuelta por repo cada 30 min (y la siguiente sigue donde quedó el tope), con las credenciales de quien lo conectó. Nunca lanza.
+ */
+const lastSweep = new Map<string, number>();
+export async function adoptOpenDependabotPrs(ns: string): Promise<void> {
+  try {
+    const { isInstalled } = await import("./installed.server");
+    if (!(await isInstalled("factory").catch(() => false))) return;
+    const { dbq } = await import("../../dbq.server");
+    const rows = await dbq(
+      `SELECT r.channel_id, r.repo, r.connected_by FROM gt_room_repos r JOIN gc_channels c ON c.id = r.channel_id
+       WHERE r.notify = 1 AND COALESCE(c.archived, 0) = 0`,
+      [],
+    ).catch(() => []);
+    const { githubApi } = await import("../connectors/github.server");
+    const R = await import("./factory-runs.server");
+    for (const row of rows) {
+      const repo = String(row.repo);
+      const key = `${ns}:${repo.toLowerCase()}`;
+      if (Date.now() - (lastSweep.get(key) ?? 0) < 30 * 60_000) continue;
+      lastSweep.set(key, Date.now());
+      const prs = (await githubApi(String(row.connected_by), `/repos/${repo}/pulls?state=open&per_page=50`).catch(() => null)) as any[] | null;
+      if (!Array.isArray(prs)) continue;
+      // Tope de 5 por repo y vuelta: un repo con 20 PRs viejos no despierta 20 @check de golpe.
+      let adopted = 0;
+      for (const pr of prs) {
+        if (adopted >= 5) break;
+        if (pr?.draft || !isDependabot(pr?.user?.login)) continue;
+        if ((await R.runsByPr(repo, Number(pr.number))).length) continue;
+        await adoptDependabotPr(
+          { repo, number: Number(pr.number), title: String(pr.title ?? ""), url: String(pr.html_url ?? ""), author: pr.user.login },
+          { room: Number(row.channel_id) },
+        );
+        adopted++;
+      }
+    }
+  } catch (e) {
+    console.error("[dependabot] barrido", e);
   }
 }

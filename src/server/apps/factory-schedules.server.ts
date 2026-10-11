@@ -106,6 +106,8 @@ export async function sweepTenant(ns: string): Promise<void> {
   const { retryWaitingPrPreviews } = await import("./pr-preview.server");
   await retryWaitingPrPreviews().catch(() => {});
   await announcePreviews().catch(() => {});
+  const { adoptOpenDependabotPrs } = await import("./dependabot.server");
+  await adoptOpenDependabotPrs(ns);
   const rows = await dbq(
     `SELECT * FROM gt_factory_schedules WHERE enabled = 1 AND next_at IS NOT NULL AND next_at <= unixepoch()`,
     [],
