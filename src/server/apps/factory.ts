@@ -487,6 +487,56 @@ export const setFactoryScheduleFn = createServerFn({ method: "POST" })
     return { ok: true as const, nextAt };
   });
 
+// ── La caja de trabajo de un pedido, para la maquinita del hilo ─────────────────
+
+/** Último estado por pedido (8 s): con varias burbujas y pestañas no se le pregunta a gs en cada una. */
+const boxSeen = new Map<number, { at: number; v: ThreadBox }>();
+export type ThreadBox = {
+  runId: number;
+  boxId: string | null;
+  /** waiting = en cola por lugar · starting · on · asleep · error · off = sin caja (o ya se tiró). */
+  state: "waiting" | "starting" | "on" | "asleep" | "error" | "off";
+  working: boolean;
+  label: string | null;
+  createdAt: string | null;
+};
+
+/** La caja del pedido de un hilo (null = el hilo no es de un pedido). La pinta `WorkBox`. */
+export const factoryThreadBoxFn = createServerFn({ method: "POST" })
+  .validator((d: { channelId: number; parentId: number }) => d)
+  .handler(async ({ data }): Promise<ThreadBox | null> => {
+    const me = await sessionUser();
+    if (!me) throw new Error("no autenticado");
+    const db = await import("../../db.server");
+    const ch = await db.getChannelById(Number(data.channelId));
+    if (!ch || !(await db.canSeeChannel(ch, me.sub, !!me.isOwner))) return null;
+    const R = await import("./factory-runs.server");
+    const run = await R.runOfThread(ch.id, Number(data.parentId));
+    if (!run) return null;
+    const hit = boxSeen.get(run.id);
+    if (hit && Date.now() - hit.at < 8000) return hit.v;
+    const base = { runId: run.id, boxId: null, working: false, label: null, createdAt: null };
+    let v: ThreadBox;
+    if (run.boxWaiting) v = { ...base, state: "waiting" };
+    else {
+      const r = await R.gsRunBox("status", { runId: run.id }).catch(() => null);
+      const j = r?.status === 200 ? r.json : null;
+      const st = String(j?.state ?? "");
+      v = !j?.boxId
+        ? { ...base, state: "off" }
+        : {
+            ...base,
+            boxId: String(j.boxId),
+            state: st === "error" ? "error" : st === "paused" || st === "pausing" ? "asleep" : st === "creating" || st === "ready" ? "starting" : st === "running" ? "on" : "off",
+            working: Number(j.inflight) > 0,
+            label: j.label ?? null,
+            createdAt: j.createdAt ?? null,
+          };
+    }
+    boxSeen.set(run.id, { at: Date.now(), v });
+    return v;
+  });
+
 // ── La tarjeta viva de una corrida (```gt-run```) ────────────────────────────
 
 /** Estado de una corrida para su tarjeta viva en el room. Se lee al pintar. */

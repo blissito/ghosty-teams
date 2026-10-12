@@ -128,6 +128,8 @@ function RunCardBody({ card, channelId, inPanel }: { card: RunCardData; channelI
   meSub.current = me?.sub ?? null;
   const t = useT();
   const [st, setSt] = useState<State>(null);
+  // ¿Ya contestó el servidor? Sin datos y sin respuesta = esqueleto; con respuesta vacía = nada.
+  const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [asking, setAsking] = useState(false);
   const [note, setNote] = useState("");
@@ -167,11 +169,12 @@ function RunCardBody({ card, channelId, inPanel }: { card: RunCardData; channelI
           prevStatus.current = s?.status ?? null;
           if (s) rememberCard(card.runId, s);
           setSt(s);
+          setLoaded(true);
           // La revisión sólo se pide con el PR en manos de la persona.
           if (s?.status === "pr_review") await factoryVerdictFn({ data: { runId: card.runId } }).then(setReview).catch(() => {});
           else setReview(null);
         })
-        .catch(() => {}),
+        .catch(() => setLoaded(true)),
     [card.runId],
   );
   // La caché se lee al montar y antes de pintar (no en el render: el servidor no la tiene y la
@@ -203,7 +206,7 @@ function RunCardBody({ card, channelId, inPanel }: { card: RunCardData; channelI
       }
     },
   });
-  if (!st) return null;
+  if (!st) return loaded ? null : <RunCardSkeleton />;
   const mergeBoxOpen = st.status === "pr_review" && !inPanel && (merging || !!st.mergeQueued);
 
   // Cancelado: se pinta la etapa en la que iba (bitácora), no ninguna; lo hecho conserva su ✓.
@@ -721,6 +724,28 @@ function RunCardBody({ card, channelId, inPanel }: { card: RunCardData; channelI
           </div>
         )}
         {err && <p className="mt-2 text-xs text-danger">{err}</p>}
+      </div>
+    </div>
+  );
+}
+
+/** La forma de la tarjeta mientras llega su primer estado (nunca vista en este navegador): ocupa
+ *  su lugar desde el primer cuadro en vez de aparecer de golpe cuando contesta el servidor. */
+function RunCardSkeleton() {
+  return (
+    <div className="mt-1.5 max-w-xl animate-pulse overflow-hidden rounded-lg gt-card" aria-busy="true">
+      <div className="flex items-center gap-3 px-3.5 pt-3">
+        <span className="h-9 w-9 shrink-0 rounded-full bg-surface-3" />
+        <span className="h-3.5 w-2/3 rounded bg-surface-3" />
+      </div>
+      <div className="flex gap-1 px-3.5 pt-3">
+        {Array.from({ length: 6 }, (_, i) => (
+          <span key={i} className="h-1 flex-1 rounded bg-surface-3" />
+        ))}
+      </div>
+      <div className="flex items-center justify-between px-3.5 pb-3 pt-4">
+        <span className="h-3 w-24 rounded bg-surface-3" />
+        <span className="h-3 w-14 rounded bg-surface-3" />
       </div>
     </div>
   );

@@ -2199,4 +2199,9 @@ export const en: Record<string, string> = {
   "Al crearlo en Studio queda activo en este espacio.": "Once you create it in Studio, it's active in this space.",
   "trabajando": "working",
   "libre": "free",
+  "Caja de trabajo del pedido": "Work box for request",
+  "en espera de lugar": "waiting for a slot",
+  "encendiendo": "starting",
+  "despierta": "awake",
+  "con error": "with an error",
 };

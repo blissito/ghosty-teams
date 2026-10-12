@@ -97,6 +97,7 @@ import { answerAgentAskFn } from "../../server/agent-ask";
 import { answerAcpPermissionFn } from "../../server/agent-permission";
 import { ThinkingRing } from "../../components/ThinkingRing";
 import { AgentBot, type AgentBotStatus } from "../../components/AgentBot";
+import { WorkBox, useIsLatestInThread } from "./WorkBox";
 import { useT } from "../../i18n";
 
 // ── El chat, en piezas COMPARTIDAS ──────────────────────────────────────────
@@ -2773,6 +2774,12 @@ export function MessageRow({
   const avatarSrc = dirUser?.avatar || liveRoleAvatar || m.avatar;
   const role = isAgent && m.agent_handle ? parseFactoryAvatar(avatarSrc) : null;
   const roleBot = factoryRoom && role && m.agent_handle ? { handle: m.agent_handle, color: role.color } : null;
+  // La caja de trabajo del pedido, debajo del avatar: en el hilo de un pedido, una sola por hilo,
+  // en la burbuja de agente más reciente (sea cual sea el rol).
+  const inRunThread = factoryRoom && isAgent && m.parent_id != null && m.channel_id != null;
+  const latestInThread = useIsLatestInThread(inRunThread ? m.parent_id : null, m.id);
+  const workBox =
+    inRunThread && latestInThread ? <WorkBox channelId={m.channel_id!} parentId={m.parent_id!} live={!!liveBot} /> : null;
   const time = new Date(m.created_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   // Hora compacta (24h, sin am/pm) para el gutter angosto de mensajes agrupados: "18:47"
   // cabe en w-9 (36px) en UNA línea → no wrappea a 2 líneas (lo que inflaba el alto de la
@@ -2932,10 +2939,15 @@ export function MessageRow({
         // hidratación EN CADA MENSAJE (React error #418): React tiraba el HTML del SSR y
         // re-renderizaba todo el flujo en el cliente, que es por qué el room aparecía
         // "mensaje a mensaje". El texto del cliente es el correcto; toleramos la diferencia.
+        workBox ? (
+          <div className="flex w-9 shrink-0 justify-center pt-0.5">{workBox}</div>
+        ) : (
         <div suppressHydrationWarning className="w-9 shrink-0 select-none whitespace-nowrap pt-0.5 text-right text-[10px] leading-5 tabular-nums text-muted opacity-0 group-hover:opacity-100">
           {timeShort}
         </div>
+        )
       ) : (
+      <div className="flex shrink-0 flex-col items-center gap-1">
       /* Avatar clickable → perfil (persona o agente). */
       <button
         // Sin `openProfile` no hay perfil que abrir (un room abierto no tiene directorio),
@@ -2970,6 +2982,8 @@ export function MessageRow({
         <Avatar name={displayName} avatar={avatarSrc} className="mt-0.5 h-9 w-9 !rounded-lg" />
       )}
       </button>
+      {workBox}
+      </div>
       )}
       {/* Acciones al hover: reaccionar · destacar · menú (copiar/fijar/editar/borrar) */}
       {m.kind === "msg" && !editing && (
