@@ -2768,6 +2768,8 @@ export function MessageRow({
   // mensaje, así que se pinta la cara viva del agente (`agent:<handle>` en el directorio).
   const liveRoleAvatar = isAgent && m.agent_handle && parseFactoryAvatar(m.avatar) ? users.get(`agent:${m.agent_handle}`)?.avatar : undefined;
   const avatarSrc = dirUser?.avatar || liveRoleAvatar || m.avatar;
+  const role = isAgent && m.agent_handle ? parseFactoryAvatar(avatarSrc) : null;
+  const roleBot = role && m.agent_handle ? { handle: m.agent_handle, color: role.color } : null;
   const time = new Date(m.created_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   // Hora compacta (24h, sin am/pm) para el gutter angosto de mensajes agrupados: "18:47"
   // cabe en w-9 (36px) en UNA línea → no wrappea a 2 líneas (lo que inflaba el alto de la
@@ -2940,11 +2942,17 @@ export function MessageRow({
         className={`shrink-0 rounded-lg transition ${openProfile ? "hover:opacity-80" : "cursor-default"}`}
         title={openProfile ? t("Ver perfil") : undefined}
       >
-      {liveBot ? (
-        // Turno vivo: el robot del agente ocupa el lugar del avatar (un solo personaje) y al
-        // cerrar el turno vuelve el avatar de siempre. Sólo aquí hay canvas: los mensajes
-        // viejos no montan uno cada uno.
-        <AgentBot handle={liveBot.handle} status={liveBot.status} size={36} className="mt-0.5" />
+      {liveBot || roleBot ? (
+        // Rol de la fábrica: su robot ES su avatar (quieto si no trabaja), con el color del rol.
+        // Cualquier otro agente: el robot sólo mientras corre su turno.
+        <AgentBot
+          handle={(liveBot ?? roleBot)!.handle}
+          status={liveBot?.status ?? "idle"}
+          color={roleBot?.color}
+          still={!liveBot}
+          size={36}
+          className="mt-0.5"
+        />
       ) : isGhostyAvatar ? (
         <div className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-lg bg-white">
           <img src="/ghosty.svg" alt="Ghosty" className="h-full w-full object-contain" />

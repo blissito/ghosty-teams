@@ -21,11 +21,17 @@ export function AgentBot({
   handle,
   status = "idle",
   size = 32,
+  color,
+  still = false,
   className = "",
 }: {
   handle: string;
   status?: AgentBotStatus;
   size?: number;
+  /** Color del cuerpo; sin él, el de `lookFor` (los roles de la fábrica traen el suyo). */
+  color?: string;
+  /** Quieto: un solo cuadro y sin bucle de animación, para los avatares de mensajes viejos. */
+  still?: boolean;
   className?: string;
 }) {
   // Sólo en el cliente: el canvas no tiene nada que hacer en el render del servidor y así no
@@ -39,12 +45,13 @@ export function AgentBot({
     <span aria-hidden="true" className={`inline-block shrink-0 ${className}`} style={box}>
       <RobotHead
         size={size}
-        color={look.color}
+        color={color ?? look.color}
         shape={look.shape}
         seed={look.seed}
         state={STATE_OF[status]}
         // Sin antena: en Teams se ve como un ícono, y la antena lo alarga y lo amontona.
         antenna={false}
+        paused={still}
         // Chico no lleva sombra de piso ni responde al mouse: es un indicador, no un juguete.
         floorShadow={size >= 64}
         interactive={size >= 64}

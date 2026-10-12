@@ -4728,7 +4728,7 @@ function ProfileDrawer({
   const canRecolor = isOwner && !!roleFlame && roleFlame.role === handle;
   // Robot del agente en vivo: trabaja si tiene un turno corriendo, duerme si sólo está en fila.
   // Ghosty de casa y los roles de la fábrica conservan su cara (flamita, logo).
-  const showBot = target.isAgent && !!handle && !isGhosty && !roleFlame;
+  const showBot = target.isAgent && !!handle && !isGhosty;
   const agentMeta = useAgentMeta(showBot ? handle! : "");
   const myTurns = liveTurns.filter((x) => x.agent === name);
   const botStatus: AgentBotStatus = myTurns.some((x) => x.state === "running") ? "running" : myTurns.some((x) => x.state === "queued") ? "queued" : "idle";
@@ -4860,7 +4860,7 @@ function ProfileDrawer({
               <img src="/ghosty.svg" alt="" className="h-full w-full object-contain" />
             </div>
           ) : showBot ? (
-            <AgentBot handle={handle!} status={botStatus} size={120} />
+            <AgentBot handle={handle!} status={botStatus} size={120} color={roleFlame?.color} />
           ) : target.isAgent ? (
             avatar ? (
               <img src={avatar} alt="" loading="lazy" decoding="async" className="h-24 w-24 rounded-2xl object-cover" />
