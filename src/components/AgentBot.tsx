@@ -2,7 +2,7 @@
 // handle, mismo robot en los dos lados (`lookFor`). Sólo va donde el agente TRABAJA (turno en
 // vivo, panel «Trabajando ahora», perfil): cada uno es un canvas, así que el avatar de cada
 // mensaje se queda quieto a propósito.
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { RobotHead, lookFor, type RobotHeadState } from "@ghostystudio/boxes/react";
 
 /** Cómo está el turno del agente, en el vocabulario de Teams. */
@@ -52,10 +52,49 @@ export function AgentBot({
         // Sin antena: en Teams se ve como un ícono, y la antena lo alarga y lo amontona.
         antenna={false}
         paused={still}
-        // Chico no lleva sombra de piso ni responde al mouse: es un indicador, no un juguete.
+        // Chico no lleva sombra de piso; el mouse lo sigue a cualquier tamaño (bliss, 12-oct).
         floorShadow={size >= 64}
-        interactive={size >= 64}
+        interactive={!still}
       />
     </span>
+  );
+}
+
+
+// ── El último mensaje de cada agente se anima ──────────────────────────────────
+// Cada avatar de robot en pantalla se registra con su handle y el id de su mensaje; sólo el
+// de id mayor por handle queda vivo (respira y sigue al mouse). Los viejos siguen en un
+// cuadro: cada canvas animado cuesta, y un room largo tiene decenas.
+const shown = new Map<string, Map<number, number>>(); // handle → id → montajes
+const listeners = new Set<() => void>();
+const emit = () => listeners.forEach((l) => l());
+function subscribeLatest(l: () => void) {
+  listeners.add(l);
+  return () => listeners.delete(l);
+}
+function latestOf(handle: string): number {
+  const ids = shown.get(handle);
+  return ids && ids.size ? Math.max(...ids.keys()) : -1;
+}
+
+/** ¿Es éste el mensaje más reciente en pantalla de ese agente? */
+export function useIsLatestBot(handle: string | null, messageId: number): boolean {
+  useEffect(() => {
+    if (!handle) return;
+    const ids = shown.get(handle) ?? new Map<number, number>();
+    shown.set(handle, ids);
+    ids.set(messageId, (ids.get(messageId) ?? 0) + 1);
+    emit();
+    return () => {
+      const n = (ids.get(messageId) ?? 1) - 1;
+      if (n > 0) ids.set(messageId, n);
+      else ids.delete(messageId);
+      emit();
+    };
+  }, [handle, messageId]);
+  return useSyncExternalStore(
+    subscribeLatest,
+    () => (handle ? latestOf(handle) === messageId : false),
+    () => false,
   );
 }

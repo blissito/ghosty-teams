@@ -96,7 +96,7 @@ import { prCardStateFn, runCardActionFn, taskCardStateFn, runTaskCardActionFn } 
 import { answerAgentAskFn } from "../../server/agent-ask";
 import { answerAcpPermissionFn } from "../../server/agent-permission";
 import { ThinkingRing } from "../../components/ThinkingRing";
-import { AgentBot, type AgentBotStatus } from "../../components/AgentBot";
+import { AgentBot, useIsLatestBot, type AgentBotStatus } from "../../components/AgentBot";
 import { useT } from "../../i18n";
 
 // ── El chat, en piezas COMPARTIDAS ──────────────────────────────────────────
@@ -2773,6 +2773,7 @@ export function MessageRow({
   const avatarSrc = dirUser?.avatar || liveRoleAvatar || m.avatar;
   const role = isAgent && m.agent_handle ? parseFactoryAvatar(avatarSrc) : null;
   const roleBot = factoryRoom && role && m.agent_handle ? { handle: m.agent_handle, color: role.color } : null;
+  const latestBot = useIsLatestBot(roleBot?.handle ?? null, m.id);
   const time = new Date(m.created_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   // Hora compacta (24h, sin am/pm) para el gutter angosto de mensajes agrupados: "18:47"
   // cabe en w-9 (36px) en UNA línea → no wrappea a 2 líneas (lo que inflaba el alto de la
@@ -2952,7 +2953,7 @@ export function MessageRow({
           handle={(liveBot ?? roleBot)!.handle}
           status={liveBot?.status ?? "idle"}
           color={roleBot?.color}
-          still={!liveBot}
+          still={!liveBot && !latestBot}
           size={36}
           className="mt-0.5"
         />
