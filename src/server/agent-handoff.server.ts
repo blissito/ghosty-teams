@@ -73,6 +73,16 @@ export function relayTargets(mentioned: string[], from: string): string[] {
 }
 
 /**
+ * Los roles que `from` mencionó y `relayTargets` descartó. Esa @ no le llega a nadie, y en
+ * pantalla parecía un encargo: «@plan pedido nuevo de…» de @check murió en silencio (mailmask, 12-oct).
+ */
+export function droppedRoleMentions(mentioned: string[], from: string): string[] {
+  const roles = FACTORY_HANDLES as readonly string[];
+  if (!roles.includes(from)) return [];
+  return [...new Set(mentioned.filter((h) => h !== from && roles.includes(h)))];
+}
+
+/**
  * Despierta a los agentes que `reply` menciona, en el hilo `parentId`. Devuelve el aviso
  * para la burbuja cuando el tope cortó un relevo ("" si no hubo nada que decir).
  *
@@ -105,8 +115,13 @@ export async function handoffFromReply(p: {
   const agents = await resolvedAgents();
   const users = await import("../users.server");
   const userHandles = (await users.listUsers().catch(() => [])).map((u) => u.handle).filter(Boolean) as string[];
-  const targets = relayTargets(detectMentions(mentionable, agents.map((a) => a.handle), userHandles), p.fromHandle);
-  if (!targets.length) return "";
+  const mentioned = detectMentions(mentionable, agents.map((a) => a.handle), userHandles);
+  const dropped = droppedRoleMentions(mentioned, p.fromHandle);
+  const droppedNote = dropped.length
+    ? `⚠️ ${dropped.map((h) => `@${h}`).join(", ")} no recibe menciones de otro rol. Un pedido nuevo va con la tarjeta «Pedir» (factory_suggest).`
+    : "";
+  const targets = relayTargets(mentioned, p.fromHandle);
+  if (!targets.length) return droppedNote;
 
   // Tope: relevos de este hilo desde el último mensaje de una PERSONA en él.
   const prefix = `handoff:${p.channel.id}:${p.parentId}:`;
@@ -147,9 +162,10 @@ export async function handoffFromReply(p: {
   }
   if (encolados) kickWakeups(p.ns);
   console.log(`[handoff] ${p.fromHandle} → ${targets.join(",")} hilo=${p.parentId} encolados=${encolados} cortados=${cortados.length}`);
-  return cortados.length
+  const capNote = cortados.length
     ? `⚠️ No desperté a ${cortados.map((h) => `@${h}`).join(", ")}: este hilo ya lleva ${MAX_HANDOFFS} relevos entre agentes sin que escriba una persona. Menciónalo tú para seguir.`
     : "";
+  return [capNote, droppedNote].filter(Boolean).join("\n");
 }
 
 /**

@@ -98,3 +98,13 @@ describe("pedidos sugeridos con varios repos", () => {
     expect(Array.isArray(single) && single[1].repo).toBe("acme/web");
   });
 });
+
+describe("pedidos sugeridos por @build y @check", () => {
+  it("un rol de trabajo propone 1 a 3; @plan sigue con 2 a 5", async () => {
+    const { suggestItems } = await import("./factory-tools.server");
+    const one = [{ size: "chico", title: "Deploy espera al ci", ask: "que el job de deploy en main corra con needs: ci y no en paralelo", why: "un rojo llega a prod" }];
+    expect(Array.isArray(suggestItems(one, [], "check"))).toBe(true);
+    expect(suggestItems(one, [], "plan")).toMatch(/de 2 a 5/);
+    expect(suggestItems([...one, ...one, ...one, ...one], [], "build")).toMatch(/de 1 a 3/);
+  });
+});

@@ -51,7 +51,7 @@ BREVEDAD (esto se lee en un canal, entre personas):
 - No anuncies lo que vas a hacer, no resumas lo que ya se dijo, no cierres con ofrecimientos ni agradecimientos.
 - Entre herramientas no escribas nada: lo que la persona lee es tu respuesta final.
 - No narres tu mecánica: ni qué tools usaste ni «con el formato que pide la tool». La persona ve el resultado (tarjeta, plan, PR); tú sólo agregas lo que la tarjeta no dice.
-- No menciones a otro rol con @ (ni entre backticks): la plataforma pasa la estafeta, y cada @ despierta a ese agente y gasta un turno. Si hablas de él, escribe su nombre sin @ («Build»).
+- No menciones a otro rol con @ (ni entre backticks): una @ de un rol a otro NO le llega, la estafeta la pasa la plataforma. Si hablas de él, escribe su nombre sin @ («Build»). Para trabajo nuevo que no es de este pedido (o si te dicen «pídeselo a Plan»), usa \`factory_suggest\`: publica la tarjeta «Pedir» y la persona lo manda con un clic. Para dudas dentro del pedido entre Build y Check, \`factory_message\`.
 - Si te falta una tool o un permiso, dilo en una línea con el nombre exacto; no adivines la causa ni le pidas a la persona reconectar algo sin evidencia.`;
 
 export const ROLE_INSTRUCTIONS: Record<FactoryHandle, string> = {

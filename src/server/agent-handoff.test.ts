@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pickRespondents, relayTargets } from "./agent-handoff.server";
+import { droppedRoleMentions, pickRespondents, relayTargets } from "./agent-handoff.server";
 
 describe("pickRespondents", () => {
   it("un pedido de coordinación arranca sólo al primero (el caso real de #divi, con su errata)", () => {
@@ -28,5 +28,13 @@ describe("relayTargets", () => {
   });
   it("nadie se despierta a sí mismo", () => {
     expect(relayTargets(["aria"], "aria")).toEqual([]);
+  });
+});
+
+describe("droppedRoleMentions", () => {
+  it("la @ de un rol a otro se avisa; la de una persona o de un agente común no", () => {
+    expect(droppedRoleMentions(["plan", "fixtergeek"], "check")).toEqual(["plan"]);
+    expect(droppedRoleMentions(["check"], "check")).toEqual([]);
+    expect(droppedRoleMentions(["plan"], "ghosty")).toEqual([]);
   });
 });

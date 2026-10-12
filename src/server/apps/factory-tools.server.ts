@@ -151,8 +151,11 @@ export function planRejection(planMd: string): string | null {
 export type SuggestedAsk = { size: "chico" | "mediano" | "grande"; title: string; ask: string; why: string; repo?: string };
 
 /** Valida los pedidos sugeridos (string = por qué no). Un `ask` corto no es un pedido. */
-export function suggestItems(raw: unknown, repos: string[] = []): SuggestedAsk[] | string {
-  if (!Array.isArray(raw) || raw.length < 2 || raw.length > 5) return "manda de 2 a 5 pedidos";
+export function suggestItems(raw: unknown, repos: string[] = [], from = "plan"): SuggestedAsk[] | string {
+  // @plan reparte opciones (2–5); @build y @check proponen lo que salió en su trabajo o lo que
+  // la persona les pidió fuera del pedido (1–3).
+  const [min, max] = from === "plan" ? [2, 5] : [1, 3];
+  if (!Array.isArray(raw) || raw.length < min || raw.length > max) return `manda de ${min} a ${max} pedidos`;
   const out: SuggestedAsk[] = [];
   for (const it of raw as Record<string, unknown>[]) {
     const size = String(it?.size ?? "");
@@ -916,9 +919,11 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
     {
       name: "factory_suggest",
       description:
-        "SÓLO @plan. Cuando te llaman sin un pedido concreto (o te encargan sugerir), propone de 2 a 5 pedidos listos " +
-        "para mandar, leídos del repo del room. La plataforma publica una tarjeta con un botón «Pedir» por pedido: " +
-        "quien lo pulsa te lo manda tal cual en su propio hilo. Cada `ask` es el mensaje completo que recibirías " +
+        "Propone pedidos nuevos para Plan. @plan: cuando te llaman sin un pedido concreto (o te encargan sugerir), de 2 a 5 " +
+        "leídos del repo del room. @build y @check: de 1 a 3, cuando la persona te pide algo fuera del pedido actual " +
+        "(«pídeselo», «que lo haga Plan») o encuentras algo que merece su propio pedido; es la ÚNICA forma de pasarle trabajo " +
+        "a Plan (una @ a otro rol no le llega). La plataforma publica una tarjeta con un botón «Pedir» por pedido: quien lo " +
+        "pulsa se lo manda a Plan tal cual en un hilo nuevo. Cada `ask` es el mensaje completo que recibiría Plan " +
         "(sin «@plan»): concreto, con archivos o funciones por nombre y el límite de alcance. Prefiere agregar " +
         "(pruebas, validaciones, TODOs chicos) sobre borrar; nada que borre datos, archivos de producción o historial. " +
         "Después de llamarla, NO repitas la lista en tu respuesta.",
@@ -927,7 +932,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         properties: {
           items: {
             type: "array",
-            minItems: 2,
+            minItems: 1,
             maxItems: 5,
             items: {
               type: "object",
@@ -945,18 +950,20 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         required: ["items"],
       },
       handler: async (_sub, a) => {
-        if (dest?.handle && dest.handle !== "plan") return { ok: false, error: "sólo @plan sugiere pedidos" };
+        const from = dest?.handle || "plan";
+        const { FACTORY_HANDLES } = await import("./factory-roles");
+        if (!(FACTORY_HANDLES as readonly string[]).includes(from)) return { ok: false, error: "sólo los roles de la fábrica sugieren pedidos" };
         if (!dest?.channelId) return { ok: false, error: "sin room no hay dónde publicar" };
         const db = await import("../../db.server");
         const roomRepos = (await db.listRoomRepos(dest.channelId)).map((r) => r.repo);
-        const items = suggestItems(a.items, roomRepos);
+        const items = suggestItems(a.items, roomRepos, from);
         if (typeof items === "string") return { ok: false, error: items };
         const ch = await db.getChannelById(dest.channelId);
         if (!ch) return { ok: false, error: "room no encontrado" };
         const { resolvedAgents } = await import("../../agents.server");
-        const me = (await resolvedAgents()).find((x) => x.handle === "plan");
+        const me = (await resolvedAgents()).find((x) => x.handle === from);
         const body = "```gt-asks\n" + JSON.stringify({ roomSlug: ch.slug, items }) + "\n```";
-        const { id } = await db.postAgent(dest.channelId, threadRoot(dest), body, "msg", "plan", me?.name ?? "plan", dest.topic || "general", me?.avatar ?? "");
+        const { id } = await db.postAgent(dest.channelId, threadRoot(dest), body, "msg", from, me?.name ?? from, dest.topic || "general", me?.avatar ?? "");
         const bus = await import("../bus.server");
         const { currentNamespace } = await import("../tenant.server");
         const msg = await db.getMessage(id);
