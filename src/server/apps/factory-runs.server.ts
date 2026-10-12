@@ -547,6 +547,25 @@ export async function onRoleStalled(groupId: string, ev: StalledFrame): Promise<
     const firstOfRun = prior.length === 0;
     await logEvent(run.id, "stuck", null, { role, rule, detail, count: ev.count ?? null, secs: ev.secs ?? null });
     const human = String(ev.human ?? `parece atascado (${rule}).`);
+    // Atasco de RAZONAMIENTO de Worker (no del entorno): entra Arqui (su modelo fuerte) como
+    // asesor. Lo de entorno (comando colgado, apt) sigue con el aviso de siempre.
+    // Primero el empujón gratis (el steer de abajo); desde el segundo atasco de Worker en el pedido,
+    // el asesor (Gemini CLI y OpenHands también avisan antes de escalar).
+    const priorBuild = prior.some((p: Record<string, unknown>) => {
+      try {
+        return JSON.parse(String(p.data_json ?? "{}")).role === "build";
+      } catch {
+        return false;
+      }
+    });
+    if (role === "build" && priorBuild && ADVICE_RULES.has(rule)) {
+      const r = await requestAdvice(run, { by: "auto", what: human, tried: detail });
+      if (r.ok) {
+        await steerRole(run, "build", `${ev.steer ?? ""} Le pedí consejo a Arqui: te llega en vivo. Mientras, no repitas lo mismo.`.trim());
+        void refreshRoom(run.channelId);
+        return;
+      }
+    }
     const steered = ev.steer ? await steerRole(run, role, String(ev.steer)) : false;
     await postInThread(run, role, `⏳ @${role} ${human}${steered ? " Ya le pedí revisarlo en cuanto regrese el comando." : ""}`);
     if (!firstOfRun) {
@@ -560,6 +579,62 @@ export async function onRoleStalled(groupId: string, ev: StalledFrame): Promise<
   } catch (e) {
     console.error("[factory] atasco", e);
   }
+}
+
+// ── Refuerzo: Arqui como asesor de Worker ─────────────────────────────────────
+
+/** Atascos de razonamiento (no del entorno) que llaman al asesor solos. */
+const ADVICE_RULES = new Set(["repeat", "repeat_error", "ping_pong"]);
+/** Consejos por pedido: el asesor es caro y no debe volverse el constructor de tiempo completo. */
+export const MAX_ADVICE = 2;
+
+/**
+ * Worker se atoró: Arqui (el agente de @check, con su modelo: Opus) le da diagnóstico y siguiente paso en
+ * un turno aparte que SÓLO aconseja (`ADVISOR_ROLE`). Lo pide Worker con `factory_help` o el
+ * vigilante al ver un atasco de razonamiento. El consejo sale en el hilo y le llega a Worker en
+ * vivo (`deliverAdvice`). Tope `MAX_ADVICE` por pedido. Nunca lanza.
+ */
+export async function requestAdvice(
+  run: Run,
+  ask: { by: "worker" | "auto"; what: string; tried: string },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    if (run.status !== "building") return { ok: false, error: "el asesor sólo entra mientras Worker construye" };
+    const [n] = await dbq("SELECT COUNT(*) AS n FROM gt_factory_events WHERE run_id = ? AND type = 'advice'", [run.id]).catch(() => []);
+    if (Number(n?.n ?? 0) >= MAX_ADVICE) return { ok: false, error: `ya van ${MAX_ADVICE} consejos en este pedido: decide con lo que tienes o pregúntale a la persona en el hilo` };
+    const { resolvedAgents } = await import("../../agents.server");
+    const arqui = (await resolvedAgents()).find((a) => a.handle === "check");
+    if (!arqui || arqui.backend.kind !== "fleet") return { ok: false, error: "no hay un Arqui (@check) en este espacio" };
+    const [w] = await dbq("SELECT origin FROM gt_agent_wakeups WHERE key LIKE ? AND origin IS NOT NULL AND origin != '' ORDER BY rowid DESC LIMIT 1", [`factory:${run.id}:%`]).catch(() => []);
+    const nth = Number(n?.n ?? 0) + 1;
+    await logEvent(run.id, "advice", ask.by === "worker" ? "build" : null, { by: ask.by, what: ask.what.slice(0, 300) });
+    await postInThread(run, "build", `🛟 Refuerzo ${nth}/${MAX_ADVICE} · ${ask.by === "worker" ? "Worker pidió ayuda" : "Worker se atoró"}: Arqui le da diagnóstico y siguiente paso.`).catch(() => null);
+    const plan = run.planVersion ? await getPlan(run.id, run.planVersion).catch(() => null) : null;
+    const text =
+      `Worker (el rol @build) se atoró construyendo este pedido y necesita tu consejo.\n\n` +
+      `Qué falla: ${ask.what.slice(0, 1500)}\n` +
+      `Qué intentó: ${ask.tried.slice(0, 1500) || "(no lo dijo)"}\n` +
+      (run.branch ? `Rama: ${run.branch}\n` : "") +
+      (plan?.planMd ? `\nPlan aprobado (resumen):\n${plan.planMd.slice(0, 4000)}` : "");
+    const ok = await handoff(run, "check", run.approvedBy ?? run.requestedBy, ask.by === "worker" ? "refuerzo pedido por Worker" : "refuerzo por atasco", text, String(w?.origin ?? ""), "-advisor", {
+      keySuffix: ":advice",
+      skills: false,
+      dest: { factoryMode: "advisor" },
+    });
+    return ok ? { ok: true } : { ok: false, error: "no pude despertar al asesor" };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}
+
+/** El consejo de Arqui-asesor llega a Worker: en vivo si está trabajando; si no, lo despierta. */
+async function deliverAdvice(run: Run, reply: string, origin: string): Promise<void> {
+  const advice = reply.trim();
+  const now = (await getRun(run.id)) ?? run;
+  if (!advice || now.status !== "building") return;
+  const body = `Consejo de Arqui para destrabarte:\n${advice.slice(0, 3000)}\n\nSíguelo y continúa tu paso; no lo repitas en el hilo.`;
+  if (await steerRole(now, "build", body)) return;
+  await handoff(now, "build", now.approvedBy ?? now.requestedBy, "consejo de Arqui", body, origin, "", { keySuffix: ":msg", skills: false });
 }
 
 // ── Caja por pedido ──────────────────────────────────────────────────────────
@@ -738,7 +813,7 @@ export async function handoff(
   groupSuffix = "",
   /** `from`: el rol que pasa el trabajo (pinta la línea de relevo); `keySuffix`: marca del
    *  despertador (`:msg` = mensaje entre roles); `skills: false` = sin la línea de skills. */
-  opts: { from?: string; keySuffix?: string; skills?: boolean } = {},
+  opts: { from?: string; keySuffix?: string; skills?: boolean; dest?: { factoryMode?: "advisor" } } = {},
 ): Promise<boolean> {
   const t0 = Date.now();
   const { resolvedAgents, agentGroupId } = await import("../../agents.server");
@@ -765,7 +840,7 @@ export async function handoff(
       sub,
       ns,
       groupId,
-      dest: { channelId: run.channelId, parentId: run.rootMsgId, topic: run.topic, handle: agent.handle, name: agent.name, avatar: agent.avatar },
+      dest: { channelId: run.channelId, parentId: run.rootMsgId, topic: run.topic, handle: agent.handle, name: agent.name, avatar: agent.avatar, ...(opts.dest ?? {}) },
     }),
     cause,
     text: `[Pedido #${run.id} · «${run.title}»${run.repo ? ` · repo ${run.repo}` : ""}]\n${text}${skills}`,
@@ -1138,6 +1213,11 @@ export async function afterFactoryTurn(
   if (!m) return;
   const run = await getRun(Number(m[1]));
   const role = m[2];
+  // El consejo de Arqui-asesor va a Worker, no cierra ningún paso.
+  if (w.key.endsWith(":advice")) {
+    if (run) await deliverAdvice(run, reply, w.origin).catch((e) => console.warn(`[factory] consejo #${run.id}: ${(e as Error).message}`));
+    return;
+  }
   if (!run || run.status !== OPEN_STATUS[role]) return; // cerró su paso (o el pedido siguió)
   // CORTE DE TRANSPORTE (infra reiniciando, gs caído un momento): el agente no falló, se cayó
   // el camino. Se repite el MISMO encargo en 60 s, una vez. Empujarlo a los 5 s con «cierra tu

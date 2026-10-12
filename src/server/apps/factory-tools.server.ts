@@ -1207,6 +1207,35 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
       },
     },
     {
+      name: "factory_help",
+      description:
+        "Sólo @build (Worker). Si llevas 2 o 3 intentos sin avanzar en lo mismo (el error no cambia, no entiendes por qué falla), " +
+        "pide consejo a Arqui: con su modelo fuerte lee el repo y la caja y te devuelve diagnóstico y siguiente paso; te llega en vivo. " +
+        "Él NO edita: tú sigues construyendo. Úsala antes de repetir otra vez lo mismo, no para dudas del plan (eso va a la persona en el hilo). " +
+        `Máximo 2 por pedido (contando los que pide la plataforma cuando te ve atorado).`,
+      inputSchema: {
+        type: "object",
+        properties: {
+          what: { type: "string", description: "Qué falla, con el error exacto" },
+          tried: { type: "string", description: "Qué intentaste y qué pasó en cada intento" },
+          runId: { type: "number", description: "Id del PEDIDO; si este hilo es el del pedido, sale solo" },
+        },
+        required: ["what", "tried"],
+      },
+      handler: async (sub, a) => {
+        if (dest?.handle !== "build") return { ok: false, error: "sólo Worker (@build) pide consejo con factory_help" };
+        const what = String(a.what ?? "").trim();
+        if (what.length < 15) return { ok: false, error: "di qué falla, con el error exacto" };
+        const run = await resolveNoteRun(dest, sub, a.runId);
+        if (!run) return { ok: false, error: "no encuentro el pedido de este hilo: pasa runId" };
+        const R = await import("./factory-runs.server");
+        const r = await R.requestAdvice(run, { by: "worker", what, tried: String(a.tried ?? "") });
+        return r.ok
+          ? { ok: true, note: "Arqui ya está revisando. Su consejo te entra en vivo: mientras, no repitas lo mismo; avanza con otra parte o espera." }
+          : r;
+      },
+    },
+    {
       name: "factory_status",
       description:
         "Estado del pedido de este hilo, de runId (el #N del PEDIDO) o de pr (número o URL del PR de GitHub): etapa, versión del plan, vueltas, PR y tarea.",
@@ -1304,6 +1333,12 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
   // @build o @check (ver apps/factory-roles.ts).
   const { FACTORY_COMMON, ROLE_INSTRUCTIONS, FACTORY_HANDLES } = await import("./factory-roles");
   const h = dest?.handle as (typeof FACTORY_HANDLES)[number] | undefined;
+  if (dest?.factoryMode === "advisor") {
+    const { ADVISOR_ROLE } = await import("./factory-roles");
+    parts.push("En ESTE turno no actúas como ningún rol del pedido: eres Arqui asesorando a Worker; tu identidad de siempre se queda.");
+    parts.push(ADVISOR_ROLE);
+    return parts.join("\n\n") + "]";
+  }
   if (dest?.handle === "eval") {
     const { JUDGE_INSTRUCTIONS } = await import("./factory-roles");
     parts.push("En ESTE turno actúas como @eval; tu identidad de siempre se queda, pero aplica este rol.");

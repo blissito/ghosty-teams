@@ -2204,4 +2204,6 @@ export const en: Record<string, string> = {
   "encendiendo": "starting",
   "despierta": "awake",
   "con error": "with an error",
+  "Pidiendo": "Requesting",
+  "Cada pedido abre su propio hilo en el room: ahí llega el plan para firmar.": "Each request opens its own thread in the room: the plan to sign lands there.",
 };

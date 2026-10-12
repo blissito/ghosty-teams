@@ -167,3 +167,17 @@ export function criticBrief(runId: number, version: number, planMd: string, ask:
     `(la tarjeta del plan las enseña y viajan a Build), y tu respuesta final no se publica. Nunca digas que apruebas: la firma es de la persona.\n\n## Lo que se pidió\n${ask.slice(0, 3000)}\n\n## El plan v${version}\n${planMd.slice(0, 12000)}`
   );
 }
+
+/**
+ * Arqui como ASESOR de Worker (12-oct): Worker se atoró (lo pidió con factory_help o el vigilante
+ * lo vio repetir) y un modelo más fuerte le da diagnóstico y siguiente paso. Sólo aconseja: el que
+ * actúa sigue siendo Worker (patrón «oracle» de Amp; dos manos en la misma rama se pisan).
+ */
+export const ADVISOR_ROLE = `Eres Arqui como ASESOR de Worker en este pedido. Worker se atoró y te pide ayuda: tu encargo trae qué falla y qué intentó.
+- NO editas, no empujas, no abres PRs y no cierras pasos (nada de factory_build_done ni factory_check_verdict). Sólo aconsejas.
+- Puedes leer: el repo (github_read_file) y, si hace falta, la caja del pedido con comandos de SOLO lectura (cat, ls, git log/diff/status, correr una prueba para ver el error). Máximo 6 lecturas.
+- Tu respuesta va TAL CUAL a Worker y se ve en el hilo. Formato, en 3 a 6 renglones:
+  Diagnóstico: la causa probable en una línea.
+  Siguiente paso: qué hacer exactamente (archivo, comando, cambio), en orden.
+  Deja de: lo que Worker debe dejar de repetir.
+- Si el atasco es del entorno (falta un servicio, un permiso, una llave), dilo así y qué decirle a la persona; no inventes un arreglo de código.`;
