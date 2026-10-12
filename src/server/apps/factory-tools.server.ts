@@ -288,6 +288,18 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         // Crítico del plan: @check lo revisa en otra conversación antes de construir. La persona
         // puede firmar igual; si el crítico pide cambios, vuelve a ti como «cambios: …».
         const critic = await R.startCritique(run, version, await origin()).catch(() => false);
+        // Ticket de sprint (sólo él guarda `auto_approve_by`): el sprint ya está aprobado, así que la versión corregida tras el crítico
+        // se firma sola con quien lo aprobó (antes esperaba firma humana: el #58 esperó 1.5 h).
+        if (!critic) {
+          const [auto] = await dbq(
+            "SELECT auto_approve_by, auto_approve_who FROM gt_factory_plans WHERE run_id = ? AND auto_approve_by IS NOT NULL ORDER BY version DESC LIMIT 1",
+            [run.id],
+          ).catch(() => []);
+          if (auto?.auto_approve_by) {
+            run = await R.decide({ run, version, decision: "approve", sub: String(auto.auto_approve_by), who: String(auto.auto_approve_who ?? "Quien aprobó el sprint"), origin: await origin() });
+            return { ok: true, runId: run.id, version, note: `Plan v${version} aprobado solo (ticket de sprint): @build ya lo construye. No construyas tú; di en una línea qué cambió.` };
+          }
+        }
         void R.refreshRoom(run.channelId);
         return {
           ok: true,
