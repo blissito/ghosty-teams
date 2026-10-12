@@ -42,8 +42,8 @@ export function WorkBox({ channelId, parentId, live }: { channelId: number; pare
         size={28}
         face="terminal"
         screenIcon="build"
-        shape="circle"
-        color={box.state === "error" ? "#c62828" : "#1f8189"}
+        shape={box.look?.shape ?? "circle"}
+        color={box.state === "error" ? "#c62828" : box.look?.color ?? "#1f8189"}
         screenColor={look.screen}
         state={look.state}
         seed={lookFor(box.boxId ?? String(box.runId)).seed}

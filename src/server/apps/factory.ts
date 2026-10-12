@@ -516,6 +516,8 @@ export type ThreadBox = {
   working: boolean;
   label: string | null;
   createdAt: string | null;
+  /** Forma y color de las cajas «pedido» elegidos en gs (los mismos en sus cajas). */
+  look: { color?: string; shape?: "circle" | "square" | "hexagon" } | null;
 };
 
 /** La caja del pedido de un hilo (null = el hilo no es de un pedido). La pinta `WorkBox`. */
@@ -532,7 +534,7 @@ export const factoryThreadBoxFn = createServerFn({ method: "POST" })
     if (!run) return null;
     const hit = boxSeen.get(run.id);
     if (hit && Date.now() - hit.at < 8000) return hit.v;
-    const base = { runId: run.id, boxId: null, working: false, label: null, createdAt: null };
+    const base = { runId: run.id, boxId: null, working: false, label: null, createdAt: null, look: null };
     let v: ThreadBox;
     if (run.boxWaiting) v = { ...base, state: "waiting" };
     else {
@@ -548,6 +550,7 @@ export const factoryThreadBoxFn = createServerFn({ method: "POST" })
             working: Number(j.inflight) > 0,
             label: j.label ?? null,
             createdAt: j.createdAt ?? null,
+            look: j.look ?? null,
           };
     }
     boxSeen.set(run.id, { at: Date.now(), v });
