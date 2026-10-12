@@ -49,7 +49,7 @@ export function WorkBox({ channelId, parentId, live }: { channelId: number; pare
         seed={lookFor(box.boxId ?? String(box.runId)).seed}
         antenna={false}
         floorShadow={false}
-        interactive={false}
+        interactive
         speed={box.state === "asleep" || box.state === "waiting" ? 0.6 : 1}
       />
     </span>
