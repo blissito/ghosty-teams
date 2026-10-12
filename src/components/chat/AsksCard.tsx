@@ -4,6 +4,8 @@
 import { useEffect, useState } from "react";
 import { useT } from "../../i18n";
 import { askInRoom } from "../../lib/ask-in-room";
+import { factoryRunInRoomFn } from "../../server/apps/factory";
+import { RunCard } from "./RunCard";
 import type { AsksCardData } from "../../lib/ebdoc";
 
 const SIZE_TONE: Record<string, string> = {
@@ -94,10 +96,52 @@ export function AsksCard({ card }: { card: AsksCardData }) {
           </li>
         ))}
       </ul>
+      {/* Lo pedido desde aquí se sigue desde aquí: la tarjeta viva de cada pedido, con su liga. */}
+      {Object.entries(sent).map(([i, url]) => (
+        <SentRun key={i} slug={card.roomSlug} url={url} />
+      ))}
       {Object.keys(sent).length > 0 && (
         <p className="px-3 pb-3 text-[11px] text-muted">{t("Cada pedido abre su propio hilo en el room: ahí llega el plan para firmar.")}</p>
       )}
       {err && <p className="px-3 pb-3 text-xs text-danger">{err}</p>}
     </div>
+  );
+}
+
+/**
+ * El pedido que abrió «Pedir», visto desde el hilo de la sugerencia: mientras Arqui escribe el plan
+ * (el pedido aún no existe) una línea con la liga; en cuanto existe, su tarjeta viva. Cada pedido
+ * sigue teniendo su propio hilo (ahí se firma y se platica); esto sólo evita salir a buscarlo.
+ */
+function SentRun({ slug, url }: { slug: string; url: string }) {
+  const t = useT();
+  const rootId = Number(/[?&]thread=(\d+)/.exec(url)?.[1] ?? 0);
+  const [found, setFound] = useState<{ channelId: number; runId: number } | null>(null);
+  useEffect(() => {
+    if (!rootId) return;
+    let alive = true;
+    let tries = 0;
+    const look = () =>
+      factoryRunInRoomFn({ data: { slug, rootId } })
+        .then((r) => {
+          if (!alive) return;
+          if (r?.runId) setFound({ channelId: r.channelId, runId: r.runId });
+          else if (++tries < 80) timer = setTimeout(look, 6000); // ~8 min: lo que tarda un plan
+        })
+        .catch(() => {});
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    look();
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [slug, rootId]);
+  if (found) return <div className="border-t border-border px-1 pb-1"><RunCard card={{ runId: found.runId }} channelId={found.channelId} /></div>;
+  return (
+    <p className="flex items-center gap-2 border-t border-border px-3 py-2 text-xs text-muted">
+      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand" />
+      {t("Arqui está escribiendo el plan…")}
+      <a href={url} className="ml-auto font-semibold text-brand hover:underline">{t("Ver hilo")} →</a>
+    </p>
   );
 }

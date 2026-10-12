@@ -487,6 +487,23 @@ export const setFactoryScheduleFn = createServerFn({ method: "POST" })
     return { ok: true as const, nextAt };
   });
 
+// ── El pedido que abrió un mensaje («Pedir»), para seguirlo desde otro hilo ────
+
+/** Como `factoryRunOfThreadFn` pero con el slug del room (lo que tiene «Pedir»); runId null = Arqui
+ *  aún no entrega el plan. */
+export const factoryRunInRoomFn = createServerFn({ method: "POST" })
+  .validator((d: { slug: string; rootId: number }) => d)
+  .handler(async ({ data }): Promise<{ channelId: number; runId: number | null } | null> => {
+    const me = await sessionUser();
+    if (!me) throw new Error("no autenticado");
+    const db = await import("../../db.server");
+    const ch = await db.getChannel(String(data.slug));
+    if (!ch || !(await db.canSeeChannel(ch, me.sub, !!me.isOwner))) return null;
+    const R = await import("./factory-runs.server");
+    const run = await R.runOfThread(ch.id, Number(data.rootId)).catch(() => null);
+    return { channelId: ch.id, runId: run?.id ?? null };
+  });
+
 // ── La caja de trabajo de un pedido, para la maquinita del hilo ─────────────────
 
 /** Último estado por pedido (8 s): con varias burbujas y pestañas no se le pregunta a gs en cada una. */
