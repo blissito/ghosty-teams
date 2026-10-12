@@ -96,7 +96,7 @@ import { prCardStateFn, runCardActionFn, taskCardStateFn, runTaskCardActionFn } 
 import { answerAgentAskFn } from "../../server/agent-ask";
 import { answerAcpPermissionFn } from "../../server/agent-permission";
 import { ThinkingRing } from "../../components/ThinkingRing";
-import { AgentBot } from "../../components/AgentBot";
+import { AgentBot, type AgentBotStatus } from "../../components/AgentBot";
 import { useT } from "../../i18n";
 
 // ── El chat, en piezas COMPARTIDAS ──────────────────────────────────────────
@@ -2546,8 +2546,9 @@ export function TurnLiveFooter({ id, handle }: { id: number; handle?: string | n
   if (!e || e.info.state === "queued") return null;
   return (
     <div className="mt-1 flex items-center gap-2 text-xs text-muted">
-      {/* Ya hay texto: el robot TRABAJA (no piensa). Sin handle queda el anillo de siempre. */}
-      {handle ? <AgentBot handle={handle} status="streaming" size={22} /> : <ThinkingRing size={12} />}
+      {/* Con handle, el que trabaja es el robot que ocupa el lugar del avatar (un solo
+          personaje); sin handle queda el anillo de siempre. */}
+      {handle ? null : <ThinkingRing size={12} />}
       {/* La frase, no sólo el anillo: en cuanto llega el primer paso, lo último en pantalla
           es prosa idéntica a una respuesta final y un cronómetro sin texto no se lee como
           estado. Con motores lentos el turno parecía terminado durante minutos. */}
@@ -2641,14 +2642,13 @@ export function AgentFooter({ handle, turnModel }: { handle: string; turnModel?:
   );
 }
 
-export function TurnFailedFooter({ id, body, handle }: { id: number; body: string | null | undefined; handle?: string | null }) {
+export function TurnFailedFooter({ id, body }: { id: number; body: string | null | undefined; handle?: string | null }) {
   const t = useT();
   const { retryTurn, turns } = useContext(ChatCtx);
   // Si el turno volvió a estar vivo (ya se reintentó), esta línea sobra.
   if (!retryTurn || turns.get(id) || !turnoSeMurio(body)) return null;
   return (
     <div className="mt-1 flex items-center gap-2 text-xs text-muted">
-      {handle ? <AgentBot handle={handle} status="failed" size={22} /> : null}
       <span className="italic">{t("Se cortó por una falla nuestra, no por tu petición.")}</span>
       <button
         type="button"
@@ -2671,9 +2671,9 @@ export function AgentPending({ id, handle }: { id: number; handle?: string | nul
   const queued = info?.state === "queued";
   return (
     <div className="flex items-center gap-2 py-0.5 text-xs text-muted">
-      {/* El robot del agente piensa (o duerme si está en la fila). Sin handle —el turno de
-          Ghosty de casa— queda el anillo de siempre. */}
-      {handle ? <AgentBot handle={handle} status={queued ? "queued" : "running"} size={34} /> : <ThinkingRing size={16} />}
+      {/* Con handle, el robot del agente piensa (o duerme en la fila) en el lugar del avatar;
+          sin handle —el turno de Ghosty de casa— queda el anillo de siempre. */}
+      {handle ? null : <ThinkingRing size={16} />}
       <span className="italic">
         {queued
           ? t("en espera · {n}º de la fila").replace("{n}", String(info!.position))
@@ -2706,6 +2706,14 @@ export function MessageRow({
     react, setReplyTo, forward, editMsg, star, pin, remove, canModerate,
   } = useContext(ChatCtx);
   const [editing, setEditing] = useState(false);
+  const liveTurn = turns.get(m.id);
+  const liveBot =
+    m.agent_handle && m.mentions_ghosty === 0 && liveTurn
+      ? {
+          handle: m.agent_handle,
+          status: (liveTurn.state === "queued" ? "queued" : m.body ? "streaming" : "running") as AgentBotStatus,
+        }
+      : null;
   // Mientras un popover de la barra (reaccionar/⋯) esté abierto, la barra NO debe
   // desaparecer al perder el hover del row (si no, el popover se vuelve inclicable).
   const [menuOpen, setMenuOpen] = useState(false);
@@ -2932,7 +2940,12 @@ export function MessageRow({
         className={`shrink-0 rounded-lg transition ${openProfile ? "hover:opacity-80" : "cursor-default"}`}
         title={openProfile ? t("Ver perfil") : undefined}
       >
-      {isGhostyAvatar ? (
+      {liveBot ? (
+        // Turno vivo: el robot del agente ocupa el lugar del avatar (un solo personaje) y al
+        // cerrar el turno vuelve el avatar de siempre. Sólo aquí hay canvas: los mensajes
+        // viejos no montan uno cada uno.
+        <AgentBot handle={liveBot.handle} status={liveBot.status} size={36} className="mt-0.5" />
+      ) : isGhostyAvatar ? (
         <div className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-lg bg-white">
           <img src="/ghosty.svg" alt="Ghosty" className="h-full w-full object-contain" />
         </div>
