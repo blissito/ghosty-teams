@@ -3382,7 +3382,24 @@ async function runAgentTurnInner(opts: {
       todosAt = Date.now();
     }
     if (ev.phase === "end") {
-      const entry = ev.id ? idToEntry.get(ev.id) : undefined;
+      let entry = ev.id ? idToEntry.get(ev.id) : undefined;
+      // El worker renombra al cerrar cuando la tool resultó otra cosa de lo anunciado: un
+      // `ensure()` que DESPERTÓ la caja de @build no «levantó una caja». La fila se muda a la
+      // etiqueta verdadera (y se va la vieja si se quedó vacía).
+      const real = entry && ev.id && ev.name && !isChild ? toolLabel(ev.name) : null;
+      if (entry && ev.id && real && real.done !== entry.done) {
+        entry.started.delete(ev.id);
+        if (!entry.started.size) tools.splice(tools.indexOf(entry), 1);
+        let dest = tools.find((t) => t.done === real.done);
+        if (!dest) {
+          dest = { ing: real.ing, done: real.done, started: new Set(), ended: new Set(), fallos: 0, exitos: 0 };
+          tools.push(dest);
+        }
+        dest.started.add(ev.id);
+        idToEntry.set(ev.id, dest);
+        entry = dest;
+      }
+      if (entry && ev.id && real && ev.detail) entry.detail = ev.detail;
       if (entry) {
         if (ev.id) entry.ended.add(ev.id);
         if (ev.ok === false) entry.fallos++;

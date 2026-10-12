@@ -51,6 +51,10 @@ export const TOOL_LABELS: Record<string, { ing: string; done: string }> = {
   // Cajas de TRABAJO (sdk/sandbox.mjs). Se distinguen a propósito: levantar una máquina
   // consume capacidad del workspace y el usuario debe VERLO; correr algo dentro, no.
   gs_box_create: { ing: "Levantando una caja de trabajo", done: "Levanté una caja de trabajo" },
+  // `ensure()`: al empezar no se sabe si nace o se despierta una que ya existía (la de @build,
+  // la del turno pasado). El worker corrige al cerrar con lo que reportó el SDK.
+  gs_box_ensure: { ing: "Buscando una caja de trabajo", done: "Conseguí una caja de trabajo" },
+  gs_box_reuse: { ing: "Reusando una caja de trabajo", done: "Reusé una caja de trabajo" },
   gs_box_exec: { ing: "Trabajando en la caja", done: "Trabajé en la caja" },
   gs_box_expose: { ing: "Publicando la app", done: "Publiqué la app" },
   gs_box_destroy: { ing: "Soltando la caja", done: "Solté la caja" },
