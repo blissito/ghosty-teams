@@ -2948,7 +2948,7 @@ export function MessageRow({
         )
       ) : (
       <div className="flex shrink-0 flex-col items-center gap-1">
-      /* Avatar clickable → perfil (persona o agente). */
+      {/* Avatar clickable → perfil (persona o agente). */}
       <button
         // Sin `openProfile` no hay perfil que abrir (un room abierto no tiene directorio),
         // así que el avatar deja de ofrecerse como botón: sin cursor, sin hover y sin
