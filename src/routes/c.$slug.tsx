@@ -2034,7 +2034,7 @@ function ChannelPage() {
         } else {
           const fila = {
             id: ev.id, state: ev.state, position: ev.position, startedAt: ev.startedAt,
-            agent: ev.agent ?? "", avatar: ev.avatar ?? "", channelId: ev.channelId ?? null,
+            agent: ev.agent ?? "", handle: ev.handle ?? null, avatar: ev.avatar ?? "", channelId: ev.channelId ?? null,
             parentId: ev.parentId ?? null, dmId: ev.dmId ?? null, topic: "", tarea: ev.tarea, paso: ev.paso,
           };
           const resto = liveTurnsRef.current.filter((x) => x.id !== ev.id);
@@ -3732,6 +3732,8 @@ function NavToggle({ onOpen }: { onOpen: () => void }) {
 type LiveTurnRow = {
   id: number; state: "running" | "queued" | "stopped" | "done"; position: number; startedAt: number;
   agent: string; avatar: string; channelId: number | null; parentId: number | null; topic: string;
+  /** @handle del agente (`agent` es el nombre, y dos roles pueden compartirlo). */
+  handle?: string | null;
   /** DM al que pertenece (los turnos de DM no tienen room). */
   dmId?: number | null;
   /** Lo que la persona pidió, recortado: nombra la FILA, como hace Cursor con sus tareas. */
@@ -3766,7 +3768,7 @@ function LiveTurnsPanel({
   // que en Studio), así que se busca en los agentes del espacio por nombre y, si no, por cara.
   const agents = useMentions().filter((m) => m.kind === "agent");
   const handleOf = (x: LiveTurnRow) =>
-    agents.find((a) => a.name === x.agent)?.handle ?? agents.find((a) => !!x.avatar && a.avatar === x.avatar)?.handle ?? null;
+    x.handle || agents.find((a) => a.name === x.agent)?.handle ?? agents.find((a) => !!x.avatar && a.avatar === x.avatar)?.handle ?? null;
   const filas = [...turns, ...done];
   if (!filas.length) return null;
   const nombreDe = (id: number | null) => channels.find((c) => c.id === id)?.name ?? "";
@@ -3806,7 +3808,7 @@ function LiveTurnsPanel({
             })()}
             <span className="min-w-0 flex-1">
               <span className={`block truncate text-xs ${x.state === "done" ? "text-muted" : "text-ink"}`}>
-                {x.agent || t("Agente")}
+                {(x.handle && agents.find((a) => a.handle === x.handle)?.name) || x.agent || t("Agente")}
                 <span className="text-muted"> · {x.tarea || nombreDe(x.channelId)}</span>
               </span>
               {/* EN QUÉ VA, que es lo que hace útil la fila de Cursor: un cronómetro sin
@@ -4717,7 +4719,7 @@ function ProfileDrawer({
   onStartAgentDm,
 }: {
   target: ProfileTarget;
-  liveTurns?: Array<{ state: string; agent: string }>;
+  liveTurns?: Array<{ state: string; agent: string; handle?: string | null }>;
   isOwner: boolean;
   onClose: () => void;
   onConfigure: () => void;
@@ -4745,7 +4747,8 @@ function ProfileDrawer({
   // El robot es de la fábrica: sólo los roles lo llevan en el perfil.
   const showBot = agentCard && !!roleFlame;
   const agentMeta = useAgentMeta(agentCard ? handle! : "");
-  const myTurns = liveTurns.filter((x) => x.agent === name);
+  // Por handle: @plan y @check pueden ser el mismo agente, y por nombre los dos salían «trabajando».
+  const myTurns = liveTurns.filter((x) => (x.handle ? x.handle === handle : x.agent === name));
   const botStatus: AgentBotStatus = myTurns.some((x) => x.state === "running") ? "running" : myTurns.some((x) => x.state === "queued") ? "queued" : "idle";
   const [colorBusy, setColorBusy] = useState(false);
   const [colorError, setColorError] = useState("");

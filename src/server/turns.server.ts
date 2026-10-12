@@ -86,6 +86,9 @@ export type TurnState = {
   // el resto cada pocos segundos (2 consultas por turno vivo y por pestaña). Yendo completo,
   // la barra se pinta con lo que llega y el sondeo sobra.
   agent?: string;
+  /** El @handle: @plan y @check pueden ser el MISMO agente (mismo nombre), así que el robot y el
+   *  perfil se buscan por aquí, no por `agent` (business, 12-oct: Check corría y se pintaba Plan). */
+  handle?: string | null;
   avatar?: string;
   channelId?: number | null;
   parentId?: number | null;
@@ -172,6 +175,7 @@ function stateOf(t: LiveTurn): TurnState {
     position: Math.max(1, pos),
     startedAt: t.startedAt,
     agent: t.agent,
+    handle: t.handle ?? null,
     avatar: t.avatar,
     channelId: t.channelId ?? null,
     parentId: t.parentId ?? null,
@@ -479,6 +483,7 @@ export async function recentDoneTurns(ns: string, desdeMs = 10 * 60 * 1000): Pro
       position: 1,
       startedAt: Number(f.started_at ?? 0),
       agent: (f.agent as string) ?? "",
+      handle: (f.agent_handle as string) ?? null,
       avatar: (f.avatar as string) ?? "",
       channelId: f.channel_id != null ? Number(f.channel_id) : null,
       parentId: f.parent_id != null ? Number(f.parent_id) : null,

@@ -51,7 +51,7 @@ export type RtEvent =
   | {
       t: "turn"; id: number; state: "running" | "queued" | "stopped" | "done";
       position: number; startedAt: number;
-      agent?: string; avatar?: string; channelId?: number | null; parentId?: number | null; dmId?: number | null;
+      agent?: string; handle?: string | null; avatar?: string; channelId?: number | null; parentId?: number | null; dmId?: number | null;
       tarea?: string; paso?: string; outcome?: string;
       /**
        * Quién PIDIÓ el turno. Viaja al cliente porque el panel de artefactos se abre solo,
