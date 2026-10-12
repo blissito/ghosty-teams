@@ -96,6 +96,7 @@ import { prCardStateFn, runCardActionFn, taskCardStateFn, runTaskCardActionFn } 
 import { answerAgentAskFn } from "../../server/agent-ask";
 import { answerAcpPermissionFn } from "../../server/agent-permission";
 import { ThinkingRing } from "../../components/ThinkingRing";
+import { AgentBot } from "../../components/AgentBot";
 import { useT } from "../../i18n";
 
 // ── El chat, en piezas COMPARTIDAS ──────────────────────────────────────────
@@ -2539,13 +2540,14 @@ export function StopTurnButton({ id, className = "" }: { id: number; className?:
  * mapa `turns` se vacía y esta línea se va sola.
  */
 
-export function TurnLiveFooter({ id }: { id: number }) {
+export function TurnLiveFooter({ id, handle }: { id: number; handle?: string | null }) {
   const t = useT();
   const e = useTurnElapsed(id);
   if (!e || e.info.state === "queued") return null;
   return (
     <div className="mt-1 flex items-center gap-2 text-xs text-muted">
-      <ThinkingRing size={12} />
+      {/* Ya hay texto: el robot TRABAJA (no piensa). Sin handle queda el anillo de siempre. */}
+      {handle ? <AgentBot handle={handle} status="streaming" size={22} /> : <ThinkingRing size={12} />}
       {/* La frase, no sólo el anillo: en cuanto llega el primer paso, lo último en pantalla
           es prosa idéntica a una respuesta final y un cronómetro sin texto no se lee como
           estado. Con motores lentos el turno parecía terminado durante minutos. */}
@@ -2592,7 +2594,7 @@ export function turnoSeMurio(body: string | null | undefined): boolean {
 // Configure» del hilo de Boris). Se pide UNA vez por pestaña: el modelo vive en Studio y
 // cambia poco; el server ya lo cachea 5 min.
 let agentMetaPromise: Promise<AgentMeta[]> | null = null;
-function useAgentMeta(handle: string): AgentMeta | null {
+export function useAgentMeta(handle: string): AgentMeta | null {
   const [meta, setMeta] = useState<AgentMeta | null>(null);
   useEffect(() => {
     let vivo = true;
@@ -2639,13 +2641,14 @@ export function AgentFooter({ handle, turnModel }: { handle: string; turnModel?:
   );
 }
 
-export function TurnFailedFooter({ id, body }: { id: number; body: string | null | undefined }) {
+export function TurnFailedFooter({ id, body, handle }: { id: number; body: string | null | undefined; handle?: string | null }) {
   const t = useT();
   const { retryTurn, turns } = useContext(ChatCtx);
   // Si el turno volvió a estar vivo (ya se reintentó), esta línea sobra.
   if (!retryTurn || turns.get(id) || !turnoSeMurio(body)) return null;
   return (
     <div className="mt-1 flex items-center gap-2 text-xs text-muted">
+      {handle ? <AgentBot handle={handle} status="failed" size={22} /> : null}
       <span className="italic">{t("Se cortó por una falla nuestra, no por tu petición.")}</span>
       <button
         type="button"
@@ -2658,7 +2661,7 @@ export function TurnFailedFooter({ id, body }: { id: number; body: string | null
   );
 }
 
-export function AgentPending({ id }: { id: number }) {
+export function AgentPending({ id, handle }: { id: number; handle?: string | null }) {
   const t = useT();
   const { turns } = useContext(ChatCtx);
   const info = turns.get(id);
@@ -2668,7 +2671,9 @@ export function AgentPending({ id }: { id: number }) {
   const queued = info?.state === "queued";
   return (
     <div className="flex items-center gap-2 py-0.5 text-xs text-muted">
-      <ThinkingRing size={16} />
+      {/* El robot del agente piensa (o duerme si está en la fila). Sin handle —el turno de
+          Ghosty de casa— queda el anillo de siempre. */}
+      {handle ? <AgentBot handle={handle} status={queued ? "queued" : "running"} size={34} /> : <ThinkingRing size={16} />}
       <span className="italic">
         {queued
           ? t("en espera · {n}º de la fila").replace("{n}", String(info!.position))
@@ -3097,7 +3102,10 @@ export function MessageRow({
                   // Clic en @mención → abre el perfil de esa persona (Slack: hovercard con
                   // Message). Resuelve por handle en el directorio vivo; grupos (@all…) no matchean.
                   const u = [...users.values()].find((x) => x.handle.toLowerCase() === h.toLowerCase());
-                  if (u) openProfile?.({ name: u.name, avatar: u.avatar, handle: u.handle, isAgent: false, sub: u.sub });
+                  // Los agentes viven en el mismo directorio como `agent:<handle>`: se abrían
+                  // con el perfil de PERSONA (sin DM al agente ni su ficha).
+                  const agent = !!u?.sub.startsWith("agent:");
+                  if (u) openProfile?.({ name: u.name, avatar: u.avatar, handle: u.handle, isAgent: agent, sub: agent ? null : u.sub });
                 }}
               />
               ) : null}
@@ -3212,8 +3220,8 @@ export function MessageRow({
               })()}
               {/* El turno sigue vivo aunque ya haya texto: la salida tiene que seguir
                   a la vista (ver TurnLiveFooter). */}
-              {isAgent ? <TurnLiveFooter id={m.id} /> : null}
-              {isAgent ? <TurnFailedFooter id={m.id} body={m.body} /> : null}
+              {isAgent ? <TurnLiveFooter id={m.id} handle={m.agent_handle} /> : null}
+              {isAgent ? <TurnFailedFooter id={m.id} body={m.body} handle={m.agent_handle} /> : null}
               {isAgent && m.agent_handle && !turns.has(m.id) && !platformPost(m) ? <AgentFooter handle={m.agent_handle} turnModel={m.turn_model} /> : null}
             </div>
           ) : isAgent && !m.attachments?.length && !m.artifact ? (
@@ -3221,7 +3229,7 @@ export function MessageRow({
             // con avatar+nombre ya está arriba y PERMANECE). Se reemplaza al primer token.
             // Con adjunto/artefacto (p.ej. nota de voz SIN texto) NO es "pensando": el body
             // queda vacío a propósito y el contenido baja como adjunto → mostrar solo eso.
-            <AgentPending id={m.id} />
+            <AgentPending id={m.id} handle={m.agent_handle} />
           ) : null
         )}
         {/* UN link = "te comparto esto" → tarjeta rica. VARIOS = "en esto me basé"

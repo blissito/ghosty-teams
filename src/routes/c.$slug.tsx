@@ -249,7 +249,9 @@ import {
   fmtDur,
   LatestPlanCtx,
   latestPlanId,
+  useAgentMeta,
 } from "../components/chat/message";
+import { AgentBot, type AgentBotStatus } from "../components/AgentBot";
 import type {
   Attach,
 
@@ -3120,6 +3122,7 @@ function ChannelPage() {
         {profile && (
           <ProfileDrawer
             target={profile}
+            liveTurns={liveTurns}
             isOwner={!!user?.isOwner}
             onClose={() => setProfile(null)}
             onConfigure={() => { setProfile(null); openPrefs("agentes"); }}
@@ -3747,6 +3750,11 @@ function LiveTurnsPanel({
   onDismiss: (id: number) => void;
 }) {
   const t = useT();
+  // La fila trae el NOMBRE del agente, no su handle; el robot se resuelve por handle (el mismo
+  // que en Studio), así que se busca en los agentes del espacio por nombre y, si no, por cara.
+  const agents = useMentions().filter((m) => m.kind === "agent");
+  const handleOf = (x: LiveTurnRow) =>
+    agents.find((a) => a.name === x.agent)?.handle ?? agents.find((a) => !!x.avatar && a.avatar === x.avatar)?.handle ?? null;
   const filas = [...turns, ...done];
   if (!filas.length) return null;
   const nombreDe = (id: number | null) => channels.find((c) => c.id === id)?.name ?? "";
@@ -3775,9 +3783,14 @@ function LiveTurnsPanel({
             className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
             title={t("Ir a la conversación")}
           >
-            {x.avatar ? (
-              <img src={x.avatar} alt="" className="h-4 w-4 shrink-0 rounded-full object-cover" />
-            ) : null}
+            {(() => {
+              const h = handleOf(x);
+              if (h) {
+                const st: AgentBotStatus = x.state === "queued" ? "queued" : x.state === "done" ? "done" : x.state === "stopped" ? "failed" : "running";
+                return <AgentBot handle={h} status={st} size={22} />;
+              }
+              return x.avatar ? <img src={x.avatar} alt="" className="h-4 w-4 shrink-0 rounded-full object-cover" /> : null;
+            })()}
             <span className="min-w-0 flex-1">
               <span className={`block truncate text-xs ${x.state === "done" ? "text-muted" : "text-ink"}`}>
                 {x.agent || t("Agente")}
@@ -4683,6 +4696,7 @@ function InstallAppButton() {
    mensaje directo a personas se marcan como próximos (requieren backend de DM). */
 function ProfileDrawer({
   target,
+  liveTurns = [],
   isOwner,
   onClose,
   onConfigure,
@@ -4690,6 +4704,7 @@ function ProfileDrawer({
   onStartAgentDm,
 }: {
   target: ProfileTarget;
+  liveTurns?: Array<{ state: string; agent: string }>;
   isOwner: boolean;
   onClose: () => void;
   onConfigure: () => void;
@@ -4711,6 +4726,12 @@ function ProfileDrawer({
   // Flamita de un rol de la fábrica (@plan, @build, @check, @eval): el dueño le cambia el color.
   const roleFlame = target.isAgent && handle ? parseFactoryAvatar(avatar) : null;
   const canRecolor = isOwner && !!roleFlame && roleFlame.role === handle;
+  // Robot del agente en vivo: trabaja si tiene un turno corriendo, duerme si sólo está en fila.
+  // Ghosty de casa y los roles de la fábrica conservan su cara (flamita, logo).
+  const showBot = target.isAgent && !!handle && !isGhosty && !roleFlame;
+  const agentMeta = useAgentMeta(showBot ? handle! : "");
+  const myTurns = liveTurns.filter((x) => x.agent === name);
+  const botStatus: AgentBotStatus = myTurns.some((x) => x.state === "running") ? "running" : myTurns.some((x) => x.state === "queued") ? "queued" : "idle";
   const [colorBusy, setColorBusy] = useState(false);
   const [colorError, setColorError] = useState("");
   async function pickRoleColor(color: string) {
@@ -4838,6 +4859,8 @@ function ProfileDrawer({
             <div className="grid h-24 w-24 place-items-center overflow-hidden rounded-2xl bg-white">
               <img src="/ghosty.svg" alt="" className="h-full w-full object-contain" />
             </div>
+          ) : showBot ? (
+            <AgentBot handle={handle!} status={botStatus} size={120} />
           ) : target.isAgent ? (
             avatar ? (
               <img src={avatar} alt="" loading="lazy" decoding="async" className="h-24 w-24 rounded-2xl object-cover" />
@@ -4889,6 +4912,30 @@ function ProfileDrawer({
             {dir?.pronouns ? ` · ${dir.pronouns}` : ""}
           </p>
           {dir?.title && !editing ? <p className="text-xs text-muted">{dir.title}</p> : null}
+          {showBot ? (
+            // Su ficha corta: con qué modelo corre y qué está haciendo ahora.
+            <dl className="mt-3 w-full max-w-[260px] divide-y divide-border rounded-xl border border-border text-xs">
+              <div className="flex justify-between gap-3 px-3 py-1.5">
+                <dt className="text-muted">{t("Ahora")}</dt>
+                <dd className="text-ink">
+                  {botStatus === "running" ? t("trabajando") : botStatus === "queued" ? t("en cola") : t("libre")}
+                  {myTurns.length > 1 ? ` · ${myTurns.length}` : ""}
+                </dd>
+              </div>
+              {agentMeta?.model ? (
+                <div className="flex justify-between gap-3 px-3 py-1.5">
+                  <dt className="text-muted">{t("Modelo")}</dt>
+                  <dd className="truncate text-ink">{agentMeta.model}</dd>
+                </div>
+              ) : null}
+              {agentMeta?.engine ? (
+                <div className="flex justify-between gap-3 px-3 py-1.5">
+                  <dt className="text-muted">{t("Motor")}</dt>
+                  <dd className="truncate text-ink">{agentMeta.engine}</dd>
+                </div>
+              ) : null}
+            </dl>
+          ) : null}
         </div>
 
         <div className="mt-3 space-y-2 px-4 pb-6">

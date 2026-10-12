@@ -2197,4 +2197,6 @@ export const en: Record<string, string> = {
   "Ir a Ajustes → Agentes": "Go to Settings → Agents",
   "No pudimos leer tus agentes": "We couldn't load your agents",
   "Al crearlo en Studio queda activo en este espacio.": "Once you create it in Studio, it's active in this space.",
+  "trabajando": "working",
+  "libre": "free",
 };

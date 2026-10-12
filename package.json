@@ -22,6 +22,7 @@
     "@blocknote/server-util": "^0.51.4",
     "@blocknote/xl-docx-exporter": "^0.51.4",
     "@blocknote/xl-multi-column": "^0.51.4",
+    "@ghostystudio/boxes": "^0.1.4",
     "@hocuspocus/provider": "^2.15.3",
     "@mantine/core": "^9.4.1",
     "@mantine/hooks": "^9.4.1",
