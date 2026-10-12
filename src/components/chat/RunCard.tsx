@@ -22,6 +22,40 @@ import type { RunCardData } from "../../lib/ebdoc";
 
 type State = Awaited<ReturnType<typeof factoryRunCardFn>>;
 
+// Última tarjeta vista por pedido: se pinta al instante con lo último que se supo (también tras
+// recargar, por `localStorage`) y la consulta sólo la pone al día. Sin esto cada entrada al room
+// dejaba las tarjetas en blanco hasta que contestaba el servidor y luego saltaban de golpe
+// (bliss, 12-oct). Tope de 200 pedidos: los más viejos se van.
+const CARD_CACHE_KEY = "gt-runcards-v1";
+const CARD_CACHE_MAX = 200;
+let cardCache: Map<number, NonNullable<State>> | null = null;
+function cards(): Map<number, NonNullable<State>> {
+  if (cardCache) return cardCache;
+  cardCache = new Map();
+  try {
+    const raw = typeof localStorage !== "undefined" ? localStorage.getItem(CARD_CACHE_KEY) : null;
+    if (raw) for (const [id, v] of JSON.parse(raw) as [number, NonNullable<State>][]) cardCache.set(id, v);
+  } catch {
+    /* caché rota o sin localStorage: se empieza vacía */
+  }
+  return cardCache;
+}
+let saveTimer: ReturnType<typeof setTimeout> | undefined;
+function rememberCard(id: number, s: NonNullable<State>) {
+  const m = cards();
+  m.delete(id); // al final = el más reciente
+  m.set(id, s);
+  while (m.size > CARD_CACHE_MAX) m.delete(m.keys().next().value!);
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    try {
+      localStorage.setItem(CARD_CACHE_KEY, JSON.stringify([...m]));
+    } catch {
+      /* lleno o privado: la caché en memoria sigue sirviendo */
+    }
+  }, 500);
+}
+
 /** Quién tiene la estafeta mientras la fábrica trabaja: la tarjeta lo dice con un pulso. */
 const WORKING: Record<string, string> = {
   planning: "@plan está escribiendo el plan…",
@@ -53,7 +87,7 @@ export function escalationLine(loops: number, t: (s: string) => string): string 
  * se perdía de vista. Este marco anima su ALTURA entre un estado y otro (FLIP con ResizeObserver)
  * y el contenido entra con un fundido corto (`gt-morph-in`, en la tarjeta).
  */
-function Morph({ children }: { children: ReactNode }) {
+function Morph({ children, appear }: { children: ReactNode; appear: boolean }) {
   const outer = useRef<HTMLDivElement>(null);
   const inner = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -64,12 +98,16 @@ function Morph({ children }: { children: ReactNode }) {
       const h = el.offsetHeight;
       const prev = last;
       last = h;
-      if (!prev || Math.abs(h - prev) < 6 || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
-      outer.current?.animate([{ height: `${prev}px` }, { height: `${h}px` }], { duration: 420, easing: "cubic-bezier(.2,.8,.2,1)" });
+      if ((!prev && !appear) || Math.abs(h - prev) < 6 || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+      // De 0 = la tarjeta acaba de llegar (sin caché): crece y aparece, en vez de saltar de golpe.
+      outer.current?.animate(
+        prev ? [{ height: `${prev}px` }, { height: `${h}px` }] : [{ height: "0px", opacity: 0 }, { height: `${h}px`, opacity: 1 }],
+        { duration: 420, easing: "cubic-bezier(.2,.8,.2,1)" },
+      );
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [appear]);
   return (
     <div ref={outer} className="overflow-clip [overflow-clip-margin:8px]">
       <div ref={inner} className="flow-root">{children}</div>
@@ -78,7 +116,9 @@ function Morph({ children }: { children: ReactNode }) {
 }
 
 export function RunCard(props: { card: RunCardData; channelId: number; inPanel?: boolean }) {
-  return props.inPanel ? <RunCardBody {...props} /> : <Morph><RunCardBody {...props} /></Morph>;
+  // Sólo crece al aparecer la que nunca se había visto; la de caché ya está ahí.
+  const appear = useRef(typeof window !== "undefined" && !cards().has(props.card.runId)).current;
+  return props.inPanel ? <RunCardBody {...props} /> : <Morph appear={appear}><RunCardBody {...props} /></Morph>;
 }
 
 function RunCardBody({ card, channelId, inPanel }: { card: RunCardData; channelId: number; inPanel?: boolean }) {
@@ -125,6 +165,7 @@ function RunCardBody({ card, channelId, inPanel }: { card: RunCardData; channelI
           }
           if (s?.status !== "pr_review") setMerging(false);
           prevStatus.current = s?.status ?? null;
+          if (s) rememberCard(card.runId, s);
           setSt(s);
           // La revisión sólo se pide con el PR en manos de la persona.
           if (s?.status === "pr_review") await factoryVerdictFn({ data: { runId: card.runId } }).then(setReview).catch(() => {});
@@ -133,6 +174,12 @@ function RunCardBody({ card, channelId, inPanel }: { card: RunCardData; channelI
         .catch(() => {}),
     [card.runId],
   );
+  // La caché se lee al montar y antes de pintar (no en el render: el servidor no la tiene y la
+  // hidratación no cuadraría).
+  useLayoutEffect(() => {
+    const c = cards().get(card.runId);
+    if (c) setSt((cur) => cur ?? c);
+  }, [card.runId]);
   useEffect(() => {
     refresh();
   }, [refresh]);
