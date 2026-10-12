@@ -3768,7 +3768,7 @@ function LiveTurnsPanel({
   // que en Studio), así que se busca en los agentes del espacio por nombre y, si no, por cara.
   const agents = useMentions().filter((m) => m.kind === "agent");
   const handleOf = (x: LiveTurnRow) =>
-    x.handle || agents.find((a) => a.name === x.agent)?.handle ?? agents.find((a) => !!x.avatar && a.avatar === x.avatar)?.handle ?? null;
+    x.handle || (agents.find((a) => a.name === x.agent)?.handle ?? agents.find((a) => !!x.avatar && a.avatar === x.avatar)?.handle ?? null);
   const filas = [...turns, ...done];
   if (!filas.length) return null;
   const nombreDe = (id: number | null) => channels.find((c) => c.id === id)?.name ?? "";
