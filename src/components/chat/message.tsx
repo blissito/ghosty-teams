@@ -175,6 +175,8 @@ export type ChatCtxValue = {
   // Turnos de agente en vuelo (id → estado). Sin el estado, un turno en cola se ve igual
   // que uno trabajando.
   turns: Map<number, { state: "running" | "queued"; position: number; startedAt: number }>;
+  /** ¿Es un room de la fábrica (con repo atado)? Sólo ahí los agentes llevan robot. */
+  factoryRoom?: boolean;
   // La call en la que estoy ahora (`scope:scopeId`), para decir "En llamada" y no "Unirse".
   myCallKey: string | null;
   /**
@@ -2700,15 +2702,16 @@ export function MessageRow({
 }) {
   const t = useT();
   const {
-    me, slug, emojis, users, pickerFor, turns, density,
+    me, slug, emojis, users, pickerFor, turns, density, factoryRoom,
     // Capacidades: las que falten hacen desaparecer su botón, no lo dejan muerto.
     onOpenArtifact, openProfile, sendQuickReply,
     react, setReplyTo, forward, editMsg, star, pin, remove, canModerate,
   } = useContext(ChatCtx);
   const [editing, setEditing] = useState(false);
   const liveTurn = turns.get(m.id);
+  // Robots sólo en rooms de la fábrica: ni en DMs ni en rooms normales.
   const liveBot =
-    m.agent_handle && m.mentions_ghosty === 0 && liveTurn
+    factoryRoom && m.agent_handle && m.mentions_ghosty === 0 && liveTurn
       ? {
           handle: m.agent_handle,
           status: (liveTurn.state === "queued" ? "queued" : m.body ? "streaming" : "running") as AgentBotStatus,
@@ -2769,7 +2772,7 @@ export function MessageRow({
   const liveRoleAvatar = isAgent && m.agent_handle && parseFactoryAvatar(m.avatar) ? users.get(`agent:${m.agent_handle}`)?.avatar : undefined;
   const avatarSrc = dirUser?.avatar || liveRoleAvatar || m.avatar;
   const role = isAgent && m.agent_handle ? parseFactoryAvatar(avatarSrc) : null;
-  const roleBot = role && m.agent_handle ? { handle: m.agent_handle, color: role.color } : null;
+  const roleBot = factoryRoom && role && m.agent_handle ? { handle: m.agent_handle, color: role.color } : null;
   const time = new Date(m.created_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   // Hora compacta (24h, sin am/pm) para el gutter angosto de mensajes agrupados: "18:47"
   // cabe en w-9 (36px) en UNA línea → no wrappea a 2 líneas (lo que inflaba el alto de la

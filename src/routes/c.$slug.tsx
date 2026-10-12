@@ -1034,6 +1034,18 @@ function ChannelPage() {
   // router. Igual que los hilos, un DM se enfoca en el CENTRO (referencia Zulip).
   const [openThreadId, setOpenThreadId] = useState<number | null>(null);
   const [openDmId, setOpenDmId] = useState<number | null>(null);
+  // ¿El room abierto es de la fábrica (tiene repo atado)? Sólo ahí los agentes llevan robot.
+  const [factoryRoom, setFactoryRoom] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    setFactoryRoom(false);
+    roomReposFn({ data: { channelId: channel.id } })
+      .then((r) => alive && setFactoryRoom(r.length > 0))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [channel.id]);
   // Artefacto abierto en el panel lateral (pdf/imagen; doc en Fase 3). Estado
   // cliente puro, como openThreadId — abre instantáneo sin tocar el router.
   const [openArtifact, setOpenArtifactRaw] = useState<ArtifactView | null>(null);
@@ -2876,7 +2888,7 @@ function ChannelPage() {
     <ChatCtx.Provider
       // El chat de Teams pasa TODAS las capacidades. Una superficie que no pueda hacer
       // algo simplemente no lo pasa, y el botón deja de existir — ver ChatCtxValue.
-      value={{ me: user, slug: channel.slug, emojis, users, react, star, pin, remove, editMsg, retrySend, discardSend, replyTo, setReplyTo, pickerFor, setPickerFor, turns, stopTurn: stopTurnLocal, retryTurn: retryTurnLocal, onOpenArtifact: openArtifactWithSound, sendQuickReply, openPrefs, openProfile, joinCall: joinCallFromCard, myCallKey, forward: setReenviar }}
+      value={{ me: user, slug: channel.slug, factoryRoom: factoryRoom && !openDmId, emojis, users, react, star, pin, remove, editMsg, retrySend, discardSend, replyTo, setReplyTo, pickerFor, setPickerFor, turns, stopTurn: stopTurnLocal, retryTurn: retryTurnLocal, onOpenArtifact: openArtifactWithSound, sendQuickReply, openPrefs, openProfile, joinCall: joinCallFromCard, myCallKey, forward: setReenviar }}
     >
     {/* pt safe-area: en PWA standalone (viewport-fit=cover + status-bar black-translucent)
         el contenido va DEBAJO de la hora/notch → el header y su botón de menú quedaban
@@ -3785,7 +3797,8 @@ function LiveTurnsPanel({
           >
             {(() => {
               const h = handleOf(x);
-              if (h) {
+              // Robot sólo para los roles de la fábrica; en DMs y rooms normales, el avatar.
+              if (h && !x.dmId && parseFactoryAvatar(x.avatar)) {
                 const st: AgentBotStatus = x.state === "queued" ? "queued" : x.state === "done" ? "done" : x.state === "stopped" ? "failed" : "running";
                 return <AgentBot handle={h} status={st} size={22} />;
               }
@@ -4728,8 +4741,10 @@ function ProfileDrawer({
   const canRecolor = isOwner && !!roleFlame && roleFlame.role === handle;
   // Robot del agente en vivo: trabaja si tiene un turno corriendo, duerme si sólo está en fila.
   // Ghosty de casa y los roles de la fábrica conservan su cara (flamita, logo).
-  const showBot = target.isAgent && !!handle && !isGhosty;
-  const agentMeta = useAgentMeta(showBot ? handle! : "");
+  const agentCard = target.isAgent && !!handle && !isGhosty;
+  // El robot es de la fábrica: sólo los roles lo llevan en el perfil.
+  const showBot = agentCard && !!roleFlame;
+  const agentMeta = useAgentMeta(agentCard ? handle! : "");
   const myTurns = liveTurns.filter((x) => x.agent === name);
   const botStatus: AgentBotStatus = myTurns.some((x) => x.state === "running") ? "running" : myTurns.some((x) => x.state === "queued") ? "queued" : "idle";
   const [colorBusy, setColorBusy] = useState(false);
@@ -4912,7 +4927,7 @@ function ProfileDrawer({
             {dir?.pronouns ? ` · ${dir.pronouns}` : ""}
           </p>
           {dir?.title && !editing ? <p className="text-xs text-muted">{dir.title}</p> : null}
-          {showBot ? (
+          {agentCard ? (
             // Su ficha corta: con qué modelo corre y qué está haciendo ahora.
             <dl className="mt-3 w-full max-w-[260px] divide-y divide-border rounded-xl border border-border text-xs">
               <div className="flex justify-between gap-3 px-3 py-1.5">
