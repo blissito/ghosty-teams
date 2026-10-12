@@ -1,4 +1,4 @@
-import { createServerFn } from "@tanstack/react-start";
+import { createServerFn, createServerOnlyFn } from "@tanstack/react-start";
 import type { RtEvent } from "./bus.server";
 import type { SessionUser } from "../users.server";
 import type { Channel } from "../db.server";
@@ -758,7 +758,7 @@ export const postMessage = createServerFn({ method: "POST" })
 
 /** El cuerpo de `postMessage` con la persona explícita: el composer la saca de la cookie;
  * `api/internal/post-message` (CLI `ghosty teams post`), de lo que firmó gs. */
-export async function postMessageAs(me: SessionMe | null, data: PostMessageInput) {
+export const postMessageAs = createServerOnlyFn(async (me: SessionMe | null, data: PostMessageInput) => {
   const db = await import("../db.server");
   const bus = await import("./bus.server");
   const { currentNamespace } = await import("./tenant.server");
@@ -987,7 +987,7 @@ export async function postMessageAs(me: SessionMe | null, data: PostMessageInput
     unresolved: respondents.length === 0 && menciones?.unresolved?.length ? menciones.unresolved : [],
     agentHandles: handles,
   };
-}
+});
 
 // El agente responde en el MISMO contexto (flujo o hilo). Limpia el "pensando".
 export type AskAgentInput = {
@@ -1019,7 +1019,7 @@ export const askAgent = createServerFn({ method: "POST" })
 
 /** El cuerpo de `askAgent` con la persona explícita: el composer la saca de la cookie;
  * `api/internal/post-message` (CLI `ghosty teams post`), de lo que firmó gs. */
-export async function askAgentAs(me: SessionMe | null, data: AskAgentInput) {
+export const askAgentAs = createServerOnlyFn(async (me: SessionMe | null, data: AskAgentInput) => {
   const db = await import("../db.server");
   const { resolvedAgents, runAgentTurn, buildMediaParts, manifiestoAdjuntos, quotedContextPrefix, clampQuote, historyContext, gapDesdeUltimaRespuesta, adjuntosDelHueco, CATCHUP_FETCH, agentGroupId, INJECTED } = await import("../agents.server");
   const bus = await import("./bus.server");
@@ -1918,7 +1918,7 @@ export async function askAgentAs(me: SessionMe | null, data: AskAgentInput) {
     );
   }
   return { ok: true as const };
-}
+});
 
 /**
  * Fin de turno: calcula QUÉ se entregó y avisa a quien lo pidió.
