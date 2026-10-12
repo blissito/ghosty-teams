@@ -43,6 +43,8 @@ export function AgentBot({
         shape={look.shape}
         seed={look.seed}
         state={STATE_OF[status]}
+        // Sin antena: en Teams se ve como un ícono, y la antena lo alarga y lo amontona.
+        antenna={false}
         // Chico no lleva sombra de piso ni responde al mouse: es un indicador, no un juguete.
         floorShadow={size >= 64}
         interactive={size >= 64}
