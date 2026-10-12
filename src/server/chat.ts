@@ -7,7 +7,9 @@ import { FACTORY_HANDLES } from "./apps/factory-roles";
 
 // Server functions — modelo Slack. El pool_ token nunca toca el browser.
 
-export async function sessionUser() {
+export type SessionMe = { sub: string; name: string; avatar: string; isOwner: boolean };
+
+export async function sessionUser(): Promise<SessionMe | null> {
   const { useSession } = await import("@tanstack/react-start/server");
   const { sessionConfig } = await import("./session.server");
   const s = await useSession<{
@@ -737,9 +739,7 @@ export const listChannelsFn = createServerFn({ method: "GET" }).handler(async ()
 // Postea al flujo (parentId null) o dentro de un hilo (parentId set).
 // `nonce` = id del cliente; se devuelve en el evento realtime para que la pestaña
 // autora descarte su propio eco (ya lo tiene optimista).
-export const postMessage = createServerFn({ method: "POST" })
-  .validator(
-    (d: {
+export type PostMessageInput = {
       slug: string;
       parentId: number | null;
       body: string;
@@ -750,245 +750,247 @@ export const postMessage = createServerFn({ method: "POST" })
       // `createServerFn` descarta lo que no esté declarado, y `createAttachments`
       // ya sabe escribirlos — sin esta línea la onda se pierde en el viaje.
       attachments?: { fileId: string; mime: string; size: number; name: string; thumbFileId?: string | null; width?: number | null; height?: number | null; waveform?: string | null; durationMs?: number | null }[];
-    }) => d
-  )
-  .handler(async ({ data }) => {
-    const db = await import("../db.server");
-    const bus = await import("./bus.server");
-    const { currentNamespace } = await import("./tenant.server");
-    const { resolvedAgents, detectMentions, quoteExcerpt, agentGroupId } = await import("../agents.server");
-    // Una respuesta de hilo vive en el canal DE SU RAÍZ, no en el que diga el cliente. El
-    // cliente podía mandar el slug del room donde estaba parado con un hilo de OTRO room
-    // abierto (el toast de una respuesta abría el hilo sin cambiar de room): la respuesta
-    // se guardaba en ese otro canal. Medido en descti el 2026-09-23: respuestas de un hilo
-    // del canal PRIVADO de una persona quedaron en #general, y el agente corrió con la
-    // memoria y la búsqueda de #general.
-    const threadRoot = data.parentId !== null ? await db.getMessage(data.parentId) : null;
-    if (data.parentId !== null && (!threadRoot || threadRoot.dm_id != null)) throw new Error("Hilo no encontrado");
-    const channel = threadRoot ? await db.getChannelById(threadRoot.channel_id) : await db.getChannel(data.slug);
-    if (!channel) throw new Error("Canal no encontrado");
-    if (threadRoot && channel.slug !== data.slug) {
-      const u = await sessionUser();
-      if (!u || !(await db.canSeeChannel(channel, u.sub, !!u.isOwner))) throw new Error("Hilo no encontrado");
-    }
-    const ns = await currentNamespace();
-    const body = data.body.trim();
-    const files = data.attachments ?? [];
-    if (!body && files.length === 0) return { ok: false as const };
-
-    // Quote-reply: resuelve el mensaje citado y arma el SNAPSHOT (autor + extracto)
-    // server-side → autoritativo y robusto (sobrevive si el original se borra luego).
-    const quoted = data.quotedId != null ? await db.getMessage(data.quotedId).catch(() => null) : null;
-    const quotedAuthor = quoted?.sender ?? null;
-    const quotedExcerpt = quoted ? quoteExcerpt(quoted.body ?? "") : null;
-
-    // Topic (eje Zulip): los top-level llevan el topic elegido; las respuestas
-    // heredan el del root del hilo (un hilo no cambia de topic a media conversación).
-    const parent = threadRoot;
-    const topic =
-      data.parentId !== null
-        ? parent?.topic ?? "general"
-        : (data.topic ?? "general").trim() || "general";
-
-    const agents = await resolvedAgents();
-    const handles = agents.map((a) => a.handle);
-    // En un room de EVENTO el agente tiene interruptor y nace apagado: ahí escribe
-    // gente de fuera del workspace, y cada turno lo paga el dueño. Apagado, una
-    // mención se queda en texto. Sólo aplica a rooms de evento; los normales no
-    // cambian.
-    // ⚠️ Se vacía la LISTA, no sólo `mentioned`: quien levanta los turnos más abajo
-    // recorre `mentionedList`, así que apagar sólo el flag habría dejado el agente
-    // contestando igual con el mensaje marcado como si nadie lo hubiera llamado.
-    const agentOff = !!channel.call_mode && channel.agent_enabled !== 1;
-    // Los handles de las personas entran para que un `@anabel` exacto no despierte a `ana`.
-    const userHandles = agentOff ? [] : (await import("../users.server").then((u) => u.listUsers()).catch(() => [])).map((u) => u.handle);
-    const mentionedList = agentOff ? [] : detectMentions(body, handles, userHandles); // TODOS los @tagged, en orden
-    const mentioned = mentionedList[0] ?? null; // para el flag agent_handle del mensaje
-    const me = await sessionUser();
-    const name = me?.name || "invitado";
-    const avatar = me?.avatar || "";
-    const { id } = await db.createMessage({
-      channelId: channel.id,
-      parentId: data.parentId,
-      sender: name,
-      senderSub: me?.sub ?? null,
-      avatar,
-      body,
-      agentHandle: mentioned,
-      topic,
-      quotedId: quoted?.id ?? null,
-      quotedAuthor,
-      quotedExcerpt,
-    });
-    if (files.length) await db.createAttachments(id, files);
-    // Realtime: publica el mensaje ya persistido a los suscriptores del room.
-    let created = await db.getMessage(id);
-    if (created && files.length) [created] = await db.attachAttachments([created]);
-    if (created) bus.publish(bus.ch.room(ns, channel.id), { t: "message:new", msg: created, nonce: data.nonce });
-    // Software Factory: «✅» o «cambios: …» en el hilo de una corrida es la firma del plan
-    // (igual que los botones de la tarjeta). Sin mención a un agente: si la hay, es una
-    // conversación con él. El origin se lee aquí, con el request vivo.
-    // ⚠️ Se ESPERA: si el mensaje fue una firma, nadie más lo contesta. El pedido raíz lleva
-    // `agent_handle="plan"`, así que sin esto el auto-seguir de abajo abría además un turno
-    // de @plan con cada «✅» (y con «cambios: …», dos @plan en paralelo y dos tarjetas).
-    let factorySigned = false;
-    if (data.parentId !== null && !mentionedList.length && me?.sub && body) {
-      const { reqOrigin } = await import("../origin.server");
-      const origin = await reqOrigin().catch(() => "");
-      const { maybeThreadDecision } = await import("./apps/factory-runs.server");
-      factorySigned = await maybeThreadDecision({ channelId: channel.id, rootId: data.parentId, text: body, sub: me.sub, who: name, origin });
-      // «mézclalo» tras la pregunta del agente: mezcla con las credenciales de quien contesta.
-      if (!factorySigned) {
-        const { maybeMergeReply } = await import("./apps/factory-runs.server");
-        factorySigned = await maybeMergeReply({ channelId: channel.id, rootId: data.parentId, text: body, sub: me.sub });
-      }
-    }
-    // Push a los usuarios @tagged (fire-and-forget resiliente).
-    // `unresolved` viaja al cliente: un `@algo` que no es nadie y no despierta a ningún
-    // agente se quedaba en silencio absoluto (ni 👀 ni aviso). Ahora se dice, con los
-    // handles que sí hay.
-    const menciones = await notifyMentions(ns, channel, body, name, me?.sub ?? "").catch(() => null);
-    // ¿Qué agentes responden y dónde? (multi-mención: cada @tagged responde)
-    //
-    // MODELO ZULIP (2026-08-03): la respuesta del agente NACE SIEMPRE EN UN HILO, colgada
-    // del mensaje que la pidió. En el flujo queda tu mensaje con "1 respuesta"; el hilo se
-    // abre solo y ahí aterriza el streaming.
-    //
-    // Son DOS perillas y van en direcciones OPUESTAS — confundirlas es de donde salió el
-    // bug de hoy:
-    //
-    //   · `parent`      = DÓNDE SE PINTA. Ahora `data.parentId ?? id` → nace en hilo.
-    //   · `fleetThread` = CLAVE DE MEMORIA de la flota. Ahora **siempre "flow"**.
-    //
-    // Antes `fleetThread` valía `String(parentId)` dentro de un hilo, así que seguir la
-    // conversación en el hilo abría una sesión NUEVA del agente: workspace distinto, sin
-    // los adjuntos y sin memoria del turno anterior. Comprobado en vivo el 2026-08-03 —
-    // le pasaron 5 .docx en el room, contestó bien, y en el hilo respondió que no
-    // encontraba los datos. No los perdió: nunca los tuvo.
-    //
-    // El room es UNA conversación y los hilos son presentación. Por eso la clave no
-    // depende del hilo: así no hay dos claves que puedan divergir, no se paga un agente
-    // por mensaje ni arranque en frío por turno (que es lo que "flow" vino a evitar), y
-    // los rooms existentes conservan su memoria sin migración.
-    //
-    // Contrapartida asumida: dos hilos del mismo room comparten memoria.
-    //
-    // Referencia: Slack keya por `thread_ts ?? ts` (la raíz del intercambio) y sus bots
-    // responden siempre en hilo; Zulip mete todo mensaje en un topic y el problema no
-    // puede ocurrir. Nosotros teníamos flujo-continuo + hilos-aislados sin regla que los
-    // uniera, que es la peor de las tres.
-    //
-    // "Nacer en hilo" ya existió y se quitó en b3f9530 por UX ("el agente conversa en el
-    // room"). Aquel commit movió `parentFor` y dejó `fleetThread` quieto; éste mueve las
-    // dos, que es lo que permite la UX sin pagar la sesión por mensaje.
-    const respondents: { handle: string; parent: number | null; fleetThread: string; shellId: number; steered?: boolean }[] = [];
-    let threadAgent: string | null = null;
-    if (mentionedList.length) {
-      const parentFor = data.parentId ?? id; // top-level → abre hilo bajo TU mensaje
-      // «@a coordina con @b» arranca sólo a @a, que llama a @b cuando lo necesite. Antes
-      // arrancaban los dos con el mismo pedido y salían dos entregables (descti, 24-sep).
-      const { pickRespondents } = await import("./agent-handoff.server");
-      for (const h of pickRespondents(body, mentionedList)) respondents.push({ handle: h, parent: parentFor, fleetThread: FLEET_THREAD, shellId: 0 });
-    } else if (
-      !factorySigned &&
-      data.parentId !== null &&
-      (threadAgent = await threadFollowAgent(channel.id, data.parentId, parent?.agent_handle ?? null)) &&
-      agents.some((a) => a.handle === threadAgent) &&
-      !mencionaAAlguienMas(body)
-    ) {
-      // AUTO-SEGUIR: en un hilo que abrió un agente, ese agente sigue contestando SIN que
-      // haya que re-@mencionarlo. Es lo que la gente espera (openclaw #23064: re-etiquetar
-      // en cada mensaje de un hilo propio es insoportable).
-      //
-      // El ÚNICO candado es que el mensaje no etiquete a nadie más. Antes no lo había, y
-      // etiquetar a un HUMANO en el hilo de un agente lo despertaba igual: gastaba un turno
-      // entero en decir "ese mensaje no es para mí" — acertaba, y aun así costaba dinero y
-      // ruido. Que un @ a otro agente lo desvíe ya lo hace la rama de arriba.
-      //
-      // ⚠️ Hubo una segunda condición —"sólo si en el hilo ha hablado UN agente", por
-      // hermes-agent #8019— y se QUITÓ el mismo día: con dos agentes en el hilo dejaba de
-      // responder a todo y el silencio se lee como que se rompió. El caso que #8019
-      // describe ya está cubierto por el candado de la mención: si le hablas a otro, éste
-      // no se mete.
-      // Si la raíz es de una persona (sin @), sigue el ÚLTIMO agente que contestó en el
-      // hilo: Brendi preguntó a @ads en el hilo y su siguiente mensaje sin @ quedaba mudo.
-      respondents.push({ handle: threadAgent, parent: data.parentId, fleetThread: FLEET_THREAD, shellId: 0 });
-    } else if (!factorySigned && quoted?.agent_handle && quoted.sender_sub == null && agents.some((a) => a.handle === quoted.agent_handle)) {
-      // Citar el mensaje ESCRITO POR un agente (sin re-@mención) = responderle → ese agente
-      // contesta en el MISMO contexto. `sender_sub == null` distingue un mensaje AUTORADO por
-      // el agente (postAgent no setea sub) de un mensaje de un HUMANO que sólo TAGUEÓ al agente
-      // (ese lleva agent_handle + sender_sub del humano): citar ese último NO debe disparar al
-      // agente (como Slack/Discord: el bot sólo responde si lo @mencionas en el mensaje NUEVO).
-      // La cita ya viaja al agente por askAgent (superficie WABA).
-      const parentFor = data.parentId ?? id;
-      respondents.push({ handle: quoted.agent_handle, parent: parentFor, fleetThread: FLEET_THREAD, shellId: 0 });
-    }
-    // Caja caliente: la cáscara del agente se crea EAGER (kind:"msg" VACÍA, con avatar+nombre)
-    // aquí mismo → aparece al instante y PERMANECE; el turno (askAgent) streamea sobre este
-    // MISMO id vía message:body/delta. Sin "pensando…" que borrar/recrear → cero parpadeo.
-    // El cliente recibe el shellId por respondent y se lo pasa a askAgent.
-    // ⚠️ Salvo cuando el mensaje va a ser STEER: si el que escribe ya tiene un turno vivo
-    // en este flow, `askAgent` mete el texto a ese turno y no abre otro. Crear la cáscara
-    // aquí y borrarla allá era una burbuja "pensando…" que aparecía y se esfumaba — en el
-    // teléfono, con el stream atrasado, duraba segundos y parecía un bug. Mismo criterio y
-    // mismo groupId que `askAgent`.
-    const turns = await import("./turns.server");
-    for (const r of respondents) {
-      const ag = agents.find((a) => a.handle === r.handle);
-      const { fleetSuffixFor } = await import("./apps/factory-session.server");
-      const groupId = await agentGroupId(ag ?? { handle: r.handle }, await fleetSuffixFor(r.handle, channel, r.parent, r.fleetThread));
-      if (turns.hasOwnInflight(groupId, me?.sub)) {
-        r.steered = true;
-        continue;
-      }
-      const { id: shellId } = await db.postAgent(channel.id, r.parent, "", "msg", r.handle, ag?.name ?? "Ghosty", topic, ag?.avatar ?? "");
-      r.shellId = shellId;
-      const shell = await db.getMessage(shellId);
-      if (shell) bus.publish(bus.ch.room(ns, channel.id), { t: "message:new", msg: shell });
-      // Acuse 👀 sobre el mensaje que lo invocó. Va AQUÍ y no en `askAgent` porque éste es
-      // el único punto que tiene a la vez el id del invocador (`id`) y la lista de agentes
-      // que van a responder: `askAgent` sólo recibe `parentId`, que coincide con el
-      // invocador en top-level pero es la RAÍZ DEL HILO cuando ya estás dentro de uno.
-      // Además así no hay que creerle un id al cliente.
-      const { ackStart } = await import("./agent-ack.server");
-      await ackStart(ns, id, r.handle);
-    }
-    // Un pedido, varios roles: si la persona le habla a uno (@build) mientras OTRO rol del mismo
-    // pedido trabaja (@plan), a ése le llega la línea por steer y decide con su contexto si es lo
-    // mismo y se detiene. Sin candados ni estado: `injectOnly` hace que gs conteste `not_live`
-    // si ese rol no está corriendo (6-oct, MailMask #15: @plan armaba la 404 que ya hacía @build).
-    if (me?.sub && data.parentId !== null && respondents.some((r) => (FACTORY_HANDLES as readonly string[]).includes(r.handle))) {
-      void (async () => {
-        const R = await import("./apps/factory-runs.server");
-        const run = await R.runOfThread(channel.id, data.parentId!).catch(() => null);
-        if (!run) return;
-        const to = respondents.map((r) => `@${r.handle}`).join(", ");
-        for (const other of FACTORY_HANDLES) {
-          if (respondents.some((r) => r.handle === other)) continue;
-          void R.steerRole(
-            run,
-            other,
-            `[Aviso de la plataforma] ${name} le escribió a ${to} en este hilo: «${body.slice(0, 1500)}». ` +
-              `Si es lo mismo que estás haciendo, detente sin entregar ni crear nada y dilo en una línea; si es otra cosa, sigue con lo tuyo.`,
-          );
-        }
-      })().catch(() => {});
-    }
-    return {
-      ok: true as const,
-      id,
-      needsAgent: respondents.length > 0,
-      respondents, // [{handle, parent, fleetThread, shellId}] → el cliente llama askAgent por cada uno
-      // Sólo cuando NADIE va a contestar: con un agente despierto, un @ suelto es ruido.
-      unresolved: respondents.length === 0 && menciones?.unresolved?.length ? menciones.unresolved : [],
-      agentHandles: handles,
     };
+
+export const postMessage = createServerFn({ method: "POST" })
+  .validator((d: PostMessageInput) => d)
+  .handler(async ({ data }) => postMessageAs(await sessionUser(), data));
+
+/** El cuerpo de `postMessage` con la persona explícita: el composer la saca de la cookie;
+ * `api/internal/post-message` (CLI `ghosty teams post`), de lo que firmó gs. */
+export async function postMessageAs(me: SessionMe | null, data: PostMessageInput) {
+  const db = await import("../db.server");
+  const bus = await import("./bus.server");
+  const { currentNamespace } = await import("./tenant.server");
+  const { resolvedAgents, detectMentions, quoteExcerpt, agentGroupId } = await import("../agents.server");
+  // Una respuesta de hilo vive en el canal DE SU RAÍZ, no en el que diga el cliente. El
+  // cliente podía mandar el slug del room donde estaba parado con un hilo de OTRO room
+  // abierto (el toast de una respuesta abría el hilo sin cambiar de room): la respuesta
+  // se guardaba en ese otro canal. Medido en descti el 2026-09-23: respuestas de un hilo
+  // del canal PRIVADO de una persona quedaron en #general, y el agente corrió con la
+  // memoria y la búsqueda de #general.
+  const threadRoot = data.parentId !== null ? await db.getMessage(data.parentId) : null;
+  if (data.parentId !== null && (!threadRoot || threadRoot.dm_id != null)) throw new Error("Hilo no encontrado");
+  const channel = threadRoot ? await db.getChannelById(threadRoot.channel_id) : await db.getChannel(data.slug);
+  if (!channel) throw new Error("Canal no encontrado");
+  if (threadRoot && channel.slug !== data.slug) {
+    if (!me || !(await db.canSeeChannel(channel, me.sub, !!me.isOwner))) throw new Error("Hilo no encontrado");
+  }
+  const ns = await currentNamespace();
+  const body = data.body.trim();
+  const files = data.attachments ?? [];
+  if (!body && files.length === 0) return { ok: false as const };
+
+  // Quote-reply: resuelve el mensaje citado y arma el SNAPSHOT (autor + extracto)
+  // server-side → autoritativo y robusto (sobrevive si el original se borra luego).
+  const quoted = data.quotedId != null ? await db.getMessage(data.quotedId).catch(() => null) : null;
+  const quotedAuthor = quoted?.sender ?? null;
+  const quotedExcerpt = quoted ? quoteExcerpt(quoted.body ?? "") : null;
+
+  // Topic (eje Zulip): los top-level llevan el topic elegido; las respuestas
+  // heredan el del root del hilo (un hilo no cambia de topic a media conversación).
+  const parent = threadRoot;
+  const topic =
+    data.parentId !== null
+      ? parent?.topic ?? "general"
+      : (data.topic ?? "general").trim() || "general";
+
+  const agents = await resolvedAgents();
+  const handles = agents.map((a) => a.handle);
+  // En un room de EVENTO el agente tiene interruptor y nace apagado: ahí escribe
+  // gente de fuera del workspace, y cada turno lo paga el dueño. Apagado, una
+  // mención se queda en texto. Sólo aplica a rooms de evento; los normales no
+  // cambian.
+  // ⚠️ Se vacía la LISTA, no sólo `mentioned`: quien levanta los turnos más abajo
+  // recorre `mentionedList`, así que apagar sólo el flag habría dejado el agente
+  // contestando igual con el mensaje marcado como si nadie lo hubiera llamado.
+  const agentOff = !!channel.call_mode && channel.agent_enabled !== 1;
+  // Los handles de las personas entran para que un `@anabel` exacto no despierte a `ana`.
+  const userHandles = agentOff ? [] : (await import("../users.server").then((u) => u.listUsers()).catch(() => [])).map((u) => u.handle);
+  const mentionedList = agentOff ? [] : detectMentions(body, handles, userHandles); // TODOS los @tagged, en orden
+  const mentioned = mentionedList[0] ?? null; // para el flag agent_handle del mensaje
+  const name = me?.name || "invitado";
+  const avatar = me?.avatar || "";
+  const { id } = await db.createMessage({
+    channelId: channel.id,
+    parentId: data.parentId,
+    sender: name,
+    senderSub: me?.sub ?? null,
+    avatar,
+    body,
+    agentHandle: mentioned,
+    topic,
+    quotedId: quoted?.id ?? null,
+    quotedAuthor,
+    quotedExcerpt,
   });
+  if (files.length) await db.createAttachments(id, files);
+  // Realtime: publica el mensaje ya persistido a los suscriptores del room.
+  let created = await db.getMessage(id);
+  if (created && files.length) [created] = await db.attachAttachments([created]);
+  if (created) bus.publish(bus.ch.room(ns, channel.id), { t: "message:new", msg: created, nonce: data.nonce });
+  // Software Factory: «✅» o «cambios: …» en el hilo de una corrida es la firma del plan
+  // (igual que los botones de la tarjeta). Sin mención a un agente: si la hay, es una
+  // conversación con él. El origin se lee aquí, con el request vivo.
+  // ⚠️ Se ESPERA: si el mensaje fue una firma, nadie más lo contesta. El pedido raíz lleva
+  // `agent_handle="plan"`, así que sin esto el auto-seguir de abajo abría además un turno
+  // de @plan con cada «✅» (y con «cambios: …», dos @plan en paralelo y dos tarjetas).
+  let factorySigned = false;
+  if (data.parentId !== null && !mentionedList.length && me?.sub && body) {
+    const { reqOrigin } = await import("../origin.server");
+    const origin = await reqOrigin().catch(() => "");
+    const { maybeThreadDecision } = await import("./apps/factory-runs.server");
+    factorySigned = await maybeThreadDecision({ channelId: channel.id, rootId: data.parentId, text: body, sub: me.sub, who: name, origin });
+    // «mézclalo» tras la pregunta del agente: mezcla con las credenciales de quien contesta.
+    if (!factorySigned) {
+      const { maybeMergeReply } = await import("./apps/factory-runs.server");
+      factorySigned = await maybeMergeReply({ channelId: channel.id, rootId: data.parentId, text: body, sub: me.sub });
+    }
+  }
+  // Push a los usuarios @tagged (fire-and-forget resiliente).
+  // `unresolved` viaja al cliente: un `@algo` que no es nadie y no despierta a ningún
+  // agente se quedaba en silencio absoluto (ni 👀 ni aviso). Ahora se dice, con los
+  // handles que sí hay.
+  const menciones = await notifyMentions(ns, channel, body, name, me?.sub ?? "").catch(() => null);
+  // ¿Qué agentes responden y dónde? (multi-mención: cada @tagged responde)
+  //
+  // MODELO ZULIP (2026-08-03): la respuesta del agente NACE SIEMPRE EN UN HILO, colgada
+  // del mensaje que la pidió. En el flujo queda tu mensaje con "1 respuesta"; el hilo se
+  // abre solo y ahí aterriza el streaming.
+  //
+  // Son DOS perillas y van en direcciones OPUESTAS — confundirlas es de donde salió el
+  // bug de hoy:
+  //
+  //   · `parent`      = DÓNDE SE PINTA. Ahora `data.parentId ?? id` → nace en hilo.
+  //   · `fleetThread` = CLAVE DE MEMORIA de la flota. Ahora **siempre "flow"**.
+  //
+  // Antes `fleetThread` valía `String(parentId)` dentro de un hilo, así que seguir la
+  // conversación en el hilo abría una sesión NUEVA del agente: workspace distinto, sin
+  // los adjuntos y sin memoria del turno anterior. Comprobado en vivo el 2026-08-03 —
+  // le pasaron 5 .docx en el room, contestó bien, y en el hilo respondió que no
+  // encontraba los datos. No los perdió: nunca los tuvo.
+  //
+  // El room es UNA conversación y los hilos son presentación. Por eso la clave no
+  // depende del hilo: así no hay dos claves que puedan divergir, no se paga un agente
+  // por mensaje ni arranque en frío por turno (que es lo que "flow" vino a evitar), y
+  // los rooms existentes conservan su memoria sin migración.
+  //
+  // Contrapartida asumida: dos hilos del mismo room comparten memoria.
+  //
+  // Referencia: Slack keya por `thread_ts ?? ts` (la raíz del intercambio) y sus bots
+  // responden siempre en hilo; Zulip mete todo mensaje en un topic y el problema no
+  // puede ocurrir. Nosotros teníamos flujo-continuo + hilos-aislados sin regla que los
+  // uniera, que es la peor de las tres.
+  //
+  // "Nacer en hilo" ya existió y se quitó en b3f9530 por UX ("el agente conversa en el
+  // room"). Aquel commit movió `parentFor` y dejó `fleetThread` quieto; éste mueve las
+  // dos, que es lo que permite la UX sin pagar la sesión por mensaje.
+  const respondents: { handle: string; parent: number | null; fleetThread: string; shellId: number; steered?: boolean }[] = [];
+  let threadAgent: string | null = null;
+  if (mentionedList.length) {
+    const parentFor = data.parentId ?? id; // top-level → abre hilo bajo TU mensaje
+    // «@a coordina con @b» arranca sólo a @a, que llama a @b cuando lo necesite. Antes
+    // arrancaban los dos con el mismo pedido y salían dos entregables (descti, 24-sep).
+    const { pickRespondents } = await import("./agent-handoff.server");
+    for (const h of pickRespondents(body, mentionedList)) respondents.push({ handle: h, parent: parentFor, fleetThread: FLEET_THREAD, shellId: 0 });
+  } else if (
+    !factorySigned &&
+    data.parentId !== null &&
+    (threadAgent = await threadFollowAgent(channel.id, data.parentId, parent?.agent_handle ?? null)) &&
+    agents.some((a) => a.handle === threadAgent) &&
+    !mencionaAAlguienMas(body)
+  ) {
+    // AUTO-SEGUIR: en un hilo que abrió un agente, ese agente sigue contestando SIN que
+    // haya que re-@mencionarlo. Es lo que la gente espera (openclaw #23064: re-etiquetar
+    // en cada mensaje de un hilo propio es insoportable).
+    //
+    // El ÚNICO candado es que el mensaje no etiquete a nadie más. Antes no lo había, y
+    // etiquetar a un HUMANO en el hilo de un agente lo despertaba igual: gastaba un turno
+    // entero en decir "ese mensaje no es para mí" — acertaba, y aun así costaba dinero y
+    // ruido. Que un @ a otro agente lo desvíe ya lo hace la rama de arriba.
+    //
+    // ⚠️ Hubo una segunda condición —"sólo si en el hilo ha hablado UN agente", por
+    // hermes-agent #8019— y se QUITÓ el mismo día: con dos agentes en el hilo dejaba de
+    // responder a todo y el silencio se lee como que se rompió. El caso que #8019
+    // describe ya está cubierto por el candado de la mención: si le hablas a otro, éste
+    // no se mete.
+    // Si la raíz es de una persona (sin @), sigue el ÚLTIMO agente que contestó en el
+    // hilo: Brendi preguntó a @ads en el hilo y su siguiente mensaje sin @ quedaba mudo.
+    respondents.push({ handle: threadAgent, parent: data.parentId, fleetThread: FLEET_THREAD, shellId: 0 });
+  } else if (!factorySigned && quoted?.agent_handle && quoted.sender_sub == null && agents.some((a) => a.handle === quoted.agent_handle)) {
+    // Citar el mensaje ESCRITO POR un agente (sin re-@mención) = responderle → ese agente
+    // contesta en el MISMO contexto. `sender_sub == null` distingue un mensaje AUTORADO por
+    // el agente (postAgent no setea sub) de un mensaje de un HUMANO que sólo TAGUEÓ al agente
+    // (ese lleva agent_handle + sender_sub del humano): citar ese último NO debe disparar al
+    // agente (como Slack/Discord: el bot sólo responde si lo @mencionas en el mensaje NUEVO).
+    // La cita ya viaja al agente por askAgent (superficie WABA).
+    const parentFor = data.parentId ?? id;
+    respondents.push({ handle: quoted.agent_handle, parent: parentFor, fleetThread: FLEET_THREAD, shellId: 0 });
+  }
+  // Caja caliente: la cáscara del agente se crea EAGER (kind:"msg" VACÍA, con avatar+nombre)
+  // aquí mismo → aparece al instante y PERMANECE; el turno (askAgent) streamea sobre este
+  // MISMO id vía message:body/delta. Sin "pensando…" que borrar/recrear → cero parpadeo.
+  // El cliente recibe el shellId por respondent y se lo pasa a askAgent.
+  // ⚠️ Salvo cuando el mensaje va a ser STEER: si el que escribe ya tiene un turno vivo
+  // en este flow, `askAgent` mete el texto a ese turno y no abre otro. Crear la cáscara
+  // aquí y borrarla allá era una burbuja "pensando…" que aparecía y se esfumaba — en el
+  // teléfono, con el stream atrasado, duraba segundos y parecía un bug. Mismo criterio y
+  // mismo groupId que `askAgent`.
+  const turns = await import("./turns.server");
+  for (const r of respondents) {
+    const ag = agents.find((a) => a.handle === r.handle);
+    const { fleetSuffixFor } = await import("./apps/factory-session.server");
+    const groupId = await agentGroupId(ag ?? { handle: r.handle }, await fleetSuffixFor(r.handle, channel, r.parent, r.fleetThread));
+    if (turns.hasOwnInflight(groupId, me?.sub)) {
+      r.steered = true;
+      continue;
+    }
+    const { id: shellId } = await db.postAgent(channel.id, r.parent, "", "msg", r.handle, ag?.name ?? "Ghosty", topic, ag?.avatar ?? "");
+    r.shellId = shellId;
+    const shell = await db.getMessage(shellId);
+    if (shell) bus.publish(bus.ch.room(ns, channel.id), { t: "message:new", msg: shell });
+    // Acuse 👀 sobre el mensaje que lo invocó. Va AQUÍ y no en `askAgent` porque éste es
+    // el único punto que tiene a la vez el id del invocador (`id`) y la lista de agentes
+    // que van a responder: `askAgent` sólo recibe `parentId`, que coincide con el
+    // invocador en top-level pero es la RAÍZ DEL HILO cuando ya estás dentro de uno.
+    // Además así no hay que creerle un id al cliente.
+    const { ackStart } = await import("./agent-ack.server");
+    await ackStart(ns, id, r.handle);
+  }
+  // Un pedido, varios roles: si la persona le habla a uno (@build) mientras OTRO rol del mismo
+  // pedido trabaja (@plan), a ése le llega la línea por steer y decide con su contexto si es lo
+  // mismo y se detiene. Sin candados ni estado: `injectOnly` hace que gs conteste `not_live`
+  // si ese rol no está corriendo (6-oct, MailMask #15: @plan armaba la 404 que ya hacía @build).
+  if (me?.sub && data.parentId !== null && respondents.some((r) => (FACTORY_HANDLES as readonly string[]).includes(r.handle))) {
+    void (async () => {
+      const R = await import("./apps/factory-runs.server");
+      const run = await R.runOfThread(channel.id, data.parentId!).catch(() => null);
+      if (!run) return;
+      const to = respondents.map((r) => `@${r.handle}`).join(", ");
+      for (const other of FACTORY_HANDLES) {
+        if (respondents.some((r) => r.handle === other)) continue;
+        void R.steerRole(
+          run,
+          other,
+          `[Aviso de la plataforma] ${name} le escribió a ${to} en este hilo: «${body.slice(0, 1500)}». ` +
+            `Si es lo mismo que estás haciendo, detente sin entregar ni crear nada y dilo en una línea; si es otra cosa, sigue con lo tuyo.`,
+        );
+      }
+    })().catch(() => {});
+  }
+  return {
+    ok: true as const,
+    id,
+    needsAgent: respondents.length > 0,
+    respondents, // [{handle, parent, fleetThread, shellId}] → el cliente llama askAgent por cada uno
+    // Sólo cuando NADIE va a contestar: con un agente despierto, un @ suelto es ruido.
+    unresolved: respondents.length === 0 && menciones?.unresolved?.length ? menciones.unresolved : [],
+    agentHandles: handles,
+  };
+}
 
 // El agente responde en el MISMO contexto (flujo o hilo). Limpia el "pensando".
-export const askAgent = createServerFn({ method: "POST" })
-  .validator(
-    (d: {
+export type AskAgentInput = {
       slug: string;
       parentId: number | null;
       body: string;
@@ -1009,783 +1011,749 @@ export const askAgent = createServerFn({ method: "POST" })
       quotedExcerpt?: string | null;
       quotedId?: number | null; // id del citado → cita COMPLETA (no el excerpt)
       attachments?: { fileId: string; mime: string; size: number; name: string; thumbFileId?: string | null; width?: number | null; height?: number | null }[];
-    }) => d
-  )
-  .handler(async ({ data }) => {
-    const db = await import("../db.server");
-    const { resolvedAgents, runAgentTurn, buildMediaParts, manifiestoAdjuntos, quotedContextPrefix, clampQuote, historyContext, gapDesdeUltimaRespuesta, adjuntosDelHueco, CATCHUP_FETCH, agentGroupId, INJECTED } = await import("../agents.server");
-    const bus = await import("./bus.server");
-    const { currentNamespace } = await import("./tenant.server");
-    // ⚠️ Estamos DRENANDO para un despliegue: arrancar un turno ahora es fabricar una
-    // víctima. El proceso sigue atendiendo lo que ya está en vuelo, pero systemd lo mata a
-    // los ~90 s y un turno recién nacido no llega — se cobra entero y no entrega nada, que
-    // es exactamente lo que costó 173,590 facturables el 24-ago.
-    //
-    // Se dice en el CUERPO de la cáscara, no sólo por el bus: el SIGTERM ya cerró los SSE,
-    // así que un aviso que viaje sólo por ahí no lo ve nadie.
-    {
-      const { seEstaApagando } = await import("./shutdown.server");
-      if (seEstaApagando()) {
-        const aviso = "⏸ Estamos actualizando Ghosty en este momento. Vuelve a mandarlo en unos segundos — no se perdió nada.";
-        if (data.shellId != null) await db.setMessageBody(data.shellId, aviso).catch(() => {});
-        return { ok: false as const, drenando: true as const };
-      }
-    }
-    // En un hilo, el room es el de la RAÍZ, no el `slug` que manda el cliente (el room que
-    // tiene abierto). Con un hilo de #Denik abierto desde #Mailmask, el turno corría «en
-    // Mailmask»: GitHub decía que agenda no estaba conectado y el relevo salía a otro room
-    // (2026-10-01). Mismo criterio que `postMessage`.
-    const rootForChannel = data.parentId != null ? await db.getMessage(data.parentId).catch(() => null) : null;
-    const channel =
-      rootForChannel?.channel_id != null ? await db.getChannelById(rootForChannel.channel_id) : await db.getChannel(data.slug);
-    if (!channel) throw new Error("Canal no encontrado");
+    };
 
-    // ⚠️ AUTORIZACIÓN — ver `canInvokeAgent`. Antes no había ninguna.
-    {
-      const me = await sessionUser();
-      const { eventViewerFor } = await import("./events/access.server");
-      const ok = await canInvokeAgent(
-        channel,
-        me ? { sub: me.sub, isOwner: !!me.isOwner } : null,
-        db,
-        eventViewerFor
-      );
-      if (!ok) throw new Error("no autorizado");
-    }
+export const askAgent = createServerFn({ method: "POST" })
+  .validator((d: AskAgentInput) => d)
+  .handler(async ({ data }) => askAgentAs(await sessionUser(), data));
 
-    const ns = await currentNamespace();
-    const agent = (await resolvedAgents()).find((a) => a.handle === data.handle);
-    const name = agent?.name ?? "Ghosty";
+/** El cuerpo de `askAgent` con la persona explícita: el composer la saca de la cookie;
+ * `api/internal/post-message` (CLI `ghosty teams post`), de lo que firmó gs. */
+export async function askAgentAs(me: SessionMe | null, data: AskAgentInput) {
+  const db = await import("../db.server");
+  const { resolvedAgents, runAgentTurn, buildMediaParts, manifiestoAdjuntos, quotedContextPrefix, clampQuote, historyContext, gapDesdeUltimaRespuesta, adjuntosDelHueco, CATCHUP_FETCH, agentGroupId, INJECTED } = await import("../agents.server");
+  const bus = await import("./bus.server");
+  const { currentNamespace } = await import("./tenant.server");
+  // ⚠️ Estamos DRENANDO para un despliegue: arrancar un turno ahora es fabricar una
+  // víctima. El proceso sigue atendiendo lo que ya está en vuelo, pero systemd lo mata a
+  // los ~90 s y un turno recién nacido no llega — se cobra entero y no entrega nada, que
+  // es exactamente lo que costó 173,590 facturables el 24-ago.
+  //
+  // Se dice en el CUERPO de la cáscara, no sólo por el bus: el SIGTERM ya cerró los SSE,
+  // así que un aviso que viaje sólo por ahí no lo ve nadie.
+  {
+    const { seEstaApagando } = await import("./shutdown.server");
+    if (seEstaApagando()) {
+      const aviso = "⏸ Estamos actualizando Ghosty en este momento. Vuelve a mandarlo en unos segundos — no se perdió nada.";
+      if (data.shellId != null) await db.setMessageBody(data.shellId, aviso).catch(() => {});
+      return { ok: false as const, drenando: true as const };
+    }
+  }
+  // En un hilo, el room es el de la RAÍZ, no el `slug` que manda el cliente (el room que
+  // tiene abierto). Con un hilo de #Denik abierto desde #Mailmask, el turno corría «en
+  // Mailmask»: GitHub decía que agenda no estaba conectado y el relevo salía a otro room
+  // (2026-10-01). Mismo criterio que `postMessage`.
+  const rootForChannel = data.parentId != null ? await db.getMessage(data.parentId).catch(() => null) : null;
+  const channel =
+    rootForChannel?.channel_id != null ? await db.getChannelById(rootForChannel.channel_id) : await db.getChannel(data.slug);
+  if (!channel) throw new Error("Canal no encontrado");
 
-    // Root del hilo (si aplica): fuente del topic heredado y del contexto sembrado (abajo).
-    const root = data.parentId != null ? await db.getMessage(data.parentId) : null;
-    // El reply es una respuesta de hilo (parentId no-null); hereda el topic del root.
-    const topic = data.topic ?? (data.parentId != null ? root?.topic ?? "general" : undefined);
+  // ⚠️ AUTORIZACIÓN — ver `canInvokeAgent`. Antes no había ninguna.
+  {
+    const { eventViewerFor } = await import("./events/access.server");
+    const ok = await canInvokeAgent(
+      channel,
+      me ? { sub: me.sub, isOwner: !!me.isOwner } : null,
+      db,
+      eventViewerFor
+    );
+    if (!ok) throw new Error("no autorizado");
+  }
 
-    // Continuidad de contexto en hilos: sembramos el mensaje RAÍZ en el PRIMER turno de
-    // agente del hilo, para que referencias como "esa db" tengan referente.
-    //
-    // ⚠️ Ya NO es la red que era. Se escribió porque un hilo abría groupId nuevo y el
-    // worker arrancaba con memoria VACÍA; desde que la clave es una por room (FLEET_THREAD)
-    // eso no pasa. Se conserva porque sigue sirviendo cuando el hilo cuelga de un mensaje
-    // viejo que quedó fuera del contexto del worker.
-    //
-    // ⚠️ Y el guard del root PROPIO es nuevo y necesario: con el modelo Zulip el agente
-    // nace colgado del mensaje que lo invocó, así que en su primer turno el root ES este
-    // mismo mensaje — sembrarlo duplicaría el texto ("[Contexto del hilo…]" seguido del
-    // mismo cuerpo).
-    //
-    // Se detecta comparando el CUERPO porque `askAgent` no recibe el id del mensaje que
-    // disparó el turno, sólo el del padre. Es una comparación, no una heurística fina: si
-    // dos mensajes distintos del mismo hilo tuvieran cuerpo idéntico, lo único que pasa es
-    // que se omite la siembra — que es el lado seguro del error.
-    let text = data.body;
-    if (data.parentId != null && root && (root.body ?? "").trim() !== data.body.trim()) {
-      const replies = await db.listThread(data.parentId).catch(() => []);
-      const priorAgentTurn = replies.some((m) => m.agent_handle && m.kind === "msg" && (m.body ?? "").trim());
-      const rootBody = (root.body ?? "").trim();
-      if (!priorAgentTurn && rootBody) {
-        const ctx = rootBody.length > 2000 ? rootBody.slice(0, 2000) + "…" : rootBody;
-        text = `[Contexto del hilo — mensaje raíz de ${root.sender || "el remitente"}]\n${ctx}\n\n[Mensaje]\n${data.body}`;
-      }
-    }
-    // Quote-reply: si el usuario citó un mensaje, embébelo en el texto del turno (patrón
-    // WABA) → el agente SIEMPRE ve a qué se responde, aunque no esté en su memoria. Con el
-    // id del citado mandamos su cuerpo COMPLETO (no el excerpt de 220 chars).
-    let quoteCite = data.quotedExcerpt ?? null;
-    if (data.quotedId != null) {
-      const qm = await db.getMessage(data.quotedId).catch(() => null);
-      if (qm?.body?.trim()) quoteCite = clampQuote(qm.body);
-      // Uso Limitado: citar un mensaje con datos de Google no los mete a un destino que no puede recibirlos.
-      if (qm?.google_data) {
-        const { destLimitedUse, GOOGLE_REDACTED } = await import("./limited-use.server");
-        if (!(await destLimitedUse({ channelId: channel.id, parentId: data.parentId ?? undefined }, agent).catch(() => false))) quoteCite = GOOGLE_REDACTED;
-      }
-    }
-    if (quoteCite?.trim()) {
-      text = quotedContextPrefix(data.quotedAuthor ?? "", quoteCite, text);
-    }
-    // Catch-up del scope: en un CANAL solo te invocan al @mencionarte, así que entre menciones
-    // hay mensajes (sin tag) que el agente NUNCA vio en su sesión. El worker ya tiene SUS
-    // turnos (resume+compact); le inyectamos los mensajes POSTERIORES a su última respuesta en
-    // este scope (el "gap"), acotado por historyContext. Si nunca respondió aquí (sesión
-    // fresca), el gap = lo reciente = seed inicial. Corre cada turno pero está acotado al gap
-    // → eficiente cuando está al día (gap = solo el turno actual → historyContext lo filtra).
-    //
-    const poster = await sessionUser(); // el que postea/mencionó este turno = invocador
+  const ns = await currentNamespace();
+  const agent = (await resolvedAgents()).find((a) => a.handle === data.handle);
+  const name = agent?.name ?? "Ghosty";
 
-    // Los ARCHIVOS que la persona soltó en ese hueco, para el turno que no trae ninguno
-    // propio. Se llena dentro del bloque y se consume en la sección de media.
-    let huecoAtts: { fileId: string; mime: string | null; size: number | null; name: string | null }[] = [];
-    {
-      // ⚠️ Scope del ROOM, no del hilo. Con el modelo Zulip toda respuesta del agente vive
-      // en un hilo, así que acotar el gap a `parentId` lo calcularía sobre un hilo casi
-      // vacío y el agente perdería lo que se dijo en el room entre menciones — que es
-      // justo lo que este bloque existe para recuperar. La memoria es una por room
-      // (FLEET_THREAD), así que el gap tiene que mirar lo mismo.
-      const scope = { channelId: channel.id };
-      // Se traen 40 y NO 8: el render sigue acotado por presupuesto, pero traer de más es
-      // lo que hace el hueco OBSERVABLE. Sin esto no hay forma de saber si detrás quedaron
-      // 3 mensajes o 300, y el agente contestaba sobre un recorte sin enterarse.
-      const roomRecent = await db.recentContext(scope, CATCHUP_FETCH).catch(() => []);
-      // En un HILO, además del room, lo dicho en ESE hilo: su raíz y sus respuestas. Sin esto
-      // la respuesta de otro agente justo arriba (p. ej. @check pidiendo cambios) nunca le
-      // llegaba al agente que mencionas después — el room sólo trae mensajes de primer nivel.
-      const recentRaw = data.parentId != null
-        ? await (async () => {
-            const hilo = await db.recentContext({ channelId: channel.id, parentId: data.parentId }, CATCHUP_FETCH).catch(() => []);
-            const raiz = await db.getMessage(data.parentId!).catch(() => null);
-            const todos = new Map<number, (typeof roomRecent)[number]>();
-            for (const m of [...roomRecent, ...(raiz ? [raiz] : []), ...hilo]) todos.set(m.id, m);
-            return [...todos.values()].sort((a, b) => (a.created_at === b.created_at ? a.id - b.id : a.created_at - b.created_at)).slice(-CATCHUP_FETCH);
-          })()
-        : roomRecent;
-      // Uso Limitado: si alguien en esta sala no puede recibir datos de Google, los mensajes que los
-      // traen llegan redactados (se ve que existen y por qué), no se cuelan ni desaparecen.
-      const { destLimitedUse, redactGoogle } = await import("./limited-use.server");
-      const recent = redactGoogle(recentRaw, await destLimitedUse({ channelId: channel.id, parentId: data.parentId ?? undefined }, agent).catch(() => false));
-      const { esRecordatorio } = await import("./reminders.server");
-      // ⚠️ El hueco desde su última respuesta SÓLO vale si el agente conserva sus propios
-      // turnos. Un agente ACP cuya sesión no sobrevive a la reconexión empieza cada turno en
-      // blanco: mandarle únicamente el hueco es mandarle casi nada y darle por sabido el
-      // resto — la amnesia de @taller, que escribía un poema y al turno siguiente no sabía
-      // de qué le hablaban. A ése se le manda lo reciente COMPLETO.
-      //
-      // El dato lo aprende el propio turno (`AcpResult.retains`); no se deduce de
-      // `loadSession`, porque un agente puede no saber retomar y aun así conservar su sesión.
-      // La MISMA clave con la que el turno guardará su sesión más abajo: la conversación es
-      // por room, no por hilo (ver el comentario de `fleetThread`).
-      const { fleetSuffixFor } = await import("./apps/factory-session.server");
-      const gidCatchup = await agentGroupId(agent ?? { handle: data.handle }, await fleetSuffixFor(data.handle, channel, data.parentId, data.fleetThread ?? FLEET_THREAD));
-      const retiene =
-        agent?.backend.kind !== "acp" ||
-        (await db.acpRetains(agent.handle, gidCatchup).catch(() => true));
-      const gap = retiene ? gapDesdeUltimaRespuesta(recent, esRecordatorio, data.handle) : recent;
-      // El COUNT sólo se paga si el fetch volvió lleno: si volvió corto ya tenemos la
-      // conversación entera y el total es el largo del gap, sin query.
-      let totalGap = gap.length;
-      if (recent.length >= CATCHUP_FETCH) {
-        const afterId = recent[recent.length - gap.length - 1]?.id ?? null;
-        totalGap = await db.countAfter(scope, afterId).catch(() => gap.length);
-      }
-      const history = historyContext(gap, data.body, { totalGap, sender: data.sender });
-      if (history) text = history + text;
-      // Los ARCHIVOS del hueco, no sólo su texto — ver `adjuntosDelHueco`. Se cargan aquí
-      // porque es el único punto con el gap ya resuelto; se usan más abajo, y sólo si el
-      // turno no trae adjuntos propios ni los del hilo.
-      if (!(data.attachments ?? []).length) {
-        const conAtt = await db.attachAttachments(gap as never).catch(() => []);
-        huecoAtts = adjuntosDelHueco(conAtt as never, poster?.sub ?? null);
-      }
-    }
+  // Root del hilo (si aplica): fuente del topic heredado y del contexto sembrado (abajo).
+  const root = data.parentId != null ? await db.getMessage(data.parentId) : null;
+  // El reply es una respuesta de hilo (parentId no-null); hereda el topic del root.
+  const topic = data.topic ?? (data.parentId != null ? root?.topic ?? "general" : undefined);
 
-    // Media de entrada: los adjuntos del usuario → FileParts (uri firmada / bytes).
-    //
-    // RE-ENTREGA en hilos: arriba se re-siembra con cuidado todo el contexto de TEXTO
-    // (cuerpo del root, cita, gap del scope) pero la media no entraba en esa
-    // reconstrucción. Un "continua" llega sin adjuntos → el agente respondía "no hay
-    // archivos adjuntos disponibles en este turno" con el expediente completo visible
-    // ahí arriba en la UI, y cualquier trabajo de varios turnos sobre documentos
-    // quedaba ciego a partir del segundo. Cuando el turno no trae archivos propios,
-    // reponemos los del mensaje raíz del hilo, siempre por uri firmada.
-    let mediaAtts: { fileId: string; mime: string | null; size: number | null; name: string | null }[] =
-      data.attachments ?? [];
-    let reentrega = false;
-    if (!mediaAtts.length && data.parentId != null && root) {
-      const [rootFull] = await db.attachAttachments([root]).catch(() => [root]);
-      const prev = (rootFull?.attachments ?? []).map((a) => ({
-        fileId: a.file_id, mime: a.mime, size: a.size, name: a.name,
-      }));
-      if (prev.length) { mediaAtts = prev; reentrega = true; }
+  // Continuidad de contexto en hilos: sembramos el mensaje RAÍZ en el PRIMER turno de
+  // agente del hilo, para que referencias como "esa db" tengan referente.
+  //
+  // ⚠️ Ya NO es la red que era. Se escribió porque un hilo abría groupId nuevo y el
+  // worker arrancaba con memoria VACÍA; desde que la clave es una por room (FLEET_THREAD)
+  // eso no pasa. Se conserva porque sigue sirviendo cuando el hilo cuelga de un mensaje
+  // viejo que quedó fuera del contexto del worker.
+  //
+  // ⚠️ Y el guard del root PROPIO es nuevo y necesario: con el modelo Zulip el agente
+  // nace colgado del mensaje que lo invocó, así que en su primer turno el root ES este
+  // mismo mensaje — sembrarlo duplicaría el texto ("[Contexto del hilo…]" seguido del
+  // mismo cuerpo).
+  //
+  // Se detecta comparando el CUERPO porque `askAgent` no recibe el id del mensaje que
+  // disparó el turno, sólo el del padre. Es una comparación, no una heurística fina: si
+  // dos mensajes distintos del mismo hilo tuvieran cuerpo idéntico, lo único que pasa es
+  // que se omite la siembra — que es el lado seguro del error.
+  let text = data.body;
+  if (data.parentId != null && root && (root.body ?? "").trim() !== data.body.trim()) {
+    const replies = await db.listThread(data.parentId).catch(() => []);
+    const priorAgentTurn = replies.some((m) => m.agent_handle && m.kind === "msg" && (m.body ?? "").trim());
+    const rootBody = (root.body ?? "").trim();
+    if (!priorAgentTurn && rootBody) {
+      const ctx = rootBody.length > 2000 ? rootBody.slice(0, 2000) + "…" : rootBody;
+      text = `[Contexto del hilo — mensaje raíz de ${root.sender || "el remitente"}]\n${ctx}\n\n[Mensaje]\n${data.body}`;
     }
-    // Y si tampoco los hay ahí, los del HUECO: la persona los soltó en un mensaje aparte,
-    // casi siempre con el cuerpo vacío, y la instrucción vino en otro. Ver `adjuntosDelHueco`.
-    if (!mediaAtts.length && huecoAtts.length) { mediaAtts = huecoAtts; reentrega = true; }
-    // El manifiesto va en el texto para que sepa QUÉ tiene sin abrir todo: con un
-    // expediente grande, enumerar es más barato que descubrir.
-    // ⚠️ El manifiesto también va cuando el turno trae VARIOS adjuntos propios, y no sólo
-    // en la re-entrega. Sin él, dos imágenes llegan como dos FileParts anónimos: el nombre
-    // es lo único que viaja (`buildMediaParts`) y el navegador sube las dos como
-    // `image.png`, así que el agente no tiene con qué distinguirlas. Medido el 2026-08-24:
-    // alguien mandó dos fotos en un mensaje, el agente usó la que no era y la persona lo
-    // repitió tres veces en mayúsculas. Numerado porque el orden ES la dirección: es el
-    // mismo de los FileParts (`gc_attachments ORDER BY id`).
-    text = manifiestoAdjuntos(mediaAtts, { reentrega, ambito: mediaAtts === huecoAtts ? "conversación" : "hilo" }) + text;
-    // El mensaje nombra a OTROS agentes: cómo se les pasa trabajo (ver `agent-handoff.server.ts`).
-    {
-      const { coordinationHint } = await import("./agent-handoff.server");
-      const handles = (await resolvedAgents()).map((a) => a.handle);
-      text = (await coordinationHint(data.body, data.handle, handles).catch(() => "")) + text;
+  }
+  // Quote-reply: si el usuario citó un mensaje, embébelo en el texto del turno (patrón
+  // WABA) → el agente SIEMPRE ve a qué se responde, aunque no esté en su memoria. Con el
+  // id del citado mandamos su cuerpo COMPLETO (no el excerpt de 220 chars).
+  let quoteCite = data.quotedExcerpt ?? null;
+  if (data.quotedId != null) {
+    const qm = await db.getMessage(data.quotedId).catch(() => null);
+    if (qm?.body?.trim()) quoteCite = clampQuote(qm.body);
+    // Uso Limitado: citar un mensaje con datos de Google no los mete a un destino que no puede recibirlos.
+    if (qm?.google_data) {
+      const { destLimitedUse, GOOGLE_REDACTED } = await import("./limited-use.server");
+      if (!(await destLimitedUse({ channelId: channel.id, parentId: data.parentId ?? undefined }, agent).catch(() => false))) quoteCite = GOOGLE_REDACTED;
     }
-    // Nota de voz: la plataforma la transcribe y la antepone al texto del turno; el audio
-    // viaja igual como adjunto. Ver `stt.server.ts`. Best-effort: si falla, no hay bloque.
-    const { transcripcionesDelTurno } = await import("./stt.server");
-    text = (await transcripcionesDelTurno(mediaAtts).catch(() => "")) + text;
-    const parts = await buildMediaParts(mediaAtts, { forceUri: reentrega });
+  }
+  if (quoteCite?.trim()) {
+    text = quotedContextPrefix(data.quotedAuthor ?? "", quoteCite, text);
+  }
+  // Catch-up del scope: en un CANAL solo te invocan al @mencionarte, así que entre menciones
+  // hay mensajes (sin tag) que el agente NUNCA vio en su sesión. El worker ya tiene SUS
+  // turnos (resume+compact); le inyectamos los mensajes POSTERIORES a su última respuesta en
+  // este scope (el "gap"), acotado por historyContext. Si nunca respondió aquí (sesión
+  // fresca), el gap = lo reciente = seed inicial. Corre cada turno pero está acotado al gap
+  // → eficiente cuando está al día (gap = solo el turno actual → historyContext lo filtra).
+  //
+  const poster = me; // el que postea/mencionó este turno = invocador
 
-    // Streaming first-class: la cáscara (body vacío) se crea al primer token → el
-    // "pensando…" se mantiene durante la latencia del agente. Contrato §1.2.
-    // groupId incluye el HANDLE → memoria por-agente (sin esto dos agentes en el mismo
-    // hilo comparten conversación y se contaminan).
-    // Clave de flota DESACOPLADA del hilo de UI (ver postMessage): una por room.
+  // Los ARCHIVOS que la persona soltó en ese hueco, para el turno que no trae ninguno
+  // propio. Se llena dentro del bloque y se consume en la sección de media.
+  let huecoAtts: { fileId: string; mime: string | null; size: number | null; name: string | null }[] = [];
+  {
+    // ⚠️ Scope del ROOM, no del hilo. Con el modelo Zulip toda respuesta del agente vive
+    // en un hilo, así que acotar el gap a `parentId` lo calcularía sobre un hilo casi
+    // vacío y el agente perdería lo que se dijo en el room entre menciones — que es
+    // justo lo que este bloque existe para recuperar. La memoria es una por room
+    // (FLEET_THREAD), así que el gap tiene que mirar lo mismo.
+    const scope = { channelId: channel.id };
+    // Se traen 40 y NO 8: el render sigue acotado por presupuesto, pero traer de más es
+    // lo que hace el hueco OBSERVABLE. Sin esto no hay forma de saber si detrás quedaron
+    // 3 mensajes o 300, y el agente contestaba sobre un recorte sin enterarse.
+    const roomRecent = await db.recentContext(scope, CATCHUP_FETCH).catch(() => []);
+    // En un HILO, además del room, lo dicho en ESE hilo: su raíz y sus respuestas. Sin esto
+    // la respuesta de otro agente justo arriba (p. ej. @check pidiendo cambios) nunca le
+    // llegaba al agente que mencionas después — el room sólo trae mensajes de primer nivel.
+    const recentRaw = data.parentId != null
+      ? await (async () => {
+          const hilo = await db.recentContext({ channelId: channel.id, parentId: data.parentId }, CATCHUP_FETCH).catch(() => []);
+          const raiz = await db.getMessage(data.parentId!).catch(() => null);
+          const todos = new Map<number, (typeof roomRecent)[number]>();
+          for (const m of [...roomRecent, ...(raiz ? [raiz] : []), ...hilo]) todos.set(m.id, m);
+          return [...todos.values()].sort((a, b) => (a.created_at === b.created_at ? a.id - b.id : a.created_at - b.created_at)).slice(-CATCHUP_FETCH);
+        })()
+      : roomRecent;
+    // Uso Limitado: si alguien en esta sala no puede recibir datos de Google, los mensajes que los
+    // traen llegan redactados (se ve que existen y por qué), no se cuelan ni desaparecen.
+    const { destLimitedUse, redactGoogle } = await import("./limited-use.server");
+    const recent = redactGoogle(recentRaw, await destLimitedUse({ channelId: channel.id, parentId: data.parentId ?? undefined }, agent).catch(() => false));
+    const { esRecordatorio } = await import("./reminders.server");
+    // ⚠️ El hueco desde su última respuesta SÓLO vale si el agente conserva sus propios
+    // turnos. Un agente ACP cuya sesión no sobrevive a la reconexión empieza cada turno en
+    // blanco: mandarle únicamente el hueco es mandarle casi nada y darle por sabido el
+    // resto — la amnesia de @taller, que escribía un poema y al turno siguiente no sabía
+    // de qué le hablaban. A ése se le manda lo reciente COMPLETO.
     //
-    // ⚠️ El fallback ya NO deriva del parentId. Derivarlo era el bug: un cliente que no
-    // mandara `fleetThread` abría una sesión por hilo, sin adjuntos ni memoria. Ante la
-    // duda, la clave del room es la respuesta correcta — como mucho comparte contexto de
-    // más; la otra rama perdía el contexto entero en silencio.
-    const fleetThread = data.fleetThread ?? FLEET_THREAD;
-    // Los roles de la fábrica van por pedido o por hilo (factory-session.server.ts).
+    // El dato lo aprende el propio turno (`AcpResult.retains`); no se deduce de
+    // `loadSession`, porque un agente puede no saber retomar y aun así conservar su sesión.
+    // La MISMA clave con la que el turno guardará su sesión más abajo: la conversación es
+    // por room, no por hilo (ver el comentario de `fleetThread`).
     const { fleetSuffixFor } = await import("./apps/factory-session.server");
-    const groupId = await agentGroupId(agent ?? { handle: data.handle }, await fleetSuffixFor(data.handle, channel, data.parentId, fleetThread));
-    // Identidad conversacional durable: el documentId (local) del artefacto ACTUAL de este
-    // hilo + su contenido fuente (doc=markdown | sheet=csv). El contenido se re-inyecta al
-    // turno → al modificar, el agente re-emite el artefacto COMPLETO (misma vía de streaming
-    // que al crear); el documentId preserva la identidad (nueva versión, no card nueva)
-    // aunque el worker recicle su sesión.
-    // resolve* y no get*: el artefacto suele nacer en el ROOM y la conversación seguir en
-    // el HILO de ese mensaje, que no tiene puntero propio (ver resolveThreadArtifact).
+    const gidCatchup = await agentGroupId(agent ?? { handle: data.handle }, await fleetSuffixFor(data.handle, channel, data.parentId, data.fleetThread ?? FLEET_THREAD));
+    const retiene =
+      agent?.backend.kind !== "acp" ||
+      (await db.acpRetains(agent.handle, gidCatchup).catch(() => true));
+    const gap = retiene ? gapDesdeUltimaRespuesta(recent, esRecordatorio, data.handle) : recent;
+    // El COUNT sólo se paga si el fetch volvió lleno: si volvió corto ya tenemos la
+    // conversación entera y el total es el largo del gap, sin query.
+    let totalGap = gap.length;
+    if (recent.length >= CATCHUP_FETCH) {
+      const afterId = recent[recent.length - gap.length - 1]?.id ?? null;
+      totalGap = await db.countAfter(scope, afterId).catch(() => gap.length);
+    }
+    const history = historyContext(gap, data.body, { totalGap, sender: data.sender });
+    if (history) text = history + text;
+    // Los ARCHIVOS del hueco, no sólo su texto — ver `adjuntosDelHueco`. Se cargan aquí
+    // porque es el único punto con el gap ya resuelto; se usan más abajo, y sólo si el
+    // turno no trae adjuntos propios ni los del hilo.
+    if (!(data.attachments ?? []).length) {
+      const conAtt = await db.attachAttachments(gap as never).catch(() => []);
+      huecoAtts = adjuntosDelHueco(conAtt as never, poster?.sub ?? null);
+    }
+  }
 
-    // RETOMAR UN ARTEFACTO DE OTRA CONVERSACIÓN. Si el mensaje trae el link de un
-    // artefacto, se ADOPTA en este hilo antes de resolver el puntero. Sin esto, pegar el
-    // link no servía de nada: el agente intentaba leer la URL pública SIN sesión, y un
-    // documento privado le contestaba 404 ("ese link no me da acceso"), así que pedía que
-    // le pegaran el HTML a mano.
-    //
-    // Adoptar = mover el puntero del hilo. De ahí en adelante todo el camino de abajo ya
-    // existía: resolveThreadArtifact lo encuentra, getDoc trae el contenido y se re-inyecta
-    // al turno, de modo que "modifícalo" produce una nueva VERSIÓN del mismo documento en
-    // vez de una tarjeta nueva.
-    //
-    // La autorización vive en db.adoptableArtifact: dueño, o nacido en este room. Un link
-    // que no cumpla se ignora en silencio — el agente sigue con el artefacto que ya tuviera
-    // el hilo, que es mejor que abortar el turno por un link que quizá era sólo una cita.
-    // ⚠️ La resolución del artefacto se RETRASA hasta tener el lock del grupo (más abajo).
-    // Leerla aquí era la fuente de una pérdida de datos silenciosa: con dos menciones
-    // simultáneas en el mismo room, el segundo turno se llevaba la versión ANTERIOR del
-    // documento, el agente la re-emitía y la edición del primero desaparecía sin señal.
-    // Ver `withGroupLock` en turns.server.ts.
-    const resolverArtefactoDelHilo = async () => {
-      const slugPegado = db.slugDeArtefactoEn(data.body ?? "");
-      if (slugPegado) {
-        const adoptado = await db
-          .adoptableArtifact(slugPegado, {
-            requesterSub: poster?.sub ?? null,
-            channelId: channel.id,
-            isWorkspaceOwner: !!poster?.isOwner,
-          })
-          .catch(() => null);
-        if (adoptado) {
-          await db.setThreadArtifact(channel.id, data.parentId, adoptado).catch(() => {});
-        }
+  // Media de entrada: los adjuntos del usuario → FileParts (uri firmada / bytes).
+  //
+  // RE-ENTREGA en hilos: arriba se re-siembra con cuidado todo el contexto de TEXTO
+  // (cuerpo del root, cita, gap del scope) pero la media no entraba en esa
+  // reconstrucción. Un "continua" llega sin adjuntos → el agente respondía "no hay
+  // archivos adjuntos disponibles en este turno" con el expediente completo visible
+  // ahí arriba en la UI, y cualquier trabajo de varios turnos sobre documentos
+  // quedaba ciego a partir del segundo. Cuando el turno no trae archivos propios,
+  // reponemos los del mensaje raíz del hilo, siempre por uri firmada.
+  let mediaAtts: { fileId: string; mime: string | null; size: number | null; name: string | null }[] =
+    data.attachments ?? [];
+  let reentrega = false;
+  if (!mediaAtts.length && data.parentId != null && root) {
+    const [rootFull] = await db.attachAttachments([root]).catch(() => [root]);
+    const prev = (rootFull?.attachments ?? []).map((a) => ({
+      fileId: a.file_id, mime: a.mime, size: a.size, name: a.name,
+    }));
+    if (prev.length) { mediaAtts = prev; reentrega = true; }
+  }
+  // Y si tampoco los hay ahí, los del HUECO: la persona los soltó en un mensaje aparte,
+  // casi siempre con el cuerpo vacío, y la instrucción vino en otro. Ver `adjuntosDelHueco`.
+  if (!mediaAtts.length && huecoAtts.length) { mediaAtts = huecoAtts; reentrega = true; }
+  // El manifiesto va en el texto para que sepa QUÉ tiene sin abrir todo: con un
+  // expediente grande, enumerar es más barato que descubrir.
+  // ⚠️ El manifiesto también va cuando el turno trae VARIOS adjuntos propios, y no sólo
+  // en la re-entrega. Sin él, dos imágenes llegan como dos FileParts anónimos: el nombre
+  // es lo único que viaja (`buildMediaParts`) y el navegador sube las dos como
+  // `image.png`, así que el agente no tiene con qué distinguirlas. Medido el 2026-08-24:
+  // alguien mandó dos fotos en un mensaje, el agente usó la que no era y la persona lo
+  // repitió tres veces en mayúsculas. Numerado porque el orden ES la dirección: es el
+  // mismo de los FileParts (`gc_attachments ORDER BY id`).
+  text = manifiestoAdjuntos(mediaAtts, { reentrega, ambito: mediaAtts === huecoAtts ? "conversación" : "hilo" }) + text;
+  // El mensaje nombra a OTROS agentes: cómo se les pasa trabajo (ver `agent-handoff.server.ts`).
+  {
+    const { coordinationHint } = await import("./agent-handoff.server");
+    const handles = (await resolvedAgents()).map((a) => a.handle);
+    text = (await coordinationHint(data.body, data.handle, handles).catch(() => "")) + text;
+  }
+  // Nota de voz: la plataforma la transcribe y la antepone al texto del turno; el audio
+  // viaja igual como adjunto. Ver `stt.server.ts`. Best-effort: si falla, no hay bloque.
+  const { transcripcionesDelTurno } = await import("./stt.server");
+  text = (await transcripcionesDelTurno(mediaAtts).catch(() => "")) + text;
+  const parts = await buildMediaParts(mediaAtts, { forceUri: reentrega });
+
+  // Streaming first-class: la cáscara (body vacío) se crea al primer token → el
+  // "pensando…" se mantiene durante la latencia del agente. Contrato §1.2.
+  // groupId incluye el HANDLE → memoria por-agente (sin esto dos agentes en el mismo
+  // hilo comparten conversación y se contaminan).
+  // Clave de flota DESACOPLADA del hilo de UI (ver postMessage): una por room.
+  //
+  // ⚠️ El fallback ya NO deriva del parentId. Derivarlo era el bug: un cliente que no
+  // mandara `fleetThread` abría una sesión por hilo, sin adjuntos ni memoria. Ante la
+  // duda, la clave del room es la respuesta correcta — como mucho comparte contexto de
+  // más; la otra rama perdía el contexto entero en silencio.
+  const fleetThread = data.fleetThread ?? FLEET_THREAD;
+  // Los roles de la fábrica van por pedido o por hilo (factory-session.server.ts).
+  const { fleetSuffixFor } = await import("./apps/factory-session.server");
+  const groupId = await agentGroupId(agent ?? { handle: data.handle }, await fleetSuffixFor(data.handle, channel, data.parentId, fleetThread));
+  // Identidad conversacional durable: el documentId (local) del artefacto ACTUAL de este
+  // hilo + su contenido fuente (doc=markdown | sheet=csv). El contenido se re-inyecta al
+  // turno → al modificar, el agente re-emite el artefacto COMPLETO (misma vía de streaming
+  // que al crear); el documentId preserva la identidad (nueva versión, no card nueva)
+  // aunque el worker recicle su sesión.
+  // resolve* y no get*: el artefacto suele nacer en el ROOM y la conversación seguir en
+  // el HILO de ese mensaje, que no tiene puntero propio (ver resolveThreadArtifact).
+
+  // RETOMAR UN ARTEFACTO DE OTRA CONVERSACIÓN. Si el mensaje trae el link de un
+  // artefacto, se ADOPTA en este hilo antes de resolver el puntero. Sin esto, pegar el
+  // link no servía de nada: el agente intentaba leer la URL pública SIN sesión, y un
+  // documento privado le contestaba 404 ("ese link no me da acceso"), así que pedía que
+  // le pegaran el HTML a mano.
+  //
+  // Adoptar = mover el puntero del hilo. De ahí en adelante todo el camino de abajo ya
+  // existía: resolveThreadArtifact lo encuentra, getDoc trae el contenido y se re-inyecta
+  // al turno, de modo que "modifícalo" produce una nueva VERSIÓN del mismo documento en
+  // vez de una tarjeta nueva.
+  //
+  // La autorización vive en db.adoptableArtifact: dueño, o nacido en este room. Un link
+  // que no cumpla se ignora en silencio — el agente sigue con el artefacto que ya tuviera
+  // el hilo, que es mejor que abortar el turno por un link que quizá era sólo una cita.
+  // ⚠️ La resolución del artefacto se RETRASA hasta tener el lock del grupo (más abajo).
+  // Leerla aquí era la fuente de una pérdida de datos silenciosa: con dos menciones
+  // simultáneas en el mismo room, el segundo turno se llevaba la versión ANTERIOR del
+  // documento, el agente la re-emitía y la edición del primero desaparecía sin señal.
+  // Ver `withGroupLock` en turns.server.ts.
+  const resolverArtefactoDelHilo = async () => {
+    const slugPegado = db.slugDeArtefactoEn(data.body ?? "");
+    if (slugPegado) {
+      const adoptado = await db
+        .adoptableArtifact(slugPegado, {
+          requesterSub: poster?.sub ?? null,
+          channelId: channel.id,
+          isWorkspaceOwner: !!poster?.isOwner,
+        })
+        .catch(() => null);
+      if (adoptado) {
+        await db.setThreadArtifact(channel.id, data.parentId, adoptado).catch(() => {});
       }
+    }
 
-      const currentDocId = await db.resolveThreadArtifact(channel.id, data.parentId).catch(() => null);
-      const currentDoc = currentDocId ? await db.getDoc(currentDocId).catch(() => null) : null;
-      // ¿La última entrega del hilo fue un ARCHIVO posterior a este artefacto? Entonces el
-      // antecedente de "modifícalo" es el archivo, no el artefacto — se lo decimos al agente
-      // en el hint. Comparación por fecha y no "existe un archivo": tras editar el artefacto,
-      // el artefacto vuelve a ser lo último y la regla debe apagarse sola.
-      if (currentDoc) {
-        const entrega = await db.getThreadDelivery(channel.id, data.parentId).catch(() => null);
-        if (entrega && entrega.at >= (currentDoc.at ?? 0)) {
-          currentDoc.lastFile = { name: entrega.name, mime: entrega.mime };
-        }
+    const currentDocId = await db.resolveThreadArtifact(channel.id, data.parentId).catch(() => null);
+    const currentDoc = currentDocId ? await db.getDoc(currentDocId).catch(() => null) : null;
+    // ¿La última entrega del hilo fue un ARCHIVO posterior a este artefacto? Entonces el
+    // antecedente de "modifícalo" es el archivo, no el artefacto — se lo decimos al agente
+    // en el hint. Comparación por fecha y no "existe un archivo": tras editar el artefacto,
+    // el artefacto vuelve a ser lo último y la regla debe apagarse sola.
+    if (currentDoc) {
+      const entrega = await db.getThreadDelivery(channel.id, data.parentId).catch(() => null);
+      if (entrega && entrega.at >= (currentDoc.at ?? 0)) {
+        currentDoc.lastFile = { name: entrega.name, mime: entrega.mime };
       }
-      return { currentDocId, currentDoc };
-    };
+    }
+    return { currentDocId, currentDoc };
+  };
 
-    // INTERRUMPIR lo mío, encolar lo ajeno. Si el que escribe es el mismo que tiene un
-    // turno corriendo en este flow, casi siempre está corrigiendo ("mejor en html") y
-    // dejarlo en cola convierte la corrección en una respuesta tardía. El turno de otra
-    // persona no se toca: el canal es compartido, ese trabajo no es suyo.
-    // STEER en vez de interrumpir: si mi turno anterior sigue vivo, este mensaje se mete
-    // AHÍ (el worker lo empuja a la misma sesión del SDK) y la respuesta sale por la
-    // burbuja que ya estoy mirando. Antes se mataba el turno: la corrección llegaba, pero
-    // tirando a la basura todo lo que el agente llevaba hecho.
-    const turns = await import("./turns.server");
-    const steer = turns.hasOwnInflight(groupId, poster?.sub);
+  // INTERRUMPIR lo mío, encolar lo ajeno. Si el que escribe es el mismo que tiene un
+  // turno corriendo en este flow, casi siempre está corrigiendo ("mejor en html") y
+  // dejarlo en cola convierte la corrección en una respuesta tardía. El turno de otra
+  // persona no se toca: el canal es compartido, ese trabajo no es suyo.
+  // STEER en vez de interrumpir: si mi turno anterior sigue vivo, este mensaje se mete
+  // AHÍ (el worker lo empuja a la misma sesión del SDK) y la respuesta sale por la
+  // burbuja que ya estoy mirando. Antes se mataba el turno: la corrección llegaba, pero
+  // tirando a la basura todo lo que el agente llevaba hecho.
+  const turns = await import("./turns.server");
+  const steer = turns.hasOwnInflight(groupId, poster?.sub);
 
-    const controller = new AbortController();
-    const flusher = (await import("./body-flush.server")).makeBodyFlusher();
-    const announce = (st: import("./turns.server").TurnState) =>
-      bus.publish(bus.ch.room(ns, channel.id), { t: "turn", ...st });
-    let registeredId: number | null = null;
-    // Último paso narrado por el agente, sacado del bloque ```gt-steps``` que él mismo emite.
-    const pasoDe = (await import("./body-flush.server")).stepOfBody;
-    // Cómo se LLAMA la tarea: lo que pidió la persona, recortado. Cursor nombra así cada fila
-    // de su panel ("Live stock ticker") en vez de con el nombre del agente, y es lo que hace
-    // que una lista de tres agentes se pueda leer de un vistazo.
-    const tareaDelTurno = (() => {
-      // ⚠️ Al texto del turno se le antepone el MANIFIESTO de adjuntos ("[Adjuntos del
-      // hilo…]" + la lista), así que tomarlo tal cual nombraba todas las filas
-      // "[Adjuntos d…" — inútil, y encima idéntico entre agentes. Se salta ese bloque:
-      // llega hasta la primera línea en blanco.
-      let crudo = text ?? "";
-      if (crudo.startsWith("[Adjuntos")) {
-        const corte = crudo.indexOf("\n\n");
-        crudo = corte === -1 ? "" : crudo.slice(corte + 2);
-      }
-      crudo = crudo.replace(/```[\s\S]*?```/g, " ").replace(/\s+/g, " ").trim();
-      if (!crudo) return "";
-      return crudo.length > 60 ? `${crudo.slice(0, 57)}…` : crudo;
-    })();
-    // Registrar YA si la cáscara existe (postMessage la crea eager). Registrarlo hasta el
-    // primer token dejaba sin botón ni reloj justo la ventana en la que hacen falta: la
-    // del "pensando…" antes de que llegue nada.
-    // Destino de las tools nativas: este canal, este topic, este agente. Se declara ANTES del
-    // registro del turno porque los dos lo usan — el turno para su autoridad y `runAgentTurn`
-    // para firmarlo en el tool-token. Que sean el MISMO objeto es la garantía de que el MCP
-    // no puede resolver un destino distinto del que ve el camino de siempre.
-    // El mensaje que invocó al turno, ya validado: de ESTE room y de QUIEN lo manda.
-    const invokerMessageIds = await (async (): Promise<number[]> => {
-      if (data.invokerMessageId == null || !poster?.sub) return [];
-      const m = await db.getMessage(data.invokerMessageId).catch(() => null);
-      if (!m || m.channel_id !== channel.id || m.sender_sub !== poster.sub) return [];
-      return [data.invokerMessageId];
-    })();
-    const destDelTurno = {
-      channelId: channel.id,
-      parentId: data.parentId ?? undefined,
-      topic: topic ?? "general",
-      handle: data.handle,
-      name,
-      avatar: agent?.avatar ?? "",
-      // A qué mensaje le reacciona `chat_react` por defecto: al que lo invocó. Va firmado
-      // con el resto del destino, no por argumento.
-      invokerMessageIds,
-    };
-    // El origen se toma AHORA, dentro del request: si un deploy mata el turno, el barrido
-    // que lo retoma corre sin request y no tendría de dónde sacarlo.
-    const { reqOrigin } = await import("../origin.server");
-    const origenDelTurno = await reqOrigin().catch(() => "");
-    // Uso Limitado del destino: la autoridad del turno para el servidor MCP (igual que el claim `lu`).
-    const luDelTurno = await import("./limited-use.server").then((m) => m.destLimitedUse(destDelTurno, agent)).catch(() => false);
-    const register = (mid: number) => {
-      if (registeredId === mid) return;
-      registeredId = mid;
-      // El contexto viaja CON el turno: así el evento `turn` basta para pintar la barra y el
-      // cliente no tiene que preguntar por el mensaje y su padre cada pocos segundos.
-      turns.registerTurn({
-        ns, messageId: mid, groupId, invokerSub: poster?.sub ?? null, controller, announce,
-        channelId: channel.id, parentId: data.parentId ?? null,
-        // La AUTORIDAD del turno: contra esto resuelve el servidor MCP a nombre de quién
-        // ejerce las tools un agente de fuera. Es el mismo `dest` que se firma en el
-        // tool-token, ni más ni menos. Ver `inflightAuthority`.
-        dest: destDelTurno,
-        scope: agent?.backend.kind === "acp" ? agent.backend.scope : undefined,
-        publicChannel: false,
-        lu: luDelTurno,
-        agent: name, avatar: agent?.avatar ?? "",
-        tarea: tareaDelTurno,
-        // Con qué RETOMARLO si muere. `tarea` va recortada a 60 para nombrar la fila del
-        // panel, así que no sirve para re-disparar: hace falta el texto íntegro.
-        body: data.body, slug: channel.slug, shellId: data.shellId ?? null,
-        attachments: data.attachments ?? [],
-        handle: data.handle,
-        invokerMessageIds,
-        origin: origenDelTurno,
-      });
-    };
-    // ⚠️ Registrar ANTES de pedir el lock. Si no, un turno que espera su vuelta no aparece
-    // en "Trabajando ahora" — se vería congelado justo mientras hace cola.
-    if (data.shellId != null) register(data.shellId);
-    // El lock se toma aquí y se suelta al terminar el turno: sirve tanto para que el
-    // artefacto se lea FRESCO como para que la escritura del turno anterior ya haya
-    // aterrizado. El worker serializa igual, así que esto no añade espera real.
-    const { turnResult, currentDocId, currentDoc } = await turns.withGroupLock(
-      groupId,
-      async () => {
-    const { currentDocId, currentDoc } = await resolverArtefactoDelHilo();
-    // finally: un turno que revienta no puede quedarse registrado como vivo — tendría a
-    // los siguientes eternamente "en espera" detrás de un fantasma.
-    const turnResult = await runAgentTurn({
-      signal: controller.signal,
-      onShell: register,
-      agent,
-      handle: data.handle,
-      groupId,
-      sender: data.sender,
-      text,
-      parts,
-      currentDoc,
-      invokerSub: poster?.sub, // sus tools de conectores (per-invocador, no del owner)
-      inject: steer,
-      // STEER: con qué mensaje se inyecta; el worker avisa cuando empieza su respuesta.
-      messageRef: invokerMessageIds[0],
-      // Un mensaje inyectado ya contestado recibe su ✅ en ese momento, no al cerrar el turno.
-      onSteerAnswered: (ids) => {
-        void import("./agent-ack.server").then((m) => m.ackEnd(ns, ids, data.handle, "done"));
-      },
-      // La burbuja que el turno deja atrás al partirse por un steer: se cierra autoritativa.
-      closeBubble: async (id, body) => {
-        await db.setMessageBody(id, body);
-        bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body });
-      },
-      adoptar: data.adoptar === true,
-      prefijo: data.adoptar === true && data.shellId != null ? await prefijoDeAdopcion(data.shellId) : undefined,
-      // Destino de las tools nativas: este canal, este topic, este agente.
+  const controller = new AbortController();
+  const flusher = (await import("./body-flush.server")).makeBodyFlusher();
+  const announce = (st: import("./turns.server").TurnState) =>
+    bus.publish(bus.ch.room(ns, channel.id), { t: "turn", ...st });
+  let registeredId: number | null = null;
+  // Último paso narrado por el agente, sacado del bloque ```gt-steps``` que él mismo emite.
+  const pasoDe = (await import("./body-flush.server")).stepOfBody;
+  // Cómo se LLAMA la tarea: lo que pidió la persona, recortado. Cursor nombra así cada fila
+  // de su panel ("Live stock ticker") en vez de con el nombre del agente, y es lo que hace
+  // que una lista de tres agentes se pueda leer de un vistazo.
+  const tareaDelTurno = (() => {
+    // ⚠️ Al texto del turno se le antepone el MANIFIESTO de adjuntos ("[Adjuntos del
+    // hilo…]" + la lista), así que tomarlo tal cual nombraba todas las filas
+    // "[Adjuntos d…" — inútil, y encima idéntico entre agentes. Se salta ese bloque:
+    // llega hasta la primera línea en blanco.
+    let crudo = text ?? "";
+    if (crudo.startsWith("[Adjuntos")) {
+      const corte = crudo.indexOf("\n\n");
+      crudo = corte === -1 ? "" : crudo.slice(corte + 2);
+    }
+    crudo = crudo.replace(/```[\s\S]*?```/g, " ").replace(/\s+/g, " ").trim();
+    if (!crudo) return "";
+    return crudo.length > 60 ? `${crudo.slice(0, 57)}…` : crudo;
+  })();
+  // Registrar YA si la cáscara existe (postMessage la crea eager). Registrarlo hasta el
+  // primer token dejaba sin botón ni reloj justo la ventana en la que hacen falta: la
+  // del "pensando…" antes de que llegue nada.
+  // Destino de las tools nativas: este canal, este topic, este agente. Se declara ANTES del
+  // registro del turno porque los dos lo usan — el turno para su autoridad y `runAgentTurn`
+  // para firmarlo en el tool-token. Que sean el MISMO objeto es la garantía de que el MCP
+  // no puede resolver un destino distinto del que ve el camino de siempre.
+  // El mensaje que invocó al turno, ya validado: de ESTE room y de QUIEN lo manda.
+  const invokerMessageIds = await (async (): Promise<number[]> => {
+    if (data.invokerMessageId == null || !poster?.sub) return [];
+    const m = await db.getMessage(data.invokerMessageId).catch(() => null);
+    if (!m || m.channel_id !== channel.id || m.sender_sub !== poster.sub) return [];
+    return [data.invokerMessageId];
+  })();
+  const destDelTurno = {
+    channelId: channel.id,
+    parentId: data.parentId ?? undefined,
+    topic: topic ?? "general",
+    handle: data.handle,
+    name,
+    avatar: agent?.avatar ?? "",
+    // A qué mensaje le reacciona `chat_react` por defecto: al que lo invocó. Va firmado
+    // con el resto del destino, no por argumento.
+    invokerMessageIds,
+  };
+  // El origen se toma AHORA, dentro del request: si un deploy mata el turno, el barrido
+  // que lo retoma corre sin request y no tendría de dónde sacarlo.
+  const { reqOrigin } = await import("../origin.server");
+  const origenDelTurno = await reqOrigin().catch(() => "");
+  // Uso Limitado del destino: la autoridad del turno para el servidor MCP (igual que el claim `lu`).
+  const luDelTurno = await import("./limited-use.server").then((m) => m.destLimitedUse(destDelTurno, agent)).catch(() => false);
+  const register = (mid: number) => {
+    if (registeredId === mid) return;
+    registeredId = mid;
+    // El contexto viaja CON el turno: así el evento `turn` basta para pintar la barra y el
+    // cliente no tiene que preguntar por el mensaje y su padre cada pocos segundos.
+    turns.registerTurn({
+      ns, messageId: mid, groupId, invokerSub: poster?.sub ?? null, controller, announce,
+      channelId: channel.id, parentId: data.parentId ?? null,
+      // La AUTORIDAD del turno: contra esto resuelve el servidor MCP a nombre de quién
+      // ejerce las tools un agente de fuera. Es el mismo `dest` que se firma en el
+      // tool-token, ni más ni menos. Ver `inflightAuthority`.
       dest: destDelTurno,
-      createShell: async () => {
-        // Caja caliente: la cáscara ya fue creada EAGER por postMessage → reutiliza su id
-        // (cero borrar/recrear, cero parpadeo). Fallback (cliente sin shellId): créala aquí.
-        if (data.shellId != null) return data.shellId;
-        const { id } = await db.postAgent(channel.id, data.parentId, "", "msg", data.handle, name, topic ?? "general", agent?.avatar ?? "");
-        const shell = await db.getMessage(id);
-        if (shell) bus.publish(bus.ch.room(ns, channel.id), { t: "message:new", msg: shell });
-        return id;
-      },
-      // La respuesta aparte de un turno con plan: MISMO hilo y topic que la burbuja del
-      // turno (la cáscara eager puede haber nacido con un parent distinto a `data.parentId`).
-      onToolNames: (names) => {
-        if (registeredId != null) turns.setTurnTools(ns, registeredId, names);
-      },
-      createFollowUp: async (shellId) => {
-        const shell = await db.getMessage(shellId);
-        const { id } = await db.postAgent(channel.id, shell?.parent_id ?? data.parentId, "", "msg", data.handle, name, shell?.topic ?? topic ?? "general", agent?.avatar ?? "");
-        const msg = await db.getMessage(id);
-        if (msg) bus.publish(bus.ch.room(ns, channel.id), { t: "message:new", msg });
-        return id;
-      },
-      emitDelta: (mid, chunk) =>
-        bus.publish(bus.ch.room(ns, channel.id), { t: "message:delta", id: mid, chunk, channelId: channel.id, parentId: data.parentId }),
-      // Checklist incremental: reemplaza el body con la lista re-pintada (previas ✓, actual ⚡).
-      // Además PERSISTE con throttle: sin esto, un refresh a media respuesta deja una cáscara
-      // muda aunque el worker siga trabajando (el bus no tiene buffer).
-      emitBody: (mid, body) => {
-        bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id: mid, body });
-        flusher.offer(mid, body);
-        // El PASO en curso viaja con el estado del turno. Antes el cliente lo sacaba del
-        // cuerpo preguntando cada pocos segundos; aquí ya lo tenemos delante y es gratis.
-        const p = pasoDe(body);
-        if (p) turns.setTurnStep(ns, mid, p);
-      },
-    }).catch((e) => {
-      // ⚠️ Si el turno REVIENTA, nadie emitía el cierre: la burbuja se quedaba con el anillo
-      // girando, el botón Detener no hacía nada (el body ya no está vacío) y al minuto el
-      // reconcile lo clasificaba como "terminó ✓" — un fallo anunciado como entrega.
-      if (registeredId != null) {
-        bus.publish(bus.ch.room(ns, channel.id), {
-          t: "turn", id: registeredId, state: "stopped", position: 1, startedAt: Date.now(),
-        });
-      }
-      // El acuse se cierra AQUÍ para el camino que revienta: este `throw` sale de `askAgent`
-      // y el `finally` de más abajo —el que cierra los otros dos desenlaces— no llega a
-      // correr. Sin esto, un turno que falla deja el 👀 puesto para siempre.
-      void import("./agent-ack.server").then((m) =>
-        m.ackEnd(ns, invokerMessageIds, data.handle, "error"),
-      );
-      throw e;
-    }).finally(async () => {
-      if (registeredId != null) {
-        // Lo último pintado queda en DB pase lo que pase: si el proceso muere aquí, el
-        // mensaje conserva lo que el usuario ya había visto en vez de volver a la cáscara.
-        await flusher.flush(registeredId);
-        flusher.done(registeredId);
-        turns.finishTurn(ns, registeredId);
-      }
+      scope: agent?.backend.kind === "acp" ? agent.backend.scope : undefined,
+      publicChannel: false,
+      lu: luDelTurno,
+      agent: name, avatar: agent?.avatar ?? "",
+      tarea: tareaDelTurno,
+      // Con qué RETOMARLO si muere. `tarea` va recortada a 60 para nombrar la fila del
+      // panel, así que no sirve para re-disparar: hace falta el texto íntegro.
+      body: data.body, slug: channel.slug, shellId: data.shellId ?? null,
+      attachments: data.attachments ?? [],
+      handle: data.handle,
+      invokerMessageIds,
+      origin: origenDelTurno,
     });
-    return { turnResult, currentDocId, currentDoc };
-      },
-      // Quién ejecuta, para que el servidor MCP pueda resolver su autoridad mientras dure.
-      { ns, getId: () => registeredId, sinEspera: steer },
-    ); // ← withGroupLock
+  };
+  // ⚠️ Registrar ANTES de pedir el lock. Si no, un turno que espera su vuelta no aparece
+  // en "Trabajando ahora" — se vería congelado justo mientras hace cola.
+  if (data.shellId != null) register(data.shellId);
+  // El lock se toma aquí y se suelta al terminar el turno: sirve tanto para que el
+  // artefacto se lea FRESCO como para que la escritura del turno anterior ya haya
+  // aterrizado. El worker serializa igual, así que esto no añade espera real.
+  const { turnResult, currentDocId, currentDoc } = await turns.withGroupLock(
+    groupId,
+    async () => {
+  const { currentDocId, currentDoc } = await resolverArtefactoDelHilo();
+  // finally: un turno que revienta no puede quedarse registrado como vivo — tendría a
+  // los siguientes eternamente "en espera" detrás de un fantasma.
+  const turnResult = await runAgentTurn({
+    signal: controller.signal,
+    onShell: register,
+    agent,
+    handle: data.handle,
+    groupId,
+    sender: data.sender,
+    text,
+    parts,
+    currentDoc,
+    invokerSub: poster?.sub, // sus tools de conectores (per-invocador, no del owner)
+    inject: steer,
+    // STEER: con qué mensaje se inyecta; el worker avisa cuando empieza su respuesta.
+    messageRef: invokerMessageIds[0],
+    // Un mensaje inyectado ya contestado recibe su ✅ en ese momento, no al cerrar el turno.
+    onSteerAnswered: (ids) => {
+      void import("./agent-ack.server").then((m) => m.ackEnd(ns, ids, data.handle, "done"));
+    },
+    // La burbuja que el turno deja atrás al partirse por un steer: se cierra autoritativa.
+    closeBubble: async (id, body) => {
+      await db.setMessageBody(id, body);
+      bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body });
+    },
+    adoptar: data.adoptar === true,
+    prefijo: data.adoptar === true && data.shellId != null ? await prefijoDeAdopcion(data.shellId) : undefined,
+    // Destino de las tools nativas: este canal, este topic, este agente.
+    dest: destDelTurno,
+    createShell: async () => {
+      // Caja caliente: la cáscara ya fue creada EAGER por postMessage → reutiliza su id
+      // (cero borrar/recrear, cero parpadeo). Fallback (cliente sin shellId): créala aquí.
+      if (data.shellId != null) return data.shellId;
+      const { id } = await db.postAgent(channel.id, data.parentId, "", "msg", data.handle, name, topic ?? "general", agent?.avatar ?? "");
+      const shell = await db.getMessage(id);
+      if (shell) bus.publish(bus.ch.room(ns, channel.id), { t: "message:new", msg: shell });
+      return id;
+    },
+    // La respuesta aparte de un turno con plan: MISMO hilo y topic que la burbuja del
+    // turno (la cáscara eager puede haber nacido con un parent distinto a `data.parentId`).
+    onToolNames: (names) => {
+      if (registeredId != null) turns.setTurnTools(ns, registeredId, names);
+    },
+    createFollowUp: async (shellId) => {
+      const shell = await db.getMessage(shellId);
+      const { id } = await db.postAgent(channel.id, shell?.parent_id ?? data.parentId, "", "msg", data.handle, name, shell?.topic ?? topic ?? "general", agent?.avatar ?? "");
+      const msg = await db.getMessage(id);
+      if (msg) bus.publish(bus.ch.room(ns, channel.id), { t: "message:new", msg });
+      return id;
+    },
+    emitDelta: (mid, chunk) =>
+      bus.publish(bus.ch.room(ns, channel.id), { t: "message:delta", id: mid, chunk, channelId: channel.id, parentId: data.parentId }),
+    // Checklist incremental: reemplaza el body con la lista re-pintada (previas ✓, actual ⚡).
+    // Además PERSISTE con throttle: sin esto, un refresh a media respuesta deja una cáscara
+    // muda aunque el worker siga trabajando (el bus no tiene buffer).
+    emitBody: (mid, body) => {
+      bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id: mid, body });
+      flusher.offer(mid, body);
+      // El PASO en curso viaja con el estado del turno. Antes el cliente lo sacaba del
+      // cuerpo preguntando cada pocos segundos; aquí ya lo tenemos delante y es gratis.
+      const p = pasoDe(body);
+      if (p) turns.setTurnStep(ns, mid, p);
+    },
+  }).catch((e) => {
+    // ⚠️ Si el turno REVIENTA, nadie emitía el cierre: la burbuja se quedaba con el anillo
+    // girando, el botón Detener no hacía nada (el body ya no está vacío) y al minuto el
+    // reconcile lo clasificaba como "terminó ✓" — un fallo anunciado como entrega.
+    if (registeredId != null) {
+      bus.publish(bus.ch.room(ns, channel.id), {
+        t: "turn", id: registeredId, state: "stopped", position: 1, startedAt: Date.now(),
+      });
+    }
+    // El acuse se cierra AQUÍ para el camino que revienta: este `throw` sale de `askAgent`
+    // y el `finally` de más abajo —el que cierra los otros dos desenlaces— no llega a
+    // correr. Sin esto, un turno que falla deja el 👀 puesto para siempre.
+    void import("./agent-ack.server").then((m) =>
+      m.ackEnd(ns, invokerMessageIds, data.handle, "error"),
+    );
+    throw e;
+  }).finally(async () => {
+    if (registeredId != null) {
+      // Lo último pintado queda en DB pase lo que pase: si el proceso muere aquí, el
+      // mensaje conserva lo que el usuario ya había visto en vez de volver a la cáscara.
+      await flusher.flush(registeredId);
+      flusher.done(registeredId);
+      turns.finishTurn(ns, registeredId);
+    }
+  });
+  return { turnResult, currentDocId, currentDoc };
+    },
+    // Quién ejecuta, para que el servidor MCP pueda resolver su autoridad mientras dure.
+    { ns, getId: () => registeredId, sinEspera: steer },
+  ); // ← withGroupLock
 
-    // Persiste el body final (autoritativo, sin marcar "editado") y reconcilia por si
-    // se perdió algún delta (el bus es best-effort). NUNCA persistas un body VACÍO:
-    // deepseek/ghosty-gc a veces cierra el turno en blanco → se guardaba "" en la DB y
-    // el mensaje quedaba vacío (y reaparecía vacío al refetch, borrando lo streameado).
-    const { id, reply: replyDelTurno } = turnResult;
-    // Turno con plan: su burbuja quedó como plan vivo y la respuesta salió aparte (`id`).
-    // Se cierra aquí, autoritativa: el flush del `finally` la dejó con streaming = 1.
-    if (turnResult.plan) {
-      await db.setMessageBody(turnResult.plan.id, turnResult.plan.body);
-      bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id: turnResult.plan.id, body: turnResult.plan.body });
+  // Persiste el body final (autoritativo, sin marcar "editado") y reconcilia por si
+  // se perdió algún delta (el bus es best-effort). NUNCA persistas un body VACÍO:
+  // deepseek/ghosty-gc a veces cierra el turno en blanco → se guardaba "" en la DB y
+  // el mensaje quedaba vacío (y reaparecía vacío al refetch, borrando lo streameado).
+  const { id, reply: replyDelTurno } = turnResult;
+  // Turno con plan: su burbuja quedó como plan vivo y la respuesta salió aparte (`id`).
+  // Se cierra aquí, autoritativa: el flush del `finally` la dejó con streaming = 1.
+  if (turnResult.plan) {
+    await db.setMessageBody(turnResult.plan.id, turnResult.plan.body);
+    bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id: turnResult.plan.id, body: turnResult.plan.body });
+  }
+  // El turno MURIÓ por transporte (`terminated`, 502, la caja caída). El aviso ya está en
+  // la burbuja, pero además hay que decirlo en `gt_turns`: sin esto se cierra en `done` y
+  // el medidor lo cobra como una entrega — 4 turnos de descti se pagaron así en agosto.
+  if (turnResult.failure) {
+    turns.setTurnOutcome(ns, id, `error: ${turnResult.failure}`);
+    // Las tools se persisten SÓLO aquí: una escritura, y justo cuando hacen falta. Si el
+    // proceso muere de golpe (deploy) no llegan, y esa ausencia se lee como DESCONOCIDO,
+    // no como "ninguna" — ver `turnoMuerto`, que falla cerrado.
+    turns.setTurnTools(ns, id, turnResult.toolsCorridas ?? []);
+  }
+  // El mensaje entró a un turno vivo: acá no hay nada que escribir. La cáscara que
+  // postMessage creó eager se borra, o quedarían dos burbujas para una sola respuesta.
+  if (replyDelTurno === INJECTED) {
+    // Steer: la cáscara se borra, así que su fila de la barra también tiene que irse —
+    // este camino no pasa por el bloque de artefactos y no emitiría "done" nunca.
+    if (registeredId != null) {
+      bus.publish(bus.ch.room(ns, channel.id), {
+        t: "turn", id: registeredId, state: "stopped", position: 1, startedAt: Date.now(),
+      });
     }
-    // El turno MURIÓ por transporte (`terminated`, 502, la caja caída). El aviso ya está en
-    // la burbuja, pero además hay que decirlo en `gt_turns`: sin esto se cierra en `done` y
-    // el medidor lo cobra como una entrega — 4 turnos de descti se pagaron así en agosto.
-    if (turnResult.failure) {
-      turns.setTurnOutcome(ns, id, `error: ${turnResult.failure}`);
-      // Las tools se persisten SÓLO aquí: una escritura, y justo cuando hacen falta. Si el
-      // proceso muere de golpe (deploy) no llegan, y esa ausencia se lee como DESCONOCIDO,
-      // no como "ninguna" — ver `turnoMuerto`, que falla cerrado.
-      turns.setTurnTools(ns, id, turnResult.toolsCorridas ?? []);
+    // La cáscara puede ser la eager del cliente o una que `ensure()` creó lazy (un tool
+    // event antes del `injected`): `registeredId` cubre las dos.
+    const huerfana = data.shellId ?? registeredId;
+    // Adjuntos que no entraron a la caja: la cáscara no se borra, se queda con el aviso.
+    const failedAttachments = turnResult.attachmentsFailed ?? [];
+    if (huerfana != null && failedAttachments.length) {
+      const notice = failedAttachments.map((f) => `⚠️ No me llegó «${f.name}»${f.reason ? ` (${f.reason})` : ""}. Vuelve a adjuntarlo.`).join("\n");
+      await db.setMessageBody(huerfana, notice);
+      bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id: huerfana, body: notice });
+    } else if (huerfana != null) {
+      await db.deleteMessage(huerfana).catch(() => {});
+      bus.publish(bus.ch.room(ns, channel.id), { t: "message:deleted", id: huerfana, channelId: channel.id, parentId: data.parentId ?? null });
     }
-    // El mensaje entró a un turno vivo: acá no hay nada que escribir. La cáscara que
-    // postMessage creó eager se borra, o quedarían dos burbujas para una sola respuesta.
-    if (replyDelTurno === INJECTED) {
-      // Steer: la cáscara se borra, así que su fila de la barra también tiene que irse —
-      // este camino no pasa por el bloque de artefactos y no emitiría "done" nunca.
-      if (registeredId != null) {
-        bus.publish(bus.ch.room(ns, channel.id), {
-          t: "turn", id: registeredId, state: "stopped", position: 1, startedAt: Date.now(),
+    // Este mensaje no abre turno propio: se metió en el que ya corría. Su 👀 ya está
+    // puesto, así que hay que colgárselo a ESE turno o nadie se lo quitará al cerrar.
+    for (const mid of invokerMessageIds) turns.addInvokerMessage(groupId, poster?.sub, mid);
+    return { ok: true, steered: true };
+  }
+
+  // Menciones que escribió el AGENTE. Hasta ahora `notifyMentions` sólo se llamaba en el
+  // camino del mensaje humano, así que un "@ana revisa esto" del agente se pintaba en el
+  // chat y a Ana no le llegaba nada: el turno cerraba en verde y el agente creía que
+  // había avisado.
+  //
+  // Se hace ANTES del primer setMessageBody, y sobre `reply`, a propósito. Más abajo hay
+  // ~6 reescrituras del body en bloques best-effort, todas derivadas de `reply` y todas
+  // quitando fences: un aviso pegado después se lo comería la siguiente. Metido aquí,
+  // viaja con el texto y sobrevive a todas.
+  const mencionesAgente = await notificarMencionesDelAgente(ns, channel, replyDelTurno, name).catch(() => "");
+  // Relevo: un @agente en la respuesta lo despierta en este hilo (con tope por hilo).
+  // Un turno muerto no releva: su texto es trabajo a medias, no un encargo.
+  const relevo = turnResult.failure
+    ? ""
+    : await import("./agent-handoff.server")
+        .then((h) => h.handoffFromReply({
+          ns, channel, parentId: data.parentId ?? null, topic: topic ?? "general",
+          fromHandle: data.handle, fromName: name, reply: replyDelTurno,
+          invokerSub: poster?.sub ?? "", origin: origenDelTurno,
+        }))
+        .catch(() => "");
+  let reply = [replyDelTurno, mencionesAgente, relevo].filter(Boolean).join("\n\n").trim();
+
+  const finalBody = reply.trim() ? reply : "(sin respuesta)";
+  await db.setMessageBody(id, finalBody);
+  bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: finalBody });
+
+  // Si el reply referencia un documento EasyBits, lo volvemos ARTEFACTO: minteamos
+  // el editor colab embebible y lo colgamos del mensaje → aparece como card que
+  // abre el panel del room. Best-effort: si algo falla, el mensaje queda normal.
+  // (Slice 3 del contrato: reemplazar este scraping por eventos artifact del SSE.)
+  try {
+    // Un turno MUERTO por transporte no commitea nada: lo que hay es trabajo a medias más
+    // el aviso. Las ~6 reescrituras de abajo derivan el body de `reply` quitando fences, y
+    // una de ellas puede dejarlo en "" — que es justo cómo quedó la burbuja de descti el
+    // 11-sep, sin aviso ni botón «Retomar». El `finally` sigue corriendo (acuse y fin de turno).
+    if (turnResult.failure) return { ok: true as const };
+    const { detectArtifact, mintCollabEmbed, resolveFileKind } = await import("./easybits-documents.server");
+    const { extractEbDoc, extractEbPatches, isSameDocument, draftTitle, bubbleWithoutEbDoc, extractAskUser, stripAskUser, extractAllEbAudio, stripEbAudio, extractAllEbFile, stripEbFile } = await import("../lib/ebdoc");
+    const { randomUUID } = await import("node:crypto");
+
+    // Nota de voz: el agente emitió ```eb-audio``` (voice.mjs sintetizó + publicó el
+    // ogg). Re-subimos el audio a nuestro storage y lo colgamos como adjunto → burbuja
+    // de nota de voz con onda. Best-effort: si el fetch/upload falla, queda el texto.
+    // ⚠️ TODOS los bloques, y los dos tipos en la MISMA pasada. Antes se tomaba sólo el
+    // primer audio y se hacía `return` — un turno con dos notas de voz publicaba una y
+    // dejaba la otra CRUDA en el chat (el fence sobrevivía en el body y Markdown lo
+    // pintaba como bloque de código con la URL firmada del .ogg). Y como el bloque de
+    // archivos venía después de ese `return`, un turno con audio + PDF perdía el PDF.
+    const ebAudios = extractAllEbAudio(reply);
+    const ebFiles = extractAllEbFile(reply);
+    if (ebAudios.length || ebFiles.length) {
+      const cleaned = stripEbFile(stripEbAudio(reply));
+      await db.setMessageBody(id, cleaned);
+      bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: cleaned });
+      const { attachPublished, safeFileName } = await import("./published-attach.server");
+      const { sintetizar } = await import("./tts-fence.server");
+      let algo = false;
+      // En serie y no en paralelo: el orden de los adjuntos es el orden en que el agente
+      // los emitió, y es el que el usuario leyó en la prosa ("primero el encabezado…").
+      for (const a of ebAudios) {
+        // Sin `url` el agente sólo puso el TEXTO y lo sintetiza la plataforma. Es la única
+        // vía para un agente ACP de fuera, que no tiene ninguna tool nuestra.
+        const hecho = a.url ? null : await sintetizar(a);
+        if (!a.url && !hecho) continue; // el TTS falló; ya se dijo en el log
+        const ok = await attachPublished(id, {
+          url: a.url,
+          bytes: hecho?.bytes,
+          name: "Nota de voz",
+          // La extensión sale del mime: desde el 2026-09-21 `url` del eb-audio es mp3 (el ogg va en `ogg`).
+          fileName: hecho || /mpeg|mp3/.test(a.mime ?? "") ? "voz.mp3" : "voz.ogg",
+          mime: hecho?.contentType || a.mime || "audio/ogg",
+          waveform: a.waveform,
+          durationMs: hecho?.durMs ?? a.durationMs,
         });
+        algo ||= ok;
       }
-      // La cáscara puede ser la eager del cliente o una que `ensure()` creó lazy (un tool
-      // event antes del `injected`): `registeredId` cubre las dos.
-      const huerfana = data.shellId ?? registeredId;
-      // Adjuntos que no entraron a la caja: la cáscara no se borra, se queda con el aviso.
-      const failedAttachments = turnResult.attachmentsFailed ?? [];
-      if (huerfana != null && failedAttachments.length) {
-        const notice = failedAttachments.map((f) => `⚠️ No me llegó «${f.name}»${f.reason ? ` (${f.reason})` : ""}. Vuelve a adjuntarlo.`).join("\n");
-        await db.setMessageBody(huerfana, notice);
-        bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id: huerfana, body: notice });
-      } else if (huerfana != null) {
-        await db.deleteMessage(huerfana).catch(() => {});
-        bus.publish(bus.ch.room(ns, channel.id), { t: "message:deleted", id: huerfana, channelId: channel.id, parentId: data.parentId ?? null });
+      for (const f of ebFiles) {
+        const ok = await attachPublished(id, {
+          url: f.url,
+          name: f.name || "Archivo",
+          fileName: safeFileName(f.name, "archivo"),
+          mime: f.mime || "application/octet-stream",
+          thumbUrl: f.thumb,
+        });
+        algo ||= ok;
       }
-      // Este mensaje no abre turno propio: se metió en el que ya corría. Su 👀 ya está
-      // puesto, así que hay que colgárselo a ESE turno o nadie se lo quitará al cerrar.
-      for (const mid of invokerMessageIds) turns.addInvokerMessage(groupId, poster?.sub, mid);
-      return { ok: true, steered: true };
+      // Sella la ÚLTIMA ENTREGA del hilo. Sin esto el puntero de artefacto queda como la
+      // única noción de "el documento de esta conversación", y un archivo no lo mueve: el
+      // turno siguiente creía que lo último entregado era el artefacto HTML anterior y
+      // parcheaba ése (medido el 2026-08-08 con un PDF y una landing de 10 min antes).
+      if (ebFiles.length) {
+        const ultimo = ebFiles[ebFiles.length - 1];
+        await db
+          .setThreadDelivery(channel.id, data.parentId, {
+            name: ultimo.name || "Archivo",
+            mime: ultimo.mime ?? null,
+          })
+          .catch(() => {});
+      }
+      if (algo) bus.publish(bus.ch.room(ns, channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId });
+      return { ok: true as const };
     }
 
-    // Menciones que escribió el AGENTE. Hasta ahora `notifyMentions` sólo se llamaba en el
-    // camino del mensaje humano, así que un "@ana revisa esto" del agente se pintaba en el
-    // chat y a Ana no le llegaba nada: el turno cerraba en verde y el agente creía que
-    // había avisado.
-    //
-    // Se hace ANTES del primer setMessageBody, y sobre `reply`, a propósito. Más abajo hay
-    // ~6 reescrituras del body en bloques best-effort, todas derivadas de `reply` y todas
-    // quitando fences: un aviso pegado después se lo comería la siguiente. Metido aquí,
-    // viaja con el texto y sobrevive a todas.
-    const mencionesAgente = await notificarMencionesDelAgente(ns, channel, replyDelTurno, name).catch(() => "");
-    // Relevo: un @agente en la respuesta lo despierta en este hilo (con tope por hilo).
-    // Un turno muerto no releva: su texto es trabajo a medias, no un encargo.
-    const relevo = turnResult.failure
-      ? ""
-      : await import("./agent-handoff.server")
-          .then((h) => h.handoffFromReply({
-            ns, channel, parentId: data.parentId ?? null, topic: topic ?? "general",
-            fromHandle: data.handle, fromName: name, reply: replyDelTurno,
-            invokerSub: poster?.sub ?? "", origin: origenDelTurno,
-          }))
-          .catch(() => "");
-    let reply = [replyDelTurno, mencionesAgente, relevo].filter(Boolean).join("\n\n").trim();
-
-    const finalBody = reply.trim() ? reply : "(sin respuesta)";
-    await db.setMessageBody(id, finalBody);
-    bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: finalBody });
-
-    // Si el reply referencia un documento EasyBits, lo volvemos ARTEFACTO: minteamos
-    // el editor colab embebible y lo colgamos del mensaje → aparece como card que
-    // abre el panel del room. Best-effort: si algo falla, el mensaje queda normal.
-    // (Slice 3 del contrato: reemplazar este scraping por eventos artifact del SSE.)
-    try {
-      // Un turno MUERTO por transporte no commitea nada: lo que hay es trabajo a medias más
-      // el aviso. Las ~6 reescrituras de abajo derivan el body de `reply` quitando fences, y
-      // una de ellas puede dejarlo en "" — que es justo cómo quedó la burbuja de descti el
-      // 11-sep, sin aviso ni botón «Retomar». El `finally` sigue corriendo (acuse y fin de turno).
-      if (turnResult.failure) return { ok: true as const };
-      const { detectArtifact, mintCollabEmbed, resolveFileKind } = await import("./easybits-documents.server");
-      const { extractEbDoc, extractEbPatches, isSameDocument, draftTitle, bubbleWithoutEbDoc, extractAskUser, stripAskUser, extractAllEbAudio, stripEbAudio, extractAllEbFile, stripEbFile } = await import("../lib/ebdoc");
-      const { randomUUID } = await import("node:crypto");
-
-      // Nota de voz: el agente emitió ```eb-audio``` (voice.mjs sintetizó + publicó el
-      // ogg). Re-subimos el audio a nuestro storage y lo colgamos como adjunto → burbuja
-      // de nota de voz con onda. Best-effort: si el fetch/upload falla, queda el texto.
-      // ⚠️ TODOS los bloques, y los dos tipos en la MISMA pasada. Antes se tomaba sólo el
-      // primer audio y se hacía `return` — un turno con dos notas de voz publicaba una y
-      // dejaba la otra CRUDA en el chat (el fence sobrevivía en el body y Markdown lo
-      // pintaba como bloque de código con la URL firmada del .ogg). Y como el bloque de
-      // archivos venía después de ese `return`, un turno con audio + PDF perdía el PDF.
-      const ebAudios = extractAllEbAudio(reply);
-      const ebFiles = extractAllEbFile(reply);
-      if (ebAudios.length || ebFiles.length) {
-        const cleaned = stripEbFile(stripEbAudio(reply));
-        await db.setMessageBody(id, cleaned);
-        bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: cleaned });
-        const { attachPublished, safeFileName } = await import("./published-attach.server");
-        const { sintetizar } = await import("./tts-fence.server");
-        let algo = false;
-        // En serie y no en paralelo: el orden de los adjuntos es el orden en que el agente
-        // los emitió, y es el que el usuario leyó en la prosa ("primero el encabezado…").
-        for (const a of ebAudios) {
-          // Sin `url` el agente sólo puso el TEXTO y lo sintetiza la plataforma. Es la única
-          // vía para un agente ACP de fuera, que no tiene ninguna tool nuestra.
-          const hecho = a.url ? null : await sintetizar(a);
-          if (!a.url && !hecho) continue; // el TTS falló; ya se dijo en el log
-          const ok = await attachPublished(id, {
-            url: a.url,
-            bytes: hecho?.bytes,
-            name: "Nota de voz",
-            // La extensión sale del mime: desde el 2026-09-21 `url` del eb-audio es mp3 (el ogg va en `ogg`).
-            fileName: hecho || /mpeg|mp3/.test(a.mime ?? "") ? "voz.mp3" : "voz.ogg",
-            mime: hecho?.contentType || a.mime || "audio/ogg",
-            waveform: a.waveform,
-            durationMs: hecho?.durMs ?? a.durationMs,
-          });
-          algo ||= ok;
-        }
-        for (const f of ebFiles) {
-          const ok = await attachPublished(id, {
-            url: f.url,
-            name: f.name || "Archivo",
-            fileName: safeFileName(f.name, "archivo"),
-            mime: f.mime || "application/octet-stream",
-            thumbUrl: f.thumb,
-          });
-          algo ||= ok;
-        }
-        // Sella la ÚLTIMA ENTREGA del hilo. Sin esto el puntero de artefacto queda como la
-        // única noción de "el documento de esta conversación", y un archivo no lo mueve: el
-        // turno siguiente creía que lo último entregado era el artefacto HTML anterior y
-        // parcheaba ése (medido el 2026-08-08 con un PDF y una landing de 10 min antes).
-        if (ebFiles.length) {
-          const ultimo = ebFiles[ebFiles.length - 1];
-          await db
-            .setThreadDelivery(channel.id, data.parentId, {
-              name: ultimo.name || "Archivo",
-              mime: ultimo.mime ?? null,
-            })
-            .catch(() => {});
-        }
-        if (algo) bus.publish(bus.ch.room(ns, channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId });
-        return { ok: true as const };
-      }
-
-      // Artefacto vivo con identidad + versiones: el agente generó/re-generó un doc de prosa
-      // (```eb-doc```, markdown) o una hoja (```eb-sheet```, csv), streameado EN VIVO al panel
-      // (igual al crear que al editar). Al cerrarse lo commiteamos LOCAL: el contenido es la
-      // verdad (columna gc_artifacts.md). El documentId se conserva si el hilo ya tenía uno
-      // (misma identidad = nueva versión) o se acuña uno nuevo (v1). Sin EasyBits: el panel
-      // renderiza el contenido local y el próximo "modifícalo" re-inyecta esta versión.
-      // EDICIÓN QUIRÚRGICA: el turno trae uno o más ```eb-patch``` en vez del artefacto
-      // entero. Se aplican por DOM sobre la versión actual (el resto del documento —
-      // scripts, estilos, estructura — sobrevive intacto) y se publica una versión nueva.
-      // Fallo VISIBLE por diseño: lo que no aplica se loguea con su nodeId y su motivo, y
-      // si NO aplica nada no se crea versión (el artefacto anterior sigue en pie) — una
-      // capa de contención muda escondería que el modo patch está roto.
-      const docsV2 = await (await import("./docs-v2.server")).docsV2On();
-      // Observaciones ancladas (```eb-comment```): la revisión va AL documento, no al chat.
-      // Se arman aquí y se publican abajo como versión de ESTE mensaje (con o sin parche).
-      let notas: import("../lib/doc-comments").DocComment[] | undefined;
-      if (docsV2 && currentDoc?.kind === "doc" && currentDocId && reply.includes("```eb-comment")) {
-        const { parseDocEnvelope } = await import("../lib/doc-blocks");
-        const envNotas = parseDocEnvelope(currentDoc.md);
-        if (envNotas) {
-          const { buildAgentComments } = await import("./artifacts");
-          const { stripDocComments } = await import("../lib/doc-comments");
-          const r = await buildAgentComments({ env: envNotas, reply, by: data.handle });
-          console.log(`[gt-comment] doc=${currentDocId} observaciones=${r.n} sin_bloque=${r.missing.length}`);
-          if (r.n) {
-            notas = r.comments;
-            reply =
-              stripDocComments(reply) +
-              `\n\n*Dejé ${r.n === 1 ? "1 observación" : `${r.n} observaciones`} en el documento, cada una en su párrafo.*`;
-            await db.setMessageBody(id, reply);
-            bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: reply });
-            // Sin parche en el turno: las notas salen solas como versión de este mensaje (el
-            // texto no cambia). Con parche, van en la versión del parche (más abajo).
-            if (!extractEbPatches(reply).length) {
-              const { publishArtifactVersion } = await import("./artifacts");
-              await publishArtifactVersion({
-                messageId: id,
-                documentId: currentDocId,
-                kind: "doc",
-                title: (await db.docTitle(currentDocId).catch(() => null)) ?? "Documento",
-                md: "",
-                blocks: envNotas.blocks,
-                humanEdited: envNotas.humanEdited,
-                comments: notas,
-                previo: envNotas,
-            ownerSub: poster?.sub ?? null,
-            setPointer: (docId) => db.setThreadArtifact(channel.id, data.parentId, docId),
-            notify: () =>
-              bus.publish(bus.ch.room(ns, channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId }),
-              });
-            }
-          }
-        }
-      }
-      const patches = extractEbPatches(reply);
-
-      // DOCUMENTO parcheado por BLOQUES. Mismo protocolo (```eb-patch``` por dirección) y
-      // misma disciplina que el artefacto HTML, pero se aplica por splice sobre el árbol
-      // de bloques: el full-HTML de BlockNote repite el mismo data-id en dos divs
-      // anidados, así que el camino por DOM (applyPatches/stampIds) lo corrompería.
-      if (patches.length && patches.every((p) => p.closed) && currentDoc?.kind === "doc" && currentDocId) {
-        const { parseDocEnvelope } = await import("../lib/doc-blocks");
-        const env = parseDocEnvelope(currentDoc.md);
-        if (env) {
-          const { applyPatchesGuarded, mergeSuggestions } = await import("../lib/doc-suggest");
-          const { mdToBlocks, blocksToMd } = await import("./doc-blocks.server");
-          const t0 = performance.now();
-          // Lo que tocó una persona no se reescribe en silencio: queda como sugerencia.
-          const res = await applyPatchesGuarded(env.blocks, patches, docsV2 ? env.humanIds : [], { parse: mdToBlocks });
-          console.log(
-            `[gt-patch] doc msg=${id} pedidos=${patches.length} aplicados=${res.applied.length} ` +
-              `fallidos=${res.failed.length} sugeridos=${res.suggestions.length} ${Math.round(performance.now() - t0)}ms` +
-              (res.failed.length ? ` → ${res.failed.map((f) => `${f.ref}:${f.reason}`).join(",")}` : "")
-          );
-          const cleaned = bubbleWithoutEbDoc(reply, {
-            applied: res.applied.length,
-            failed: res.failed.map((f) => `${f.ref}: ${f.reason}`),
-          }, { keepStatus: true }) +
-            (res.suggestions.length
-              ? `\n\n*${res.suggestions.length === 1 ? "1 cambio quedó" : `${res.suggestions.length} cambios quedaron`} como sugerencia porque toca${res.suggestions.length === 1 ? "" : "n"} lo que editaste a mano: acéptalo o recházalo en el documento.*`
-              : "");
-          await db.setMessageBody(id, cleaned);
-          bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: cleaned });
-          if (res.applied.length) {
-            // El `sourceMd` del agente ya no describe el documento tras el patch, así que
-            // se re-deriva de los bloques: es el único momento en que se paga ese salto.
-            const nuevoMd = await blocksToMd(res.blocks).catch(() => env.sourceMd ?? "");
+    // Artefacto vivo con identidad + versiones: el agente generó/re-generó un doc de prosa
+    // (```eb-doc```, markdown) o una hoja (```eb-sheet```, csv), streameado EN VIVO al panel
+    // (igual al crear que al editar). Al cerrarse lo commiteamos LOCAL: el contenido es la
+    // verdad (columna gc_artifacts.md). El documentId se conserva si el hilo ya tenía uno
+    // (misma identidad = nueva versión) o se acuña uno nuevo (v1). Sin EasyBits: el panel
+    // renderiza el contenido local y el próximo "modifícalo" re-inyecta esta versión.
+    // EDICIÓN QUIRÚRGICA: el turno trae uno o más ```eb-patch``` en vez del artefacto
+    // entero. Se aplican por DOM sobre la versión actual (el resto del documento —
+    // scripts, estilos, estructura — sobrevive intacto) y se publica una versión nueva.
+    // Fallo VISIBLE por diseño: lo que no aplica se loguea con su nodeId y su motivo, y
+    // si NO aplica nada no se crea versión (el artefacto anterior sigue en pie) — una
+    // capa de contención muda escondería que el modo patch está roto.
+    const docsV2 = await (await import("./docs-v2.server")).docsV2On();
+    // Observaciones ancladas (```eb-comment```): la revisión va AL documento, no al chat.
+    // Se arman aquí y se publican abajo como versión de ESTE mensaje (con o sin parche).
+    let notas: import("../lib/doc-comments").DocComment[] | undefined;
+    if (docsV2 && currentDoc?.kind === "doc" && currentDocId && reply.includes("```eb-comment")) {
+      const { parseDocEnvelope } = await import("../lib/doc-blocks");
+      const envNotas = parseDocEnvelope(currentDoc.md);
+      if (envNotas) {
+        const { buildAgentComments } = await import("./artifacts");
+        const { stripDocComments } = await import("../lib/doc-comments");
+        const r = await buildAgentComments({ env: envNotas, reply, by: data.handle });
+        console.log(`[gt-comment] doc=${currentDocId} observaciones=${r.n} sin_bloque=${r.missing.length}`);
+        if (r.n) {
+          notas = r.comments;
+          reply =
+            stripDocComments(reply) +
+            `\n\n*Dejé ${r.n === 1 ? "1 observación" : `${r.n} observaciones`} en el documento, cada una en su párrafo.*`;
+          await db.setMessageBody(id, reply);
+          bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: reply });
+          // Sin parche en el turno: las notas salen solas como versión de este mensaje (el
+          // texto no cambia). Con parche, van en la versión del parche (más abajo).
+          if (!extractEbPatches(reply).length) {
             const { publishArtifactVersion } = await import("./artifacts");
             await publishArtifactVersion({
               messageId: id,
               documentId: currentDocId,
               kind: "doc",
-              // El título es del DOCUMENTO: derivarlo del primer encabezado tras un parche lo
-              // renombraba a «Declaraciones» o «Portada» (visto en descti).
-              title: (await db.docTitle(currentDocId).catch(() => null)) ?? draftTitle(nuevoMd, "doc"),
-              md: nuevoMd,
-              blocks: res.blocks,
-              changedIds: res.changedIds,
-              suggestions: mergeSuggestions(env.suggestions, res.suggestions, res.blocks),
+              title: (await db.docTitle(currentDocId).catch(() => null)) ?? "Documento",
+              md: "",
+              blocks: envNotas.blocks,
+              humanEdited: envNotas.humanEdited,
               comments: notas,
-              // El sobre ya está leído aquí (`env`): un patch cambia BLOQUES, nada más, así
-              // que todo lo demás del documento —su marca— se arrastra tal cual.
-              previo: env,
-              ownerSub: poster?.sub ?? null,
-              setPointer: (docId) => db.setThreadArtifact(channel.id, data.parentId, docId),
-              notify: () =>
-                bus.publish(bus.ch.room(ns, channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId }),
+              previo: envNotas,
+          ownerSub: poster?.sub ?? null,
+          setPointer: (docId) => db.setThreadArtifact(channel.id, data.parentId, docId),
+          notify: () =>
+            bus.publish(bus.ch.room(ns, channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId }),
             });
-            return { ok: true as const };
           }
-          // Nada aplicó → el documento anterior queda intacto y el bubble ya lo dice.
-          return { ok: true as const };
         }
-        // Fila legacy (markdown, sin bloques): no hay direcciones que resolver. Cae al
-        // camino de siempre — el agente re-emite completo y ESA versión ya nace con
-        // bloques, así que el siguiente turno sí puede ser quirúrgico.
       }
+    }
+    const patches = extractEbPatches(reply);
 
-      if (patches.length && patches.every((p) => p.closed) && currentDoc?.kind === "artifact" && currentDocId) {
-        const { applyPatches } = await import("../lib/artifact-patch");
-        const { serverParseOpts } = await import("./artifact-dom.server");
+    // DOCUMENTO parcheado por BLOQUES. Mismo protocolo (```eb-patch``` por dirección) y
+    // misma disciplina que el artefacto HTML, pero se aplica por splice sobre el árbol
+    // de bloques: el full-HTML de BlockNote repite el mismo data-id en dos divs
+    // anidados, así que el camino por DOM (applyPatches/stampIds) lo corrompería.
+    if (patches.length && patches.every((p) => p.closed) && currentDoc?.kind === "doc" && currentDocId) {
+      const { parseDocEnvelope } = await import("../lib/doc-blocks");
+      const env = parseDocEnvelope(currentDoc.md);
+      if (env) {
+        const { applyPatchesGuarded, mergeSuggestions } = await import("../lib/doc-suggest");
+        const { mdToBlocks, blocksToMd } = await import("./doc-blocks.server");
         const t0 = performance.now();
-        const res = applyPatches(currentDoc.md, patches, await serverParseOpts());
+        // Lo que tocó una persona no se reescribe en silencio: queda como sugerencia.
+        const res = await applyPatchesGuarded(env.blocks, patches, docsV2 ? env.humanIds : [], { parse: mdToBlocks });
         console.log(
-          `[gt-patch] msg=${id} pedidos=${patches.length} aplicados=${res.applied.length} ` +
-            `fallidos=${res.failed.length} ${Math.round(performance.now() - t0)}ms` +
-            (res.failed.length ? ` → ${res.failed.map((f) => `${f.nodeId}:${f.reason}`).join(",")}` : "")
+          `[gt-patch] doc msg=${id} pedidos=${patches.length} aplicados=${res.applied.length} ` +
+            `fallidos=${res.failed.length} sugeridos=${res.suggestions.length} ${Math.round(performance.now() - t0)}ms` +
+            (res.failed.length ? ` → ${res.failed.map((f) => `${f.ref}:${f.reason}`).join(",")}` : "")
         );
         const cleaned = bubbleWithoutEbDoc(reply, {
           applied: res.applied.length,
-          failed: res.failed.map((f) => `${f.nodeId}: ${f.reason}`),
-        }, { keepStatus: true });
+          failed: res.failed.map((f) => `${f.ref}: ${f.reason}`),
+        }, { keepStatus: true }) +
+          (res.suggestions.length
+            ? `\n\n*${res.suggestions.length === 1 ? "1 cambio quedó" : `${res.suggestions.length} cambios quedaron`} como sugerencia porque toca${res.suggestions.length === 1 ? "" : "n"} lo que editaste a mano: acéptalo o recházalo en el documento.*`
+            : "");
         await db.setMessageBody(id, cleaned);
         bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: cleaned });
         if (res.applied.length) {
+          // El `sourceMd` del agente ya no describe el documento tras el patch, así que
+          // se re-deriva de los bloques: es el único momento en que se paga ese salto.
+          const nuevoMd = await blocksToMd(res.blocks).catch(() => env.sourceMd ?? "");
           const { publishArtifactVersion } = await import("./artifacts");
           await publishArtifactVersion({
             messageId: id,
             documentId: currentDocId,
-            kind: "artifact",
-            title: draftTitle(res.html, "artifact"),
-            md: res.html,
+            kind: "doc",
+            // El título es del DOCUMENTO: derivarlo del primer encabezado tras un parche lo
+            // renombraba a «Declaraciones» o «Portada» (visto en descti).
+            title: (await db.docTitle(currentDocId).catch(() => null)) ?? draftTitle(nuevoMd, "doc"),
+            md: nuevoMd,
+            blocks: res.blocks,
+            changedIds: res.changedIds,
+            suggestions: mergeSuggestions(env.suggestions, res.suggestions, res.blocks),
+            comments: notas,
+            // El sobre ya está leído aquí (`env`): un patch cambia BLOQUES, nada más, así
+            // que todo lo demás del documento —su marca— se arrastra tal cual.
+            previo: env,
             ownerSub: poster?.sub ?? null,
             setPointer: (docId) => db.setThreadArtifact(channel.id, data.parentId, docId),
             notify: () =>
@@ -1793,125 +1761,164 @@ export const askAgent = createServerFn({ method: "POST" })
           });
           return { ok: true as const };
         }
-        // Ningún patch aplicó → el artefacto anterior queda intacto; el bubble ya lo dice
-        // (bubbleWithoutEbDoc recibió el resultado) y el log de arriba dice por qué.
+        // Nada aplicó → el documento anterior queda intacto y el bubble ya lo dice.
         return { ok: true as const };
       }
+      // Fila legacy (markdown, sin bloques): no hay direcciones que resolver. Cae al
+      // camino de siempre — el agente re-emite completo y ESA versión ya nace con
+      // bloques, así que el siguiente turno sí puede ser quirúrgico.
+    }
 
-      const ebdoc = extractEbDoc(reply);
-      if (ebdoc?.closed && ebdoc.md.trim()) {
-        const cleaned = bubbleWithoutEbDoc(reply, undefined, { keepStatus: true });
-        await db.setMessageBody(id, cleaned);
-        bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: cleaned });
-        // ¿Versión del artefacto del hilo, o documento nuevo? Ver isSameDocument: antes
-        // se reusaba el puntero SIEMPRE, así que todo lo que se pidiera después caía
-        // como versión de lo anterior.
-        const documentId =
-          currentDocId && isSameDocument(ebdoc, currentDoc)
-            ? currentDocId
-            : `${ebdoc.kind}_${randomUUID()}`;
-        const title = draftTitle(ebdoc.md, ebdoc.kind, ebdoc.fenceTitle);
-        // Publicación por el camino ÚNICO (mismo que la edición humana del Canvas): siembra
-        // los `data-id` del artefacto (dirección para el próximo ```eb-patch```), sube el HTML
-        // a storage como enlace compartible, INSERTa la versión, apunta el hilo y refresca.
-        const { publishArtifactVersion, imageGapNotice } = await import("./artifacts");
-        const pub = await publishArtifactVersion({
+    if (patches.length && patches.every((p) => p.closed) && currentDoc?.kind === "artifact" && currentDocId) {
+      const { applyPatches } = await import("../lib/artifact-patch");
+      const { serverParseOpts } = await import("./artifact-dom.server");
+      const t0 = performance.now();
+      const res = applyPatches(currentDoc.md, patches, await serverParseOpts());
+      console.log(
+        `[gt-patch] msg=${id} pedidos=${patches.length} aplicados=${res.applied.length} ` +
+          `fallidos=${res.failed.length} ${Math.round(performance.now() - t0)}ms` +
+          (res.failed.length ? ` → ${res.failed.map((f) => `${f.nodeId}:${f.reason}`).join(",")}` : "")
+      );
+      const cleaned = bubbleWithoutEbDoc(reply, {
+        applied: res.applied.length,
+        failed: res.failed.map((f) => `${f.nodeId}: ${f.reason}`),
+      }, { keepStatus: true });
+      await db.setMessageBody(id, cleaned);
+      bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: cleaned });
+      if (res.applied.length) {
+        const { publishArtifactVersion } = await import("./artifacts");
+        await publishArtifactVersion({
           messageId: id,
-          documentId,
-          kind: ebdoc.kind, // "doc" | "sheet" | "artifact"
-          title,
-          md: ebdoc.md,
-          // `undefined` cuando el agente no dijo nada, y eso NO es "con marca": es "lo que
-          // ya dijera el documento". Re-emitir un oficio sin repetir la marca no debe
-          // devolverle el membrete que alguien pidió quitar.
-          unbranded: ebdoc.unbranded,
+          documentId: currentDocId,
+          kind: "artifact",
+          title: draftTitle(res.html, "artifact"),
+          md: res.html,
           ownerSub: poster?.sub ?? null,
           setPointer: (docId) => db.setThreadArtifact(channel.id, data.parentId, docId),
           notify: () =>
             bus.publish(bus.ch.room(ns, channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId }),
         });
-        // El hueco se sabe DESPUÉS de publicar, así que el body se reescribe aquí. Sólo
-        // cuando de verdad falló algo: en el camino normal no hay segundo write.
-        const aviso = imageGapNotice(pub.imagesFailed);
-        if (aviso) {
-          const conAviso = `${cleaned}\n\n${aviso}`.trim();
-          await db.setMessageBody(id, conAviso);
-          bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: conAviso });
-        }
         return { ok: true as const };
       }
-
-      // ask-user: pregunta con opciones clicables. Quitamos el fence del bubble y
-      // colgamos un artefacto inline; los botones los pinta el surface. La pregunta
-      // va en `title`, las opciones (JSON) en `md` (no hay columna dedicada, mismo
-      // truco que doc/sheet con `md`). Agnóstico al motor — texto puro.
-      const ask = extractAskUser(reply);
-      if (ask) {
-        const cleaned = stripAskUser(reply);
-        await db.setMessageBody(id, cleaned);
-        bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: cleaned });
-        await db.createArtifact(id, {
-          kind: "ask-user",
-          url: "",
-          title: ask.question || null,
-          md: JSON.stringify(ask.options),
-        });
-        bus.publish(bus.ch.room(ns, channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId });
-        return { ok: true as const };
-      }
-
-      const found = detectArtifact(reply);
-      if (found?.type === "doc") {
-        // Doc EasyBits → editor colaborativo embebido (co-edición en vivo).
-        const embed = await mintCollabEmbed({ slug: found.slug, documentId: found.documentId });
-        if (embed) await db.createArtifact(id, { kind: "html", url: embed.embedUrl, title: embed.title });
-        // Recuerda este doc como el artefacto ACTUAL del hilo → el próximo "modifícalo"
-        // apunta al MISMO documentId aunque el worker recicle su sesión.
-        const docId = embed?.documentId || found.documentId;
-        if (docId) await db.setThreadArtifact(channel.id, data.parentId, docId).catch(() => {});
-      } else if (found?.type === "file") {
-        // Kind ROBUSTO por content-type real (HEAD) — la URL no trae ext y el texto no
-        // siempre menciona el tipo → office/pdf/imagen se detectan aunque el reply calle.
-        const kind = (await resolveFileKind(found.url)) ?? found.kind;
-        await db.createArtifact(id, { kind, url: found.url, title: found.title ?? null });
-      }
-      // Nació una card → refresca el contexto activo para que aparezca colgada del msg.
-      if (found) bus.publish(bus.ch.room(ns, channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId });
-    } catch (e) {
-      console.error("[artifact] detect/mint failed", e);
-    } finally {
-      // ⚠️ UN SOLO punto de enganche. El bloque de arriba tiene SIETE ramas y cada una hace
-      // su propio `return`: colgar esto rama por rama garantiza que alguna se quede sin
-      // aviso. El `finally` es el único sitio por el que pasan todas.
-      // ⚠️ ANTES del aviso de fin de turno: la barra resume lo que se entregó, y con el
-      // hueco ya escrito la burbuja y el resumen cuentan lo mismo.
-      const { warnIfNothingDelivered } = await import("./delivery-gap");
-      await warnIfNothingDelivered(id, (body) =>
-        bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body }),
-      ).catch(() => {});
-      await avisarFinDeTurno({
-        ns, messageId: id, channelId: channel.id, channelSlug: channel.slug,
-        parentId: data.parentId ?? null, invokerSub: poster?.sub ?? null,
-        agente: name, tarea: tareaDelTurno,
-        // ⚠️ Un turno DETENIDO no "terminó". Sin esto, cancelar salía en la barra con
-        // palomita verde y su resumen, como si hubiera entregado — y encima con aviso push.
-        cancelado: controller.signal.aborted,
-      }).catch(() => {});
-      // Cierra el acuse: quita el 👀 y deja la marca del desenlace. Va junto al aviso de fin
-      // de turno y no en el `finally` del turno, por la misma razón que aquél: ahí el
-      // artefacto todavía no está publicado.
-      // ⚠️ `invokerMessageIds` es EL MISMO array que guarda el turno vivo, así que aquí ya
-      // trae los mensajes que el STEER le fue colgando; leerlo antes los perdería.
-      const { ackEnd } = await import("./agent-ack.server");
-      await ackEnd(
-        ns,
-        invokerMessageIds,
-        data.handle,
-        controller.signal.aborted ? "stopped" : "done",
-      );
+      // Ningún patch aplicó → el artefacto anterior queda intacto; el bubble ya lo dice
+      // (bubbleWithoutEbDoc recibió el resultado) y el log de arriba dice por qué.
+      return { ok: true as const };
     }
-    return { ok: true as const };
-  });
+
+    const ebdoc = extractEbDoc(reply);
+    if (ebdoc?.closed && ebdoc.md.trim()) {
+      const cleaned = bubbleWithoutEbDoc(reply, undefined, { keepStatus: true });
+      await db.setMessageBody(id, cleaned);
+      bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: cleaned });
+      // ¿Versión del artefacto del hilo, o documento nuevo? Ver isSameDocument: antes
+      // se reusaba el puntero SIEMPRE, así que todo lo que se pidiera después caía
+      // como versión de lo anterior.
+      const documentId =
+        currentDocId && isSameDocument(ebdoc, currentDoc)
+          ? currentDocId
+          : `${ebdoc.kind}_${randomUUID()}`;
+      const title = draftTitle(ebdoc.md, ebdoc.kind, ebdoc.fenceTitle);
+      // Publicación por el camino ÚNICO (mismo que la edición humana del Canvas): siembra
+      // los `data-id` del artefacto (dirección para el próximo ```eb-patch```), sube el HTML
+      // a storage como enlace compartible, INSERTa la versión, apunta el hilo y refresca.
+      const { publishArtifactVersion, imageGapNotice } = await import("./artifacts");
+      const pub = await publishArtifactVersion({
+        messageId: id,
+        documentId,
+        kind: ebdoc.kind, // "doc" | "sheet" | "artifact"
+        title,
+        md: ebdoc.md,
+        // `undefined` cuando el agente no dijo nada, y eso NO es "con marca": es "lo que
+        // ya dijera el documento". Re-emitir un oficio sin repetir la marca no debe
+        // devolverle el membrete que alguien pidió quitar.
+        unbranded: ebdoc.unbranded,
+        ownerSub: poster?.sub ?? null,
+        setPointer: (docId) => db.setThreadArtifact(channel.id, data.parentId, docId),
+        notify: () =>
+          bus.publish(bus.ch.room(ns, channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId }),
+      });
+      // El hueco se sabe DESPUÉS de publicar, así que el body se reescribe aquí. Sólo
+      // cuando de verdad falló algo: en el camino normal no hay segundo write.
+      const aviso = imageGapNotice(pub.imagesFailed);
+      if (aviso) {
+        const conAviso = `${cleaned}\n\n${aviso}`.trim();
+        await db.setMessageBody(id, conAviso);
+        bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: conAviso });
+      }
+      return { ok: true as const };
+    }
+
+    // ask-user: pregunta con opciones clicables. Quitamos el fence del bubble y
+    // colgamos un artefacto inline; los botones los pinta el surface. La pregunta
+    // va en `title`, las opciones (JSON) en `md` (no hay columna dedicada, mismo
+    // truco que doc/sheet con `md`). Agnóstico al motor — texto puro.
+    const ask = extractAskUser(reply);
+    if (ask) {
+      const cleaned = stripAskUser(reply);
+      await db.setMessageBody(id, cleaned);
+      bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: cleaned });
+      await db.createArtifact(id, {
+        kind: "ask-user",
+        url: "",
+        title: ask.question || null,
+        md: JSON.stringify(ask.options),
+      });
+      bus.publish(bus.ch.room(ns, channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId });
+      return { ok: true as const };
+    }
+
+    const found = detectArtifact(reply);
+    if (found?.type === "doc") {
+      // Doc EasyBits → editor colaborativo embebido (co-edición en vivo).
+      const embed = await mintCollabEmbed({ slug: found.slug, documentId: found.documentId });
+      if (embed) await db.createArtifact(id, { kind: "html", url: embed.embedUrl, title: embed.title });
+      // Recuerda este doc como el artefacto ACTUAL del hilo → el próximo "modifícalo"
+      // apunta al MISMO documentId aunque el worker recicle su sesión.
+      const docId = embed?.documentId || found.documentId;
+      if (docId) await db.setThreadArtifact(channel.id, data.parentId, docId).catch(() => {});
+    } else if (found?.type === "file") {
+      // Kind ROBUSTO por content-type real (HEAD) — la URL no trae ext y el texto no
+      // siempre menciona el tipo → office/pdf/imagen se detectan aunque el reply calle.
+      const kind = (await resolveFileKind(found.url)) ?? found.kind;
+      await db.createArtifact(id, { kind, url: found.url, title: found.title ?? null });
+    }
+    // Nació una card → refresca el contexto activo para que aparezca colgada del msg.
+    if (found) bus.publish(bus.ch.room(ns, channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId });
+  } catch (e) {
+    console.error("[artifact] detect/mint failed", e);
+  } finally {
+    // ⚠️ UN SOLO punto de enganche. El bloque de arriba tiene SIETE ramas y cada una hace
+    // su propio `return`: colgar esto rama por rama garantiza que alguna se quede sin
+    // aviso. El `finally` es el único sitio por el que pasan todas.
+    // ⚠️ ANTES del aviso de fin de turno: la barra resume lo que se entregó, y con el
+    // hueco ya escrito la burbuja y el resumen cuentan lo mismo.
+    const { warnIfNothingDelivered } = await import("./delivery-gap");
+    await warnIfNothingDelivered(id, (body) =>
+      bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body }),
+    ).catch(() => {});
+    await avisarFinDeTurno({
+      ns, messageId: id, channelId: channel.id, channelSlug: channel.slug,
+      parentId: data.parentId ?? null, invokerSub: poster?.sub ?? null,
+      agente: name, tarea: tareaDelTurno,
+      // ⚠️ Un turno DETENIDO no "terminó". Sin esto, cancelar salía en la barra con
+      // palomita verde y su resumen, como si hubiera entregado — y encima con aviso push.
+      cancelado: controller.signal.aborted,
+    }).catch(() => {});
+    // Cierra el acuse: quita el 👀 y deja la marca del desenlace. Va junto al aviso de fin
+    // de turno y no en el `finally` del turno, por la misma razón que aquél: ahí el
+    // artefacto todavía no está publicado.
+    // ⚠️ `invokerMessageIds` es EL MISMO array que guarda el turno vivo, así que aquí ya
+    // trae los mensajes que el STEER le fue colgando; leerlo antes los perdería.
+    const { ackEnd } = await import("./agent-ack.server");
+    await ackEnd(
+      ns,
+      invokerMessageIds,
+      data.handle,
+      controller.signal.aborted ? "stopped" : "done",
+    );
+  }
+  return { ok: true as const };
+}
 
 /**
  * Fin de turno: calcula QUÉ se entregó y avisa a quien lo pidió.

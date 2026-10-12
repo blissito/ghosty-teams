@@ -52,6 +52,7 @@ import { Route as ApiProspeccionAgentRouteImport } from './routes/api.prospeccio
 import { Route as ApiPSesRouteImport } from './routes/api.p.ses'
 import { Route as ApiInternalScheduleTurnRouteImport } from './routes/api.internal.schedule-turn'
 import { Route as ApiInternalProspeccionRunRouteImport } from './routes/api.internal.prospeccion-run'
+import { Route as ApiInternalPostMessageRouteImport } from './routes/api.internal.post-message'
 import { Route as ApiInternalMembersRouteImport } from './routes/api.internal.members'
 import { Route as ApiInternalGithubEventRouteImport } from './routes/api.internal.github-event'
 import { Route as ApiInternalBoardEventRouteImport } from './routes/api.internal.board-event'
@@ -302,6 +303,11 @@ const ApiInternalProspeccionRunRoute =
     path: '/api/internal/prospeccion-run',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiInternalPostMessageRoute = ApiInternalPostMessageRouteImport.update({
+  id: '/api/internal/post-message',
+  path: '/api/internal/post-message',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiInternalMembersRoute = ApiInternalMembersRouteImport.update({
   id: '/api/internal/members',
   path: '/api/internal/members',
@@ -526,6 +532,7 @@ export interface FileRoutesByFullPath {
   '/api/internal/board-event': typeof ApiInternalBoardEventRoute
   '/api/internal/github-event': typeof ApiInternalGithubEventRoute
   '/api/internal/members': typeof ApiInternalMembersRoute
+  '/api/internal/post-message': typeof ApiInternalPostMessageRoute
   '/api/internal/prospeccion-run': typeof ApiInternalProspeccionRunRoute
   '/api/internal/schedule-turn': typeof ApiInternalScheduleTurnRoute
   '/api/p/ses': typeof ApiPSesRoute
@@ -603,6 +610,7 @@ export interface FileRoutesByTo {
   '/api/internal/board-event': typeof ApiInternalBoardEventRoute
   '/api/internal/github-event': typeof ApiInternalGithubEventRoute
   '/api/internal/members': typeof ApiInternalMembersRoute
+  '/api/internal/post-message': typeof ApiInternalPostMessageRoute
   '/api/internal/prospeccion-run': typeof ApiInternalProspeccionRunRoute
   '/api/internal/schedule-turn': typeof ApiInternalScheduleTurnRoute
   '/api/p/ses': typeof ApiPSesRoute
@@ -682,6 +690,7 @@ export interface FileRoutesById {
   '/api/internal/board-event': typeof ApiInternalBoardEventRoute
   '/api/internal/github-event': typeof ApiInternalGithubEventRoute
   '/api/internal/members': typeof ApiInternalMembersRoute
+  '/api/internal/post-message': typeof ApiInternalPostMessageRoute
   '/api/internal/prospeccion-run': typeof ApiInternalProspeccionRunRoute
   '/api/internal/schedule-turn': typeof ApiInternalScheduleTurnRoute
   '/api/p/ses': typeof ApiPSesRoute
@@ -762,6 +771,7 @@ export interface FileRouteTypes {
     | '/api/internal/board-event'
     | '/api/internal/github-event'
     | '/api/internal/members'
+    | '/api/internal/post-message'
     | '/api/internal/prospeccion-run'
     | '/api/internal/schedule-turn'
     | '/api/p/ses'
@@ -839,6 +849,7 @@ export interface FileRouteTypes {
     | '/api/internal/board-event'
     | '/api/internal/github-event'
     | '/api/internal/members'
+    | '/api/internal/post-message'
     | '/api/internal/prospeccion-run'
     | '/api/internal/schedule-turn'
     | '/api/p/ses'
@@ -917,6 +928,7 @@ export interface FileRouteTypes {
     | '/api/internal/board-event'
     | '/api/internal/github-event'
     | '/api/internal/members'
+    | '/api/internal/post-message'
     | '/api/internal/prospeccion-run'
     | '/api/internal/schedule-turn'
     | '/api/p/ses'
@@ -995,6 +1007,7 @@ export interface RootRouteChildren {
   ApiInternalBoardEventRoute: typeof ApiInternalBoardEventRoute
   ApiInternalGithubEventRoute: typeof ApiInternalGithubEventRoute
   ApiInternalMembersRoute: typeof ApiInternalMembersRoute
+  ApiInternalPostMessageRoute: typeof ApiInternalPostMessageRoute
   ApiInternalProspeccionRunRoute: typeof ApiInternalProspeccionRunRoute
   ApiInternalScheduleTurnRoute: typeof ApiInternalScheduleTurnRoute
   ApiPSesRoute: typeof ApiPSesRoute
@@ -1318,6 +1331,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiInternalProspeccionRunRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/internal/post-message': {
+      id: '/api/internal/post-message'
+      path: '/api/internal/post-message'
+      fullPath: '/api/internal/post-message'
+      preLoaderRoute: typeof ApiInternalPostMessageRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/internal/members': {
       id: '/api/internal/members'
       path: '/api/internal/members'
@@ -1635,6 +1655,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiInternalBoardEventRoute: ApiInternalBoardEventRoute,
   ApiInternalGithubEventRoute: ApiInternalGithubEventRoute,
   ApiInternalMembersRoute: ApiInternalMembersRoute,
+  ApiInternalPostMessageRoute: ApiInternalPostMessageRoute,
   ApiInternalProspeccionRunRoute: ApiInternalProspeccionRunRoute,
   ApiInternalScheduleTurnRoute: ApiInternalScheduleTurnRoute,
   ApiPSesRoute: ApiPSesRoute,
