@@ -146,7 +146,7 @@ import { RepoReadiness } from "../components/RepoReadiness";
 import { repoReadinessFn } from "../server/apps/readiness";
 import { getTheme, subscribeTheme, resolveDark, presetById, paletteVars } from "../utils/theme";
 import { bumpMentions, subscribeMentions } from "../utils/mentions-bus";
-import { FACTORY_AVATAR_PALETTE, parseFactoryAvatar } from "../utils/factory-avatar";
+import { FACTORY_AVATAR_PALETTE, parseFactoryAvatar, personaHandle } from "../utils/factory-avatar";
 import { subscribeEmojis } from "../utils/emojis-bus";
 import { subscribeUsers, bumpUsers } from "../utils/users-bus";
 import { clearMeCache } from "../server/auth";
@@ -4735,7 +4735,8 @@ function ProfileDrawer({
   const handle = dir?.handle || target.handle;
   // Agente: su cara viva sale del directorio (`agent:<handle>`), no del mensaje en que se
   // le dio clic — así un color recién cambiado se ve aquí aunque el mensaje sea viejo.
-  const agentDir = target.isAgent && handle ? users.get(`agent:${handle}`) : undefined;
+  // @check usa la cara de @plan: los dos son Arqui.
+  const agentDir = target.isAgent && handle ? users.get(`agent:${personaHandle(handle)}`) : undefined;
   const [roleAvatarEdit, setRoleAvatarEdit] = useState<string | null>(null);
   const avatar = roleAvatarEdit || dir?.avatar || agentDir?.avatar || target.avatar || undefined;
   // Flamita de un rol de la fábrica (@plan, @build, @check, @eval): el dueño le cambia el color.

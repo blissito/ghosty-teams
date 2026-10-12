@@ -55,8 +55,8 @@ describe("RunCard escalado", () => {
     expect(screen.getByText("d")).toBeTruthy();
   });
 
-  it("escalado sin agotar vueltas: @build no puede resolverlo", () => {
-    expect(escalationLine(1, (s) => s)).toContain("@build no puede resolverlo");
+  it("escalado sin agotar vueltas: Worker no puede resolverlo", () => {
+    expect(escalationLine(1, (s) => s)).toContain("Worker no puede resolverlo");
   });
 });
 

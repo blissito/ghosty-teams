@@ -4,6 +4,7 @@
 // mensaje se queda quieto a propósito.
 import { useEffect, useRef, useState } from "react";
 import { RobotHead, lookFor, type RobotHeadState } from "@ghostystudio/boxes/react";
+import { personaHandle } from "../utils/factory-avatar";
 
 /** Cómo está el turno del agente, en el vocabulario de Teams. */
 export type AgentBotStatus = "queued" | "running" | "streaming" | "done" | "failed" | "idle";
@@ -52,7 +53,8 @@ export function AgentBot({
   const frozen = still && !visible;
   const box = { width: size, height: size };
   if (!mounted) return <span ref={ref} aria-hidden="true" className={`inline-block shrink-0 ${className}`} style={box} />;
-  const look = lookFor(handle);
+  // @check y @plan son el mismo personaje (Arqui): mismo robot.
+  const look = lookFor(personaHandle(handle));
   return (
     <span ref={ref} aria-hidden="true" className={`inline-block shrink-0 ${className}`} style={box}>
       <RobotHead

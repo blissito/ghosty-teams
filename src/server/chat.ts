@@ -73,6 +73,13 @@ export const listMentionsFn = createServerFn({ method: "GET" }).handler(async ()
     { handle: "room", name: "Notificar a este room", avatar: "", kind: "group" as const },
     { handle: "here", name: "Notificar a este room", avatar: "", kind: "group" as const },
     { handle: "aquí", name: "Notificar a este room", avatar: "", kind: "group" as const },
+    // Los personajes de la fábrica (@arqui planea y revisa, @worker construye) van primero; los
+    // handles de cada etapa siguen funcionando para quien ya los usa.
+    ...(["plan", "build"] as const).flatMap((h) => {
+      const a = agents.find((x) => x.handle === h);
+      const persona = h === "plan" ? "arqui" : "worker";
+      return a && !agents.some((x) => x.handle === persona) ? [{ handle: persona, name: h === "plan" ? "Arqui" : "Worker", avatar: a.avatar, kind: "agent" as const }] : [];
+    }),
     ...agents.map((a) => ({ handle: a.handle, name: a.name, avatar: a.avatar, kind: "agent" as const })),
     ...us.map((u) => ({ handle: u.handle, name: u.name, avatar: u.avatar, kind: "user" as const, sub: u.sub })),
   ];
@@ -808,6 +815,15 @@ export const postMessageAs = createServerOnlyFn(async (me: SessionMe | null, dat
   // Los handles de las personas entran para que un `@anabel` exacto no despierte a `ana`.
   const userHandles = agentOff ? [] : (await import("../users.server").then((u) => u.listUsers()).catch(() => [])).map((u) => u.handle);
   const mentionedList = agentOff ? [] : detectMentions(body, handles, userHandles); // TODOS los @tagged, en orden
+  // @arqui en el hilo de un pedido que ya está en revisión le habla a Arqui-revisor (@check),
+  // no a Arqui-planeador: es el mismo personaje y la persona no tiene por qué saber la etapa.
+  if (data.parentId !== null && /(?<![\p{L}\p{N}_@.])@arqui\b/iu.test(body) && !/(?<![\p{L}\p{N}_@.])@plan\b/iu.test(body)) {
+    const i = mentionedList.indexOf("plan");
+    if (i !== -1 && handles.includes("check")) {
+      const run = await import("./apps/factory-runs.server").then((R) => R.runOfThread(channel.id, data.parentId!)).catch(() => null);
+      if (run && (run.status === "checking" || run.status === "pr_review")) mentionedList[i] = "check";
+    }
+  }
   const mentioned = mentionedList[0] ?? null; // para el flag agent_handle del mensaje
   const name = me?.name || "invitado";
   const avatar = me?.avatar || "";

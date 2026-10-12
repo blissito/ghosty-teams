@@ -569,7 +569,7 @@ export function SuggestAsks({ roomSlug, roomId = null, repos = [] }: { roomSlug:
     <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2">
       <span className="min-w-0 flex-1 text-xs text-muted">
         {state === "sent"
-          ? `${t("@plan está leyendo el repo; las sugerencias llegan a")} #${roomSlug ?? "—"}.`
+          ? `${t("Arqui está leyendo el repo; las sugerencias llegan a")} #${roomSlug ?? "—"}.`
           : state === "error"
             ? t("No pude despertar a @plan. Intenta otra vez.")
             : t("¿No sabes qué pedir primero? @plan lee el repo y te propone pedidos listos para mandar.")}

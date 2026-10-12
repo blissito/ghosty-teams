@@ -33,3 +33,11 @@ describe("detectMentions", () => {
     expect(detectMentions("hola sin menciones", AGENTES)).toEqual([]);
   });
 });
+
+describe("personajes de la fábrica", () => {
+  it("@arqui va a @plan y @worker a @build, si el espacio tiene esos roles", () => {
+    expect(detectMentions("@arqui planea esto y @worker lo construye", ["plan", "build", "check"])).toEqual(["plan", "build"]);
+    expect(detectMentions("@arqui hola", ["ghosty"])).toEqual([]);
+    expect(detectMentions("@arqui hola", ["arqui", "plan"])).toEqual(["arqui"]);
+  });
+});

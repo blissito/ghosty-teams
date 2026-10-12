@@ -420,6 +420,11 @@ async function migrate(): Promise<void> {
               THEN 'easybits' ELSE 'gs-native' END
     WHERE runtime IS NULL AND fleet_id IS NOT NULL AND fleet_id <> ''`);
 
+  // Fábrica en dos personajes (12-oct): los roles con el nombre de fábrica pasan a Arqui
+  // (@plan y @check) y Worker (@build). Un nombre que el dueño cambió a mano no se toca.
+  await exec(`UPDATE gc_agents SET name = CASE handle WHEN 'build' THEN 'Worker' ELSE 'Arqui' END
+    WHERE (handle = 'plan' AND name = 'Plan') OR (handle = 'check' AND name = 'Check') OR (handle = 'build' AND name = 'Build')`);
+
   // Agentes slice 4: colaboradores de un agente (pueden EDITAR su config, no verlo
   // el secret ni borrar/crear). Espejo de gc_channel_members para rooms privados.
   await exec(`CREATE TABLE IF NOT EXISTS gc_agent_collaborators (

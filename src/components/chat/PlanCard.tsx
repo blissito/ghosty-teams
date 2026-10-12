@@ -100,13 +100,13 @@ export function PlanCard({ card, channelId, expanded = false }: { card: PlanCard
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand opacity-60 motion-reduce:animate-none" />
               <span className="relative inline-flex h-2 w-2 rounded-full bg-brand" />
             </span>
-            {st.status === "planning" ? t("@plan está rehaciendo el plan…") : t("@build arrancó con el plan aprobado…")}
+            {st.status === "planning" ? t("Arqui está rehaciendo el plan…") : t("Worker arrancó con el plan aprobado…")}
           </p>
         )}
         {!superseded && st.critique && st.status === "plan_review" && !st.decision && (
           <div className="mt-2 text-xs text-muted" role="status">
             {st.critique === "pending" ? (
-              `🔎 ${t("@check está revisando el plan antes de construir. Puedes firmar sin esperarlo.")}`
+              `🔎 ${t("Arqui está revisando el plan antes de construir. Puedes firmar sin esperarlo.")}`
             ) : st.critique === "pass" && suggestions.length ? (
               // Las sugerencias viven aquí y no en el hilo; al firmar viajan a @build en su encargo.
               <details>
@@ -120,7 +120,7 @@ export function PlanCard({ card, channelId, expanded = false }: { card: PlanCard
                     </li>
                   ))}
                 </ul>
-                <p className="mt-1.5">{t("Le llegan a @build al firmar.")}</p>
+                <p className="mt-1.5">{t("Le llegan a Worker al firmar.")}</p>
               </details>
             ) : st.critique === "pass" ? (
               `🔎 ${t("Revisado por @check: se puede construir así.")}`

@@ -58,9 +58,9 @@ function rememberCard(id: number, s: NonNullable<State>) {
 
 /** Quién tiene la estafeta mientras la fábrica trabaja: la tarjeta lo dice con un pulso. */
 const WORKING: Record<string, string> = {
-  planning: "@plan está escribiendo el plan…",
-  building: "@build está construyendo…",
-  checking: "@check está revisando el PR…",
+  planning: "Arqui está escribiendo el plan…",
+  building: "Worker está construyendo…",
+  checking: "Arqui está revisando el PR…",
 };
 
 
@@ -79,7 +79,7 @@ const STEPS = [
 export function escalationLine(loops: number, t: (s: string) => string): string {
   return loops >= 3
     ? t("{n} vueltas sin cerrar: ¿otra vuelta o replanear?").replace("{n}", String(loops))
-    : t("@build no puede resolverlo con sus herramientas: ¿otra vuelta o replanear?");
+    : t("Worker no puede resolverlo con sus herramientas: ¿otra vuelta o replanear?");
 }
 
 /**

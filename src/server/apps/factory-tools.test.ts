@@ -33,10 +33,10 @@ describe("factoryTools", () => {
   it("el contexto trae las instrucciones del ROL con que te invocaron", async () => {
     installed = true;
     const check = (await factoryContext({ channelId: 1, handle: "check" }))!;
-    expect(check).toContain("Eres @check");
-    expect(check).not.toContain("Eres @build");
+    expect(check).toContain("(el rol @check)");
+    expect(check).not.toContain("(el rol @build)");
     const otro = (await factoryContext({ channelId: 1, handle: "ghosty" }))!;
-    expect(otro).not.toContain("Eres @");
+    expect(otro).not.toContain("(el rol @");
   });
 
   it("las familias acotan: sólo `fabrica` o `completo` las alcanzan", () => {

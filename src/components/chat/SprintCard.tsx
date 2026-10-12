@@ -281,7 +281,7 @@ export function SprintCard({ card, channelId, expanded = false }: { card: { spri
             <p className="mt-1 text-center text-[11px] text-muted">{t("Una sola aprobación: cada ticket se construye en orden, @check revisa y tú haces merge.")}</p>
             {!asking ? (
               <button type="button" onClick={() => setAsking(true)} disabled={sent} className="mx-auto mt-1 block text-xs text-muted hover:text-ink disabled:opacity-60">
-                {sent ? t("@plan está rehaciendo el sprint…") : t("Pedir cambios")}
+                {sent ? t("Arqui está rehaciendo el sprint…") : t("Pedir cambios")}
               </button>
             ) : (
               <div className="mt-2 flex gap-2">

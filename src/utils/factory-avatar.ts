@@ -85,3 +85,8 @@ export function keepRoleColor(handle: FactoryAvatarRole, current: string | null 
   if (!cur || cur.role !== handle || cur.color === DEFAULT_ROLE_COLORS[handle]) return gsAvatar;
   return factoryAvatarUrl(handle, cur.color);
 }
+
+/** El handle cuya cara usa un rol: @check es Arqui igual que @plan (mismo robot, mismo color). */
+export function personaHandle(handle: string): string {
+  return handle === "check" ? "plan" : handle;
+}

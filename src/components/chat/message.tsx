@@ -1,5 +1,5 @@
 import { Component, createContext, type ReactNode, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { parseFactoryAvatar } from "../../utils/factory-avatar";
+import { parseFactoryAvatar, personaHandle } from "../../utils/factory-avatar";
 import { createPortal } from "react-dom";
 import { FileGlyph } from "../../components/FileGlyph";
 import { motion} from "motion/react";
@@ -2770,7 +2770,7 @@ export function MessageRow({
   const displayName = isAgent && m.sender === "ghosty" ? "Ghosty" : (dirUser?.name || m.sender);
   // Flamita de un rol de la fábrica: el color lo elige el dueño y puede cambiar después del
   // mensaje, así que se pinta la cara viva del agente (`agent:<handle>` en el directorio).
-  const liveRoleAvatar = isAgent && m.agent_handle && parseFactoryAvatar(m.avatar) ? users.get(`agent:${m.agent_handle}`)?.avatar : undefined;
+  const liveRoleAvatar = isAgent && m.agent_handle && parseFactoryAvatar(m.avatar) ? users.get(`agent:${personaHandle(m.agent_handle)}`)?.avatar : undefined;
   const avatarSrc = dirUser?.avatar || liveRoleAvatar || m.avatar;
   const role = isAgent && m.agent_handle ? parseFactoryAvatar(avatarSrc) : null;
   const roleBot = factoryRoom && role && m.agent_handle ? { handle: m.agent_handle, color: role.color } : null;

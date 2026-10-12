@@ -2,6 +2,7 @@
 // wizard (config) + los gc_agents extra (fleet o webhook). Módulo puro server
 // (sin createServerFn) para que lo usen tanto chat.ts como server/agents.ts sin
 // ciclos de import.
+import { PERSONA_ALIASES } from "./server/apps/factory-roles";
 import { hasIds, nodeIndex } from "./lib/artifact-ids";
 import { extractTodos, renderTodosBlock, stripStepsBlock, stripToolBlock, type TodoItem } from "./lib/ebdoc";
 import { ARTIFACT_DESIGN_GUIDE } from "./server/prompts/artifact-design";
@@ -832,6 +833,8 @@ export function detectMentions(body: string, handles: string[], userHandles: str
   while ((m = re.exec(body)) !== null) {
     const tok = m[1].toLowerCase();
     let best = agentes.indexOf(tok);
+    // @arqui / @worker: los personajes de la fábrica, si el espacio la tiene (y nadie usa ese handle).
+    if (best === -1 && tok in PERSONA_ALIASES) best = agentes.indexOf(PERSONA_ALIASES[tok as keyof typeof PERSONA_ALIASES]);
     if (best === -1 && !personas.has(tok)) {
       let largo = 0;
       agentes.forEach((h, i) => {
