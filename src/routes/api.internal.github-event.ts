@@ -172,6 +172,10 @@ export const Route = createFileRoute("/api/internal/github-event")({
                 pr: ev.number,
                 fallbackSub: run.approvedBy ?? run.requestedBy,
               }).catch((e) => console.error("[github-event] post-merge", e));
+              // `onPrEvent` ya repintó la tarjeta, pero antes de que existiera la vigilancia: sin esto
+              // el paso «Prod» salía hasta el primer sondeo, mucho después del merge (bliss, 11-oct).
+              const { refreshRoom } = await import("../server/apps/factory-runs.server");
+              await refreshRoom(run.channelId).catch(() => {});
             }
           }
           // Rooms con los avisos de este repo prendidos, más los que YA tienen la tarjeta de este
