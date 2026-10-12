@@ -209,6 +209,10 @@ export async function warnIfNothingDelivered(
   const msg = await db.getMessage(messageId);
   if (!msg) return;
   const [conArtefacto] = await db.attachArtifacts([msg]);
+  // ⚠️ Un ```eb-file se QUITA del cuerpo y viaja como adjunto (`gc_attachments`), no como
+  // artefacto: sin mirar los adjuntos, todo .docx/.pdf entregado así salía con el aviso
+  // falso y el turno siguiente se creía en falta (descti, 12-oct).
+  const [conAdjunto] = await db.attachAttachments([msg]);
   // Las tools de @ads (y otras) hacen que la PLATAFORMA publique la tarjeta como mensaje
   // aparte, en el mismo hilo y durante el turno. «Ahí está la tarjeta» es verdad, pero este
   // mensaje no la lleva: se buscan tarjetas `gt-` publicadas después de la burbuja (26-sep).
@@ -223,7 +227,7 @@ export async function warnIfNothingDelivered(
     `SELECT 1 FROM gc_messages WHERE ${scope.sql} AND id > ? AND body LIKE '%\`\`\`gt-%' LIMIT 1`,
     [scope.arg, messageId],
   ).catch(() => []);
-  const aviso = deliveryGapNotice(msg.body, !!conArtefacto?.artifact || tarjetas.length > 0);
+  const aviso = deliveryGapNotice(msg.body, !!conArtefacto?.artifact || !!conAdjunto?.attachments?.length || tarjetas.length > 0);
   if (!aviso) return;
   const body = `${msg.body}\n\n${aviso}`.trim();
   await db.setMessageBody(messageId, body);
