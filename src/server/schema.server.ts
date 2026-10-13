@@ -290,6 +290,14 @@ async function migrate(): Promise<void> {
   // Fase 4: descripción + archivado de rooms.
   await addColumn("gc_channels", "description", "TEXT");
   await addColumn("gc_channels", "archived", "INTEGER NOT NULL DEFAULT 0");
+  // Archivar HILOS (2026-10-13), virtual: no se borra nada, sólo sale del sidebar.
+  // `archived_at` = archivado a mano; `unarchived_at` = desarchivado a mano (reinicia el
+  // reloj de inactividad). Un hilo cuenta como archivado si se archivó después de su última
+  // respuesta, o si lleva `thread_archive_days` sin actividad (0 = nunca). Se calcula en la
+  // consulta (`listThreadRoots*`): sin cron, y una respuesta nueva lo regresa sola.
+  await addColumn("gc_messages", "archived_at", "INTEGER");
+  await addColumn("gc_messages", "unarchived_at", "INTEGER");
+  await addColumn("gc_channels", "thread_archive_days", "INTEGER NOT NULL DEFAULT 7");
   // DM 1:1 con un agente de la flota: la conversación guarda su @handle → cada mensaje
   // enruta a ese agente (sin necesidad de @mención). null = DM normal entre personas.
   await addColumn("gc_dm_conversations", "agent_handle", "TEXT");

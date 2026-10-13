@@ -40,6 +40,7 @@ export const updateChannelFn = createServerFn({ method: "POST" })
       isPrivate?: boolean;
       description?: string | null;
       archived?: boolean;
+      threadArchiveDays?: number;
     }) => d
   )
   .handler(async ({ data }) => {
@@ -50,6 +51,7 @@ export const updateChannelFn = createServerFn({ method: "POST" })
       isPrivate: data.isPrivate,
       description: data.description,
       archived: data.archived,
+      threadArchiveDays: data.threadArchiveDays,
     });
     return { ok: true as const };
   });

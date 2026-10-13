@@ -10,6 +10,8 @@ export type Channel = {
   icon: string | null;
   description?: string | null;
   archived?: number;
+  /** Días sin actividad para que un hilo se archive solo (0 = nunca). */
+  thread_archive_days?: number;
   created_by?: string | null;
   // Evento abierto: la comunidad entra por liga sin cuenta ni asiento. Ver
   // "salas de evento" en schema.server.ts. `public_access` NO es `is_private=0`:
@@ -47,6 +49,7 @@ function toChannel(r: Row): Channel {
     icon: r.icon,
     description: r.description ?? null,
     archived: num(r.archived),
+    thread_archive_days: r.thread_archive_days == null ? 7 : num(r.thread_archive_days),
     created_by: r.created_by,
     call_mode: (r.call_mode as Channel["call_mode"]) ?? null,
     call_share_slug: r.call_share_slug ?? null,
@@ -91,6 +94,8 @@ export type Message = {
   agent_handle: string | null;
   created_at: number;
   reply_count?: number;
+  /** Sólo en raíces de hilo (`listThreadRoots*`): 1 = archivado (a mano o por inactividad). */
+  thread_archived?: number;
   topic?: string;
   dm_id?: number | null;
   edited_at?: number | null;
@@ -157,6 +162,7 @@ function toMessage(r: Row): Message {
     agent_handle: r.agent_handle ?? null,
     created_at: num(r.created_at),
     reply_count: r.reply_count == null ? undefined : num(r.reply_count),
+    thread_archived: r.thread_archived == null ? undefined : num(r.thread_archived),
     topic: r.topic ?? "general",
     dm_id: r.dm_id == null ? null : num(r.dm_id),
     edited_at: r.edited_at == null ? null : num(r.edited_at),
@@ -2217,6 +2223,7 @@ export async function updateChannel(
     isPrivate?: boolean;
     description?: string | null;
     archived?: boolean;
+    threadArchiveDays?: number;
   }
 ): Promise<void> {
   const sets: string[] = [];
@@ -2227,6 +2234,8 @@ export async function updateChannel(
   if (patch.description !== undefined)
     (sets.push("description = ?"), args.push(patch.description ? patch.description.slice(0, 280) : null));
   if (patch.archived !== undefined) (sets.push("archived = ?"), args.push(patch.archived ? 1 : 0));
+  if (patch.threadArchiveDays !== undefined)
+    (sets.push("thread_archive_days = ?"), args.push(Math.max(0, Math.min(365, Math.round(patch.threadArchiveDays)))));
   if (!sets.length) return;
   args.push(id);
   await dbq(`UPDATE gc_channels SET ${sets.join(", ")} WHERE id = ?`, args);
@@ -2575,6 +2584,37 @@ export async function listTopics(channelId: number): Promise<TopicInfo[]> {
   return rows.map((r) => ({ topic: r.topic ?? "general", count: num(r.count), last_at: num(r.last_at) }));
 }
 
+// Raíces de hilo con su conteo, última respuesta y si está ARCHIVADO (ver `archived_at` en
+// schema.server.ts). Archivar es virtual: la consulta lo marca y el sidebar lo esconde.
+function threadRootsSelect(where: string): string {
+  return `SELECT x.*,
+            CASE WHEN (x.archived_at IS NOT NULL AND x.archived_at >= x.activity)
+                   OR (x.days > 0 AND x.activity < unixepoch() - x.days * 86400)
+                 THEN 1 ELSE 0 END AS thread_archived
+       FROM (
+         SELECT m.*,
+                (SELECT COUNT(*) FROM gc_messages c WHERE c.parent_id = m.id) AS reply_count,
+                (SELECT MAX(created_at) FROM gc_messages c WHERE c.parent_id = m.id) AS last_at,
+                MAX(COALESCE((SELECT MAX(created_at) FROM gc_messages c WHERE c.parent_id = m.id), m.created_at),
+                    COALESCE(m.unarchived_at, 0)) AS activity,
+                COALESCE(ch.thread_archive_days, 7) AS days
+           FROM gc_messages m
+           JOIN gc_channels ch ON ch.id = m.channel_id
+          WHERE ${where} AND m.parent_id IS NULL
+            AND EXISTS (SELECT 1 FROM gc_messages c WHERE c.parent_id = m.id)
+       ) x`;
+}
+
+/** Archiva (o regresa) un hilo a mano. Nada se borra. */
+export async function setThreadArchived(rootId: number, archived: boolean): Promise<void> {
+  await dbq(
+    archived
+      ? "UPDATE gc_messages SET archived_at = unixepoch() WHERE id = ? AND parent_id IS NULL"
+      : "UPDATE gc_messages SET archived_at = NULL, unarchived_at = unixepoch() WHERE id = ? AND parent_id IS NULL",
+    [rootId]
+  );
+}
+
 // Todos los hilos del canal (mensajes raíz que tienen respuestas) — para no
 // enterrarlos. Ordenados por actividad reciente.
 // Hilos raíz de VARIOS canales en UNA query → el loader los adjunta a cada room
@@ -2586,12 +2626,7 @@ export async function listThreadRootsForChannels(
   if (!channelIds.length) return out;
   const ph = channelIds.map(() => "?").join(",");
   const rows = await dbq(
-    `SELECT m.*,
-            (SELECT COUNT(*) FROM gc_messages c WHERE c.parent_id = m.id) AS reply_count,
-            (SELECT MAX(created_at) FROM gc_messages c WHERE c.parent_id = m.id) AS last_at
-       FROM gc_messages m
-      WHERE m.channel_id IN (${ph}) AND m.parent_id IS NULL
-        AND EXISTS (SELECT 1 FROM gc_messages c WHERE c.parent_id = m.id)
+    `${threadRootsSelect(`m.channel_id IN (${ph})`)}
       ORDER BY last_at DESC LIMIT 400`,
     channelIds
   );
@@ -2606,12 +2641,7 @@ export async function listThreadRootsForChannels(
 
 export async function listThreadRoots(channelId: number): Promise<Message[]> {
   const rows = await dbq(
-    `SELECT m.*,
-            (SELECT COUNT(*) FROM gc_messages c WHERE c.parent_id = m.id) AS reply_count,
-            (SELECT MAX(created_at) FROM gc_messages c WHERE c.parent_id = m.id) AS last_at
-       FROM gc_messages m
-      WHERE m.channel_id = ? AND m.parent_id IS NULL
-        AND EXISTS (SELECT 1 FROM gc_messages c WHERE c.parent_id = m.id)
+    `${threadRootsSelect("m.channel_id = ?")}
       ORDER BY last_at DESC LIMIT 200`,
     [channelId]
   );

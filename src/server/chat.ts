@@ -596,6 +596,20 @@ export const deleteMessageFn = createServerFn({ method: "POST" })
     return { ok: true as const };
   });
 
+// Archivar / regresar un hilo (virtual: no borra nada, sólo lo saca del sidebar). Cualquiera
+// que vea el room puede: es reversible y una respuesta nueva lo regresa sola.
+export const setThreadArchivedFn = createServerFn({ method: "POST" })
+  .validator((d: { id: number; archived: boolean }) => d)
+  .handler(async ({ data }) => {
+    const db = await import("../db.server");
+    const user = await sessionUser();
+    const msg = await db.getMessage(data.id);
+    if (!msg || msg.parent_id != null || msg.dm_id != null) return { ok: false as const };
+    if (!(await threadVisibleFor(msg, user ? { sub: user.sub, isOwner: !!user.isOwner } : null, db))) throw new Error("no autorizado");
+    await db.setThreadArchived(data.id, !!data.archived);
+    return { ok: true as const };
+  });
+
 // Catch-up (lossless): mensajes del room con id > sinceId. El cliente lo llama al
 // (re)conectar / volver a la pestaña para rellenar lo que el SSE pudiera haber perdido.
 export const getMessagesSince = createServerFn({ method: "GET" })

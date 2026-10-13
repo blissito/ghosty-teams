@@ -53,6 +53,7 @@ import {
   Download,
   Loader2,
   Archive,
+  ArchiveRestore,
   Radio,
   ChevronDown,
   Headphones,
@@ -123,6 +124,7 @@ import {
   prepareRetryFn,
   warmAgentFn,
   deleteMessageFn,
+  setThreadArchivedFn,
   listMentionsFn,
   pingTypingFn,
   toggleReactionFn,
@@ -2717,6 +2719,12 @@ function ChannelPage() {
     playDeleteSound();
     revalidate();
   };
+  // Archivar = virtual: el hilo sale del sidebar y vive en «Ver todos → Archivados».
+  const archiveThread = async (id: number, archived: boolean) => {
+    await setThreadArchivedFn({ data: { id, archived } }).catch(() => {});
+    if (archived && openThreadId === id) setOpenThreadId(null);
+    revalidate();
+  };
   // Clic en el origen del hilo → vuelve al flujo y scrollea al mensaje (estilo Slack).
   const goToOrigin = (id: number) => {
     setOpenThreadId(null);
@@ -2940,6 +2948,7 @@ function ChannelPage() {
           setHomeOpen(false); // clickear el room activo desde Inicio también cierra Inicio
         }}
         onDeleteThread={deleteThread}
+        onArchiveThread={archiveThread}
         dms={dms}
         dmsLoading={dmsLoading}
         activeDmId={openDmId}
@@ -3534,6 +3543,7 @@ function ThreadRow({
   active,
   onOpen,
   onDelete,
+  onArchive,
   canDelete,
   variant,
   working,
@@ -3542,6 +3552,7 @@ function ThreadRow({
   active: boolean;
   onOpen: (id: number) => void;
   onDelete: (id: number) => void;
+  onArchive: (id: number, archived: boolean) => void;
   canDelete: boolean;
   variant: "sidebar" | "modal";
   /** Hay un turno de agente EN VUELO en este hilo → punto latiendo. */
@@ -3600,6 +3611,13 @@ function ThreadRow({
           {thr.reply_count ?? 0}
         </span>
       </button>
+      <button
+        onClick={() => onArchive(thr.id, !thr.thread_archived)}
+        title={thr.thread_archived ? t("Regresar al sidebar") : t("Archivar hilo")}
+        className="shrink-0 p-1 text-muted opacity-100 transition hover:text-brand md:opacity-0 md:group-hover/thr:opacity-100"
+      >
+        {thr.thread_archived ? <ArchiveRestore size={compact ? 13 : 15} /> : <Archive size={compact ? 13 : 15} />}
+      </button>
       {canDelete && (
         <button
           onClick={handleDelete}
@@ -3627,6 +3645,7 @@ function AllThreadsModal({
   activeThreadId,
   onOpen,
   onDelete,
+  onArchive,
   user,
   onClose,
 }: {
@@ -3635,23 +3654,27 @@ function AllThreadsModal({
   activeThreadId: number | null;
   onOpen: (id: number) => void;
   onDelete: (id: number) => void;
+  onArchive: (id: number, archived: boolean) => void;
   user: SessionUser | null;
   onClose: () => void;
 }) {
   const t = useT();
   const [q, setQ] = useState("");
   const [visible, setVisible] = useState(THREAD_PAGE);
+  const [tab, setTab] = useState<"active" | "archived">("active");
+  const archivedCount = threads.filter((thr) => thr.thread_archived).length;
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    if (!needle) return threads;
-    return threads.filter(
+    const inTab = threads.filter((thr) => (tab === "archived" ? !!thr.thread_archived : !thr.thread_archived));
+    if (!needle) return inTab;
+    return inTab.filter(
       (thr) =>
         (threadTitle(thr) || "").toLowerCase().includes(needle) ||
         (thr.body || "").toLowerCase().includes(needle)
     );
-  }, [threads, q]);
-  // Al cambiar la búsqueda, reinicia la ventana de carga parcial.
-  useEffect(() => setVisible(THREAD_PAGE), [q]);
+  }, [threads, q, tab]);
+  // Al cambiar la búsqueda o la pestaña, reinicia la ventana de carga parcial.
+  useEffect(() => setVisible(THREAD_PAGE), [q, tab]);
   const shown = filtered.slice(0, visible);
   const remaining = filtered.length - shown.length;
   return (
@@ -3670,6 +3693,19 @@ function AllThreadsModal({
         autoFocus
         className="mb-3 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink outline-none placeholder:text-muted focus:border-brand"
       />
+      <div className="mb-3 flex gap-1 text-xs">
+        {(["active", "archived"] as const).map((k) => (
+          <button
+            key={k}
+            onClick={() => setTab(k)}
+            className={`rounded-md px-2.5 py-1 transition ${
+              tab === k ? "bg-brand/15 font-medium text-ink" : "text-muted hover:bg-surface-3 hover:text-ink"
+            }`}
+          >
+            {k === "active" ? t("Activos") : `${t("Archivados")} (${archivedCount})`}
+          </button>
+        ))}
+      </div>
       {shown.length === 0 ? (
         <p className="py-8 text-center text-sm text-muted">{t("No se encontraron hilos.")}</p>
       ) : (
@@ -3685,6 +3721,7 @@ function AllThreadsModal({
                   onClose();
                 }}
                 onDelete={onDelete}
+                onArchive={onArchive}
                 canDelete={!!(user?.isOwner || thr.sender === user?.name)}
                 variant="modal"
               />
@@ -3891,6 +3928,7 @@ function Sidebar({
   onOpenThread,
   onBackToRoom,
   onDeleteThread,
+  onArchiveThread,
   dms,
   dmsLoading,
   activeDmId,
@@ -3917,6 +3955,7 @@ function Sidebar({
   onOpenThread: (id: number) => void;
   onBackToRoom: () => void;
   onDeleteThread: (id: number) => void;
+  onArchiveThread: (id: number, archived: boolean) => void;
   dms: DmConversation[];
   dmsLoading: boolean;
   activeDmId: number | null;
@@ -4366,7 +4405,7 @@ function Sidebar({
           // Room activo: lista viva (más fresca). Los demás: los hilos que el
           // loader adjuntó a cada room (persisten siempre) o el cache si ya se vio.
           const roomThreads = (c.slug === active ? threads : threadsCache.get(c.slug) ?? c.threads ?? []).filter(
-            (thr) => !deletedThreadRoots.has(thr.id),
+            (thr) => !deletedThreadRoots.has(thr.id) && !thr.thread_archived,
           );
           return (
           <div key={c.id}>
@@ -4460,6 +4499,7 @@ function Sidebar({
                         active={activeThreadId === thr.id}
                         onOpen={onOpenThread}
                         onDelete={onDeleteThread}
+                        onArchive={onArchiveThread}
                         canDelete={!!(user?.isOwner || thr.sender === user?.name)}
                         variant="sidebar"
                         working={liveTurns.some((x) => x.parentId === thr.id)}
@@ -4659,6 +4699,7 @@ function Sidebar({
             activeThreadId={activeThreadId}
             onOpen={onOpenThread}
             onDelete={onDeleteThread}
+            onArchive={onArchiveThread}
             user={user}
             onClose={() => setAllThreadsOpen(false)}
           />
@@ -5489,6 +5530,12 @@ function RoomSettingsModal({
     onChanged();
     setTimeout(() => setInfoSaved(false), 1500);
   }
+  const [archiveDays, setArchiveDays] = useState(channel?.thread_archive_days ?? 7);
+  async function saveArchiveDays(days: number) {
+    setArchiveDays(days);
+    await updateChannelFn({ data: { slug, threadArchiveDays: days } }).catch(() => {});
+    onChanged();
+  }
   async function archive() {
     if (!confirm(t("¿Archivar este room? Desaparece del sidebar (no se borra).")))
       return;
@@ -5743,6 +5790,24 @@ function RoomSettingsModal({
             </div>
           ))
         )}
+      </div>
+      <div className="mb-4 flex items-center justify-between gap-3 rounded-lg bg-surface px-3 py-2.5 text-sm">
+        <span className="flex items-center gap-2">
+          <Archive size={14} className="text-muted" />
+          {t("Archivar hilos sin actividad")}
+        </span>
+        <select
+          value={archiveDays}
+          onChange={(e) => saveArchiveDays(Number(e.target.value))}
+          className="rounded-md border border-border bg-surface-2 px-2 py-1 text-sm text-ink outline-none focus:border-brand"
+        >
+          {[1, 3, 7, 30].map((d) => (
+            <option key={d} value={d}>
+              {d === 1 ? t("después de 1 día") : `${t("después de")} ${d} ${t("días")}`}
+            </option>
+          ))}
+          <option value={0}>{t("nunca")}</option>
+        </select>
       </div>
       <div className="mb-4 border-t border-border" />
       <EventSection slug={slug} channel={channel} onChanged={onChanged} />
