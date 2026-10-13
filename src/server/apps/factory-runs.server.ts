@@ -697,10 +697,9 @@ export async function ensureRunBox(run: Run): Promise<"ready" | "waiting" | "off
       if (prev?.box_state !== "waiting") {
         await dbq("UPDATE gt_factory_runs SET box_state = 'waiting' WHERE id = ?", [run.id]);
         await logEvent(run.id, "box_waiting", null, { tier: r.json.tier, busy: r.json.busy });
-        const busy = (r.json.busy ?? []).map((n: number) => `#${n}`).join(", ");
         void syncRunTask({ ...run, boxWaiting: true }, "waiting").catch(() => {});
         void import("./sprint.server").then((S) => S.onSprintRunChanged(run.id)).catch(() => {});
-        await postInThread(run, "build", `⏳ En espera de lugar: tu plan ${r.json.tier} tiene ${r.json.max} lugar(es) y están ocupados por pedidos en curso${busy ? ` (${busy})` : ""}. Arranco solo en cuanto se libere uno.`).catch(() => null);
+        await postInThread(run, "build", waitingForSlotText(r.json.tier, Number(r.json.max), r.json.busy ?? [])).catch(() => null);
         void refreshRoom(run.channelId);
       }
       return "waiting";
@@ -1988,4 +1987,20 @@ export async function ensurePrClosesIssue(runId: number, sub: string, url: strin
   } catch (e) {
     console.warn(`[factory] Closes #issue en el PR del pedido #${runId}: ${(e as Error).message}`);
   }
+}
+
+/** El aviso de «en espera de lugar»: qué es un lugar (pedidos a la vez), quién lo ocupa y cómo
+ *  tener más. Sólo el tier da lugares (F1 2 · F2 4 · F3 6, `FACTORY_TIERS` de gs); la CI extra no. */
+const NEXT_TIER: Record<string, { tier: string; slots: number }> = { F1: { tier: "F2", slots: 4 }, F2: { tier: "F3", slots: 6 } };
+export function waitingForSlotText(tier: string, max: number, busy: number[]): string {
+  const ids = busy.map((n) => `#${n}`);
+  const list = ids.length > 1 ? `${ids.slice(0, -1).join(", ")} y ${ids[ids.length - 1]}` : ids[0] ?? "";
+  const capacity = max === 1 ? "1 pedido a la vez" : `${max} pedidos a la vez`;
+  const going = list ? (ids.length === 1 ? ` y ya va ${list}` : ` y ya van ${list}`) : " y ya están ocupados";
+  const wait = `Este arranca solo en cuanto ${max === 1 ? "termine" : "uno termine"}.`;
+  const next = NEXT_TIER[tier];
+  const upsell = next
+    ? ` ¿Quieres más a la vez? Con ${next.tier} son ${next.slots}: [subir a ${next.tier}](https://www.ghosty.studio/planes?factory=${next.tier}#a-tu-medida).`
+    : "";
+  return `⏳ **En espera de lugar.** Tu plan ${tier} deja construir **${capacity}**${going}. ${wait}${upsell}`;
 }
