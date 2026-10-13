@@ -36,6 +36,24 @@ export function WorkBox({ channelId, parentId, live }: { channelId: number; pare
   if (!box || box.state === "off") return null;
   const look = box.working && box.state === "on" ? { state: "working" as const, screen: "#7dff9a", label: "trabajando" } : LOOK[box.state];
   const title = `${t("Caja de trabajo del pedido")} #${box.runId} · ${t(look.label)}${box.label ? `\n${box.label}` : ""}`;
+  // Sin lugar todavía: el hueco vacío, la misma cajita blanca apagada de los «libre» de gs (bliss, 13-oct).
+  if (box.state === "waiting")
+    return (
+      <span title={title} aria-label={title} className="inline-block shrink-0" style={{ width: 28, height: 28 }}>
+        <RobotHead
+          size={28}
+          shape={box.look?.shape ?? "circle"}
+          state="idle"
+          color="#e4e4e7"
+          trimColor="#c4c4cc"
+          face="off"
+          antenna={false}
+          floorShadow={false}
+          paused
+          interactive={false}
+        />
+      </span>
+    );
   return (
     <span title={title} aria-label={title} className="inline-block shrink-0" style={{ width: 28, height: 28 }}>
       <RobotHead
@@ -50,7 +68,7 @@ export function WorkBox({ channelId, parentId, live }: { channelId: number; pare
         antenna={false}
         floorShadow={false}
         interactive
-        speed={box.state === "asleep" || box.state === "waiting" ? 0.6 : 1}
+        speed={box.state === "asleep" ? 0.6 : 1}
       />
     </span>
   );
