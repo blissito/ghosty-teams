@@ -78,13 +78,23 @@ describe("CI starter", () => {
     expect(r.files[1].content).toContain("/.github/ @acme");
   });
 
-  it("pnpm por lockfile y la caja de CI del espacio cuando existe", async () => {
+  it("pnpm por lockfile y la caja de CI del espacio en un repo privado", async () => {
     files["pnpm-lock.yaml"] = true;
+    priv = true;
     const r = (await buildCiStarter("u", "acme/app", "ws-business")) as any;
+    priv = false;
     const yml = r.files[0].content as string;
     expect(yml).toContain("pnpm install --frozen-lockfile");
     expect(yml).toContain("pnpm/action-setup@");
     expect(yml).toContain("runs-on: [self-hosted, ws-business]");
+    // gitleaks siempre en GitHub: en la caja truena por la ruta de /home/runner.
+    expect(yml).toMatch(/security:\n.*\n.*\n    runs-on: ubuntu-latest/);
+  });
+
+  it("repo público: el CI se queda en GitHub aunque el espacio tenga caja", async () => {
+    const r = (await buildCiStarter("u", "acme/app", "ws-business")) as any;
+    expect(r.files[0].content).not.toContain("self-hosted");
+    expect(r.notes.join(" ")).toContain("Repo público");
   });
 
   it("proteger main exige SÓLO los checks que ya corren (nunca nombres supuestos)", async () => {

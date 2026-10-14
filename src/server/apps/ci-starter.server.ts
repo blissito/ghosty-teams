@@ -160,8 +160,11 @@ export async function buildCiStarter(
   const unpinned = Object.values(a).filter((x) => !String(x).includes(" # "));
 
   const node = nvmrc ? "node-version-file: .nvmrc" : "node-version: 22";
-  // La caja de CI del espacio (caché caliente, sin fila) cuando existe; si no, GitHub.
-  const runsOn = runnerLabel ? `[self-hosted, ${runnerLabel}]` : "ubuntu-latest";
+  // La caja de CI del espacio sólo en repos PRIVADOS (ahí GitHub cobra minutos). En un público
+  // GitHub es gratis y corre los jobs en paralelo: mailmask tardaba ~3 min ahí y ~26 en la caja,
+  // que toma un job a la vez (13-oct). Sin `private` explícito se asume público.
+  const ownBox = Boolean(runnerLabel) && info?.private === true;
+  const runsOn = ownBox ? `[self-hosted, ${runnerLabel}]` : "ubuntu-latest";
   const workflow = `# CI de la Software Factory de Ghosty. Lo exige la protección de la rama principal.
 name: ci
 on:
@@ -192,7 +195,8 @@ ${pm === "pnpm" ? `      - uses: ${a.pnpm}\n` : ""}      - uses: ${a.setupNode}
       - run: ${run("build")}
   security:
     if: github.event_name == 'pull_request'
-    runs-on: ${runsOn}
+    # Siempre en GitHub: gitleaks-action asume /home/runner y en la caja truena (13-oct).
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: ${a.checkout}
@@ -220,7 +224,8 @@ ${depReviewOk ? `      - uses: ${a.depReview}\n        with:\n          fail-on-
   const codeowners = `# Los cambios al CI y a esta regla los revisa una persona (Software Factory de Ghosty).\n/.github/ @${owner}\n`;
   const notes: string[] = [];
   if (unpinned.length) notes.push(`No pude fijar por SHA: ${unpinned.join(", ")} (quedaron con su tag).`);
-  if (runnerLabel) notes.push(`Corre en la caja de CI del espacio (${runnerLabel}): caché caliente y sin fila.`);
+  if (ownBox) notes.push(`Repo privado: corre en la caja de CI del espacio (${runnerLabel}), sin gastar minutos de GitHub.`);
+  else if (runnerLabel) notes.push("Repo público: el CI se queda en GitHub (gratis y en paralelo); la caja de CI del espacio es para repos privados.");
   if (!depReviewOk) notes.push("Repo privado sin Advanced Security: no agregué dependency-review (GitHub no lo deja correr ahí). Se suma cuando se active en Settings → Code security.");
   if (isOrg) notes.push("El repo es de una organización: gitleaks-action pide el secreto GITLEAKS_LICENSE (gratis para uso no comercial).");
   return {
