@@ -32,9 +32,10 @@ const STATUS: Record<string, { label: string; cls: string }> = {
 };
 
 /**
- * En el hilo va COMPACTA (título, avance, la acción principal y «Ver sprint»); los tickets,
- * su detalle y las ediciones viven en el panel lateral (`expanded`). Antes la tarjeta entera
- * —8 tickets— se pintaba en el hilo y cada versión empujaba la conversación (01-oct).
+ * En el hilo va de LECTURA: objetivo, avance y cada ticket en una fila corta (número, tamaño,
+ * título, «tras #n», estado y ligas), más la acción principal. Las ediciones (interruptores,
+ * títulos, criterios, pedir cambios) viven en el panel lateral (`expanded`). La versión que
+ * sólo traía el conteo obligaba a abrir el panel para saber qué se iba a construir (14-oct).
  */
 export function SprintCard({ card, channelId, expanded = false }: { card: { sprintId: number }; channelId: number; expanded?: boolean }) {
   const t = useT();
@@ -107,6 +108,34 @@ export function SprintCard({ card, channelId, expanded = false }: { card: { spri
               <div key={i.id} className={`h-1.5 flex-1 rounded-full ${i.status === "merged" || i.status === "skipped" ? "bg-violet-500" : i.status === "pr" ? "bg-emerald-500" : i.status === "active" ? "bg-brand" : "bg-surface-3"}`} />
             ))}
           </div>
+          {st.goal && <p className="mt-2 line-clamp-2 text-xs text-muted">{st.goal}</p>}
+          <ol className="mt-2 divide-y divide-border rounded-md border border-border">
+            {st.items.map((i) => {
+              const deps = i.dependsOn.map((d) => byKey.get(d)?.idx).filter(Boolean);
+              const s = STATUS[i.status] ?? STATUS.pending;
+              return (
+                <li key={i.id} className={`flex items-center gap-2 px-2 py-1 text-xs ${!i.included ? "opacity-50" : ""}`}>
+                  <span className="w-4 shrink-0 text-right font-mono text-[10px] text-muted">{i.idx}</span>
+                  <span className="shrink-0 rounded border border-border px-1 font-mono text-[10px] text-muted">{i.size}</span>
+                  <span className={`min-w-0 flex-1 truncate text-ink ${!i.included ? "line-through" : ""}`} title={i.title}>
+                    {i.title}
+                  </span>
+                  {deps.length > 0 && <span className="hidden shrink-0 text-[10px] text-muted sm:inline">{t("tras")} #{deps.join(", #")}</span>}
+                  {!draft && i.threadUrl && (
+                    <a href={i.threadUrl} className="shrink-0 text-[11px] text-brand hover:underline">
+                      {t("Pedido")} →
+                    </a>
+                  )}
+                  {!draft && i.prUrl && (
+                    <a href={i.prUrl} target="_blank" rel="noreferrer" className="shrink-0 text-[11px] text-muted hover:text-ink">
+                      PR ↗
+                    </a>
+                  )}
+                  {!draft && i.included && <span className={`shrink-0 rounded-full px-1.5 py-px text-[10px] font-semibold ${s.cls}`}>{t(s.label)}</span>}
+                </li>
+              );
+            })}
+          </ol>
           <p className="mt-1.5 text-xs text-muted">
             {included.length} {included.length === 1 ? t("ticket") : t("tickets")}
             {!draft && working ? ` · ${working} ${t("en curso")}` : ""}
