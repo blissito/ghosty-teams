@@ -111,7 +111,7 @@ import {
   maintenanceNoticeFn,
   type Announcement,
 } from "../server/announcements";
-import { toggleStarFn, togglePinFn, getPinsFn, toggleMuteFn, listMutesFn, listRoomPinsFn, setRoomPinsFn } from "../server/stars";
+import { toggleStarFn, togglePinFn, getPinsFn, toggleMuteFn, listMutesFn, listSidebarPrefsFn, setSidebarPrefFn, type SidebarPrefKind } from "../server/stars";
 import { listMyWorkspacesFn } from "../server/workspaces";
 import {
   getChannelView,
@@ -857,10 +857,62 @@ function useCachedQuery<K, T>(
 // contenido (streaming de la respuesta del agente rellena el body de UN mensaje → el
 // conteo no cambia, por eso antes no scrolleaba). El guard `stick` evita tironear si
 // el usuario subió a leer historia. `onScroll` (devuelto) va en el div scrollable.
+// Preferencias del sidebar (rooms fijados, DMs cerrados, hilos plegados). Las guarda el
+// SERVIDOR para que sigan a la persona entre web y móvil; localStorage es sólo cache para
+// pintar al instante. Una sola lectura por carga para las tres. Si el servidor no tiene
+// nada pero este navegador sí (de antes de guardarlas allá), se suben una vez.
+let sidebarPrefsP: Promise<Record<string, (string | number)[]>> | null = null;
+function useSidebarPref<T extends string | number>(kind: SidebarPrefKind): [T[], (next: T[]) => void] {
+  const lsKey = `gt:${kind}`;
+  const [list, setList] = useState<T[]>(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      return JSON.parse(window.localStorage.getItem(lsKey) || "[]") as T[];
+    } catch {
+      return [];
+    }
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(lsKey, JSON.stringify(list));
+    } catch {
+      /* modo privado / cuota llena: no recordar no rompe el sidebar */
+    }
+  }, [lsKey, list]);
+  useEffect(() => {
+    sidebarPrefsP ??= listSidebarPrefsFn().catch(() => {
+      sidebarPrefsP = null;
+      return {};
+    });
+    sidebarPrefsP.then((all) => {
+      const remote = all[kind] as T[] | undefined;
+      if (remote) return setList(remote);
+      setList((local) => {
+        if (local.length) setSidebarPrefFn({ data: { kind, value: local } }).catch(() => {});
+        return local;
+      });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kind]);
+  const save = (next: T[]) => {
+    setList(next);
+    setSidebarPrefFn({ data: { kind, value: next } }).catch(() => {});
+  };
+  return [list, save];
+}
+
+// Pantalla táctil sin teclado físico: no hay Shift+Enter, así que Enter no puede enviar.
+const isTouch = () => typeof window !== "undefined" && !!window.matchMedia?.("(pointer: coarse)")?.matches;
+
 // No-leídos en los que YA se aterrizó. El salto al divisor es para la PRIMERA vez que entras;
 // al volver al room desde un hilo o DM la vista se vuelve a montar con el mismo divisor y
 // aterrizar otra vez te dejaba a media historia en vez de abajo.
 const landedUnread = new Set<number>();
+// Dónde se quedó leyendo cada room (por `resetKey`): el mensaje de arriba y su offset dentro
+// del viewport — no `scrollTop`, que cambia en cuanto una imagen termina de cargar. Sólo se
+// guarda si NO estabas abajo; abajo es el default. Como Element (RoomScrollStateStore) y
+// Rocket.Chat: volver de un hilo o de un DM te regresa a donde ibas.
+const savedScroll = new Map<unknown, { id: string; offset: number }>();
 
 function useChatScroll(
   scrollRef: React.RefObject<HTMLDivElement | null>,
@@ -897,6 +949,15 @@ function useChatScroll(
     lastTop.current = el.scrollTop;
     if (near) stick.current = true;
     else if (wentUp) stick.current = false;
+    if (resetKey != null) {
+      if (stick.current) savedScroll.delete(resetKey);
+      else {
+        const box = el.getBoundingClientRect();
+        const hit = document.elementFromPoint(box.left + Math.min(40, box.width / 2), box.top + 8);
+        const msg = hit?.closest?.('[id^="msg-"]') as HTMLElement | null;
+        if (msg && el.contains(msg)) savedScroll.set(resetKey, { id: msg.id, offset: msg.getBoundingClientRect().top - box.top });
+      }
+    }
     else if (stick.current) {
       el.scrollTo({ top: el.scrollHeight });
       return;
@@ -928,13 +989,30 @@ function useChatScroll(
       const near = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
       setAtBottom((prev) => (prev === near ? prev : near));
     };
+    const box = scrollRef.current;
+    // 1) Volviste a un room donde ibas leyendo historial (y no llegó un no-leído nuevo).
+    const saved = resetKey != null ? savedScroll.get(resetKey) : undefined;
+    if (saved && box && !didLand.current && (unreadId == null || landedUnread.has(unreadId))) {
+      const el = document.getElementById(saved.id);
+      if (el && box.contains(el)) {
+        stick.current = false;
+        box.scrollTop += el.getBoundingClientRect().top - box.getBoundingClientRect().top - saved.offset;
+        lastTop.current = box.scrollTop;
+        didLand.current = true;
+        requestAnimationFrame(measure);
+        return;
+      }
+    }
+    // 2) Primera vez con no-leídos: el divisor ARRIBA con margen (se ve un poco de contexto y
+    // todo lo nuevo debajo), no centrado — nadie lo centra.
     if (unreadId != null && !didLand.current && !landedUnread.has(unreadId)) {
       const el = document.getElementById(`msg-${unreadId}`);
-      if (el) {
+      if (el && box) {
         // Aterrizar en el no-leído ES estar leyendo historial: sin esto, el `scroll` que
         // provoca se tomaría por «contenido creció» y te regresaría al fondo.
         stick.current = false;
-        el.scrollIntoView({ block: "center" });
+        box.scrollTop += el.getBoundingClientRect().top - box.getBoundingClientRect().top - 56;
+        lastTop.current = box.scrollTop;
         didLand.current = true;
         landedUnread.add(unreadId);
         requestAnimationFrame(measure);
@@ -3596,7 +3674,7 @@ function ThreadRow({
         onClick={() => onOpen(thr.id)}
         title={thr.body}
         className={`flex min-w-0 flex-1 items-center gap-1.5 rounded-md text-left ${
-          compact ? "px-2 py-1 text-xs" : "px-2.5 py-2 text-sm"
+          compact ? "px-2 py-2 text-xs md:py-1" : "px-2.5 py-2 text-sm"
         } ${
           active ? "bg-brand/15 font-medium text-ink" : "text-muted hover:bg-surface-3 hover:text-ink"
         }`}
@@ -3623,7 +3701,7 @@ function ThreadRow({
       <button
         onClick={() => onArchive(thr.id, !thr.thread_archived)}
         title={thr.thread_archived ? t("Regresar al sidebar") : t("Archivar hilo")}
-        className="shrink-0 p-1 text-muted opacity-100 transition hover:text-brand md:opacity-0 md:group-hover/thr:opacity-100"
+        className="shrink-0 p-2 text-muted opacity-100 transition hover:text-brand md:p-1 md:opacity-0 md:group-hover/thr:opacity-100"
       >
         {thr.thread_archived ? <ArchiveRestore size={compact ? 13 : 15} /> : <Archive size={compact ? 13 : 15} />}
       </button>
@@ -3632,7 +3710,7 @@ function ThreadRow({
           onClick={handleDelete}
           disabled={deleting}
           title={t("Eliminar hilo")}
-          className={`shrink-0 p-1 text-muted transition hover:text-brand disabled:opacity-100 ${
+          className={`shrink-0 p-2 text-muted transition hover:text-brand disabled:opacity-100 md:p-1 ${
             deleting ? "opacity-100" : "opacity-100 md:opacity-0 md:group-hover/thr:opacity-100"
           }`}
         >
@@ -4078,85 +4156,24 @@ function Sidebar({
   // DMs CERRADOS (no borrados). Es el "close conversation" de Slack: se quitan de la lista y
   // vuelven solos en cuanto te escriben — nadie se pierde un mensaje por haber ordenado su
   // barra. Silenciar no servía para esto: silenciado sigue ocupando sitio.
-  const [closedDms, setClosedDms] = useState<Set<number>>(() => {
-    if (typeof window === "undefined") return new Set();
-    try {
-      const raw = window.localStorage.getItem("gt:closedDms");
-      return new Set<number>(raw ? (JSON.parse(raw) as number[]) : []);
-    } catch {
-      return new Set();
-    }
-  });
-  useEffect(() => {
-    try {
-      window.localStorage.setItem("gt:closedDms", JSON.stringify([...closedDms]));
-    } catch {
-      /* modo privado: no cerrar no rompe nada */
-    }
-  }, [closedDms]);
-  const cerrarDm = (id: number) => setClosedDms((prev) => new Set(prev).add(id));
+  const [closedDmList, setClosedDmList] = useSidebarPref<number>("closedDms");
+  const closedDms = useMemo(() => new Set(closedDmList), [closedDmList]);
+  const cerrarDm = (id: number) => !closedDms.has(id) && setClosedDmList([...closedDmList, id]);
 
-  // Rooms FIJADOS arriba (por persona, guardados en el servidor para que sigan entre web y
-  // móvil; localStorage sólo es cache para pintar al instante). El orden de
-  // la lista es estable a propósito: una lista que se reacomoda sola rompe la memoria de
-  // dónde está cada room. Lo único que se mueve es lo que tú fijas, y los rooms sin
-  // mensajes en 7 días, que bajan a «Poco usados».
-  const [pinnedRooms, setPinnedRooms] = useState<number[]>(() => {
-    if (typeof window === "undefined") return [];
-    try {
-      return JSON.parse(window.localStorage.getItem("gt:pinnedRooms") || "[]") as number[];
-    } catch {
-      return [];
-    }
-  });
-  useEffect(() => {
-    try {
-      window.localStorage.setItem("gt:pinnedRooms", JSON.stringify(pinnedRooms));
-    } catch {
-      /* modo privado: sin fijados no se rompe nada */
-    }
-  }, [pinnedRooms]);
-  // Al montar: manda el servidor. Si allá no hay nada pero este navegador sí tenía
-  // fijados (de antes de guardarlos en el servidor), se suben una vez.
-  useEffect(() => {
-    listRoomPinsFn()
-      .then((ids) => {
-        if (ids.length) return setPinnedRooms(ids);
-        setPinnedRooms((local) => {
-          if (local.length) setRoomPinsFn({ data: { channelIds: local } }).catch(() => {});
-          return local;
-        });
-      })
-      .catch(() => {});
-  }, []);
+  // Rooms FIJADOS arriba (por persona; ver useSidebarPref). El orden de la lista es estable a
+  // propósito: una lista que se reacomoda sola rompe la memoria de dónde está cada room. Lo
+  // único que se mueve es lo que tú fijas, y los rooms sin mensajes en 7 días, que bajan a
+  // «Poco usados».
+  const [pinnedRooms, setPinnedRooms] = useSidebarPref<number>("pinnedRooms");
   const togglePinRoom = (id: number) => {
     const next = pinnedRooms.includes(id) ? pinnedRooms.filter((x) => x !== id) : [...pinnedRooms, id];
     setPinnedRooms(next);
-    setRoomPinsFn({ data: { channelIds: next } }).catch(() => {});
   };
 
-  const [collapsedThreads, setCollapsedThreads] = useState<Set<string>>(() => {
-    if (typeof window === "undefined") return new Set();
-    try {
-      const raw = window.localStorage.getItem("gt:collapsedThreads");
-      return new Set<string>(raw ? (JSON.parse(raw) as string[]) : []);
-    } catch {
-      return new Set();
-    }
-  });
-  useEffect(() => {
-    try {
-      window.localStorage.setItem("gt:collapsedThreads", JSON.stringify([...collapsedThreads]));
-    } catch {
-      /* modo privado / cuota llena: que no plegar no rompa el sidebar */
-    }
-  }, [collapsedThreads]);
+  const [collapsedList, setCollapsedList] = useSidebarPref<string>("collapsedThreads");
+  const collapsedThreads = useMemo(() => new Set(collapsedList), [collapsedList]);
   const toggleThreads = (slug: string) =>
-    setCollapsedThreads((prev) => {
-      const n = new Set(prev);
-      n.has(slug) ? n.delete(slug) : n.add(slug);
-      return n;
-    });
+    setCollapsedList(collapsedThreads.has(slug) ? collapsedList.filter((x) => x !== slug) : [...collapsedList, slug]);
   const canManage = (c: Channel) => user?.isOwner || c.created_by === user?.sub;
 
   return (
@@ -4480,7 +4497,7 @@ function Sidebar({
                   onClick={() => onMarkRoomRead(c.id)}
                   title={t("Marcar como leído")}
                   aria-label={t("Marcar como leído")}
-                  className="p-1 text-muted transition hover:text-ink md:hidden md:group-hover:inline-flex md:group-focus-within:inline-flex"
+                  className="p-2 md:p-1 text-muted transition hover:text-ink md:hidden md:group-hover:inline-flex md:group-focus-within:inline-flex"
                 >
                   <CheckCheck size={14} />
                 </button>
@@ -4488,14 +4505,14 @@ function Sidebar({
               <button
                 onClick={() => togglePinRoom(c.id)}
                 title={isPinned ? t("Quitar de fijados") : t("Fijar arriba")}
-                className={`p-1 transition hover:text-ink ${isPinned ? "text-brand" : "text-muted md:hidden md:group-hover:inline-flex md:group-focus-within:inline-flex"}`}
+                className={`p-2 md:p-1 transition hover:text-ink ${isPinned ? "text-brand" : "text-muted md:hidden md:group-hover:inline-flex md:group-focus-within:inline-flex"}`}
               >
                 <Pin size={14} className={isPinned ? "fill-current" : ""} />
               </button>
               <button
                 onClick={() => onToggleMute("room", c.id)}
                 title={muted ? t("Reactivar notificaciones") : t("Silenciar room")}
-                className="p-1 text-muted transition hover:text-ink md:hidden md:group-hover:inline-flex md:group-focus-within:inline-flex"
+                className="p-2 md:p-1 text-muted transition hover:text-ink md:hidden md:group-hover:inline-flex md:group-focus-within:inline-flex"
               >
                 {muted ? <BellOff size={15} /> : <Bell size={15} />}
               </button>
@@ -4503,7 +4520,7 @@ function Sidebar({
                 <button
                   onClick={() => setSettingsSlug(c.slug)}
                   title={t("Ajustes del room")}
-                  className="p-1 text-muted transition hover:text-ink md:hidden md:group-hover:inline-flex md:group-focus-within:inline-flex"
+                  className="p-2 md:p-1 text-muted transition hover:text-ink md:hidden md:group-hover:inline-flex md:group-focus-within:inline-flex"
                 >
                   <Settings size={15} />
                 </button>
@@ -4640,7 +4657,7 @@ function Sidebar({
                   <button
                     onClick={() => onToggleMute("dm", dm.id)}
                     title={muted ? t("Reactivar notificaciones") : t("Silenciar conversación")}
-                    className="p-1 text-muted transition hover:text-ink md:hidden md:group-hover:inline-flex md:group-focus-within:inline-flex"
+                    className="p-2 md:p-1 text-muted transition hover:text-ink md:hidden md:group-hover:inline-flex md:group-focus-within:inline-flex"
                   >
                     {muted ? <BellOff size={15} /> : <Bell size={15} />}
                   </button>
@@ -4648,7 +4665,7 @@ function Sidebar({
                     onClick={() => cerrarDm(dm.id)}
                     title={t("Quitar de la lista (vuelve si te escriben)")}
                     aria-label={t("Quitar de la lista")}
-                    className="p-1 text-muted transition hover:text-ink md:hidden md:group-hover:inline-flex md:group-focus-within:inline-flex"
+                    className="p-2 md:p-1 text-muted transition hover:text-ink md:hidden md:group-hover:inline-flex md:group-focus-within:inline-flex"
                   >
                     <X size={15} />
                   </button>
@@ -7317,7 +7334,7 @@ function HomeDashboard({
               value={ask}
               onChange={(e) => setAsk(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
+                if (e.key === "Enter" && !e.shiftKey && !isTouch()) {
                   e.preventDefault();
                   submitAsk();
                 }
@@ -8591,7 +8608,16 @@ const Composer = forwardRef<ComposerHandle, {
     editorProps: {
       attributes: { class: "thin-scroll max-h-40 min-h-9 flex-1 overflow-y-auto px-1 py-2 text-sm leading-5 text-ink" },
       // Enter envía (salvo popup de mención abierto o Shift). Shift+Enter → salto nativo.
-      handleKeyDown: (_v, event) => {
+      // En táctil no existe Shift+Enter: ahí Enter es salto de línea y sólo el botón envía
+      // (si no, cada renglón salía como un mensaje a medias).
+      handleKeyDown: (v, event) => {
+        if (event.key === "Enter" && !event.shiftKey && !mentionOpenRef.current && isTouch()) {
+          const br = v.state.schema.nodes.hardBreak;
+          if (!br) return false;
+          event.preventDefault();
+          v.dispatch(v.state.tr.replaceSelectionWith(br.create()).scrollIntoView());
+          return true;
+        }
         if (event.key === "Enter" && !event.shiftKey && !mentionOpenRef.current) {
           event.preventDefault();
           submitRef.current();

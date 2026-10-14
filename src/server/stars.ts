@@ -75,22 +75,28 @@ export const listMutesFn = createServerFn({ method: "GET" }).handler(async () =>
   return db.listMutes(me.sub);
 });
 
-// Rooms fijados arriba en el sidebar (personal; sigue a la persona entre dispositivos).
-export const listRoomPinsFn = createServerFn({ method: "GET" }).handler(async () => {
+// Preferencias del sidebar (rooms fijados, DMs cerrados, hilos plegados): personales y en
+// el servidor para que sigan a la persona entre dispositivos.
+const SIDEBAR_KINDS = ["pinnedRooms", "closedDms", "collapsedThreads"] as const;
+export type SidebarPrefKind = (typeof SIDEBAR_KINDS)[number];
+
+export const listSidebarPrefsFn = createServerFn({ method: "GET" }).handler(async () => {
   const db = await import("../db.server");
   const me = await sessionUser();
-  if (!me) return [];
-  return db.listRoomPins(me.sub);
+  if (!me) return {} as Record<string, (string | number)[]>;
+  return db.listSidebarPrefs(me.sub);
 });
 
-export const setRoomPinsFn = createServerFn({ method: "POST" })
-  .validator((d: { channelIds: number[] }) => ({
-    channelIds: [...new Set(d.channelIds.filter((n) => Number.isInteger(n)))].slice(0, 200),
-  }))
+export const setSidebarPrefFn = createServerFn({ method: "POST" })
+  .validator((d: { kind: SidebarPrefKind; value: (string | number)[] }) => {
+    if (!SIDEBAR_KINDS.includes(d.kind)) throw new Error("preferencia desconocida");
+    const value = [...new Set(d.value.filter((v) => typeof v === "number" || (typeof v === "string" && v.length <= 200)))].slice(0, 500);
+    return { kind: d.kind, value };
+  })
   .handler(async ({ data }) => {
     const db = await import("../db.server");
     const me = await sessionUser();
     if (!me) throw new Error("no autorizado");
-    await db.setRoomPins(me.sub, data.channelIds);
+    await db.setSidebarPref(me.sub, data.kind, data.value);
     return { ok: true as const };
   });
