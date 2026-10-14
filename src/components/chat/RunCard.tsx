@@ -197,6 +197,15 @@ function RunCardBody({ card, channelId, inPanel }: { card: RunCardData; channelI
     const id = setInterval(refresh, 15_000);
     return () => clearInterval(id);
   }, [watchMerge, st?.status, refresh]);
+  // Red de seguridad: si se pierde el «refresh» del room (SSE caído y vuelto), la tarjeta se quedaba
+  // en «construyendo…» con el pedido ya escalado (business #74/#75, 13-oct). Mientras diga que
+  // alguien trabaja, se pone al día sola cada minuto.
+  const working = !!st && !!WORKING[st.status];
+  useEffect(() => {
+    if (!working) return;
+    const id = setInterval(refresh, 60_000);
+    return () => clearInterval(id);
+  }, [working, refresh]);
   useRtSubscribe({
     onEvent: (ev) => {
       if (ev.t === "refresh" && ev.channelId === channelId) refresh();
