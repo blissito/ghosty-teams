@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { DataGrid, type CellMouseArgs, type Column, type RenderCellProps, type RenderEditCellProps, type RowsChangeData } from "react-data-grid";
 import { motion, useReducedMotion } from "motion/react";
 import { Ban, Check, Loader2, MapPin, X } from "lucide-react";
@@ -21,6 +21,22 @@ export type GridRow = {
 };
 
 const BASE_KEYS = new Set(["name", "phone", "email", "website", "address", "category"]);
+
+// Teléfono (<640px): #, Estado y Nombre congelados sumaban 364px y no dejaban ver datos.
+// Ahí sólo se congela el Nombre, angosto. En el servidor no hay pantalla → ancho.
+const NARROW_MQ = "(max-width: 639px)";
+function subscribeNarrow(cb: () => void) {
+  const mq = window.matchMedia(NARROW_MQ);
+  mq.addEventListener("change", cb);
+  return () => mq.removeEventListener("change", cb);
+}
+function useNarrow() {
+  return useSyncExternalStore(
+    subscribeNarrow,
+    () => window.matchMedia(NARROW_MQ).matches,
+    () => false,
+  );
+}
 
 export function aplanar(
   rows: RowData[],
@@ -212,6 +228,7 @@ export function ProspGrid({
   const [peek, setPeek] = useState<{ rowId: number; colKey: string } | null>(null);
   const [dragging, setDragging] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const narrow = useNarrow();
 
   const cols = useMemo<Column<GridRow>[]>(() => {
     const built: Column<GridRow>[] = [
@@ -219,7 +236,7 @@ export function ProspGrid({
         key: "__n",
         name: "#",
         width: 48,
-        frozen: true,
+        frozen: !narrow,
         resizable: false,
         renderCell: ({ rowIdx, row }) =>
           row.__status === "optout" ? (
@@ -237,7 +254,7 @@ export function ProspGrid({
         key: "__status",
         name: t("Estado"),
         width: 96,
-        frozen: true,
+        frozen: !narrow,
         resizable: false,
         renderCell: ({ row }) => {
           const st = row.__status || "new";
@@ -314,6 +331,10 @@ export function ProspGrid({
         if (w) built[i] = { ...built[i], width: w };
       }
     }
+    if (narrow) {
+      const i = built.findIndex((c) => c.key === "name");
+      if (i >= 0) built[i] = { ...built[i], width: 140 };
+    }
     // El orden guardado manda. Lo que no esté en él va al final, en su orden natural: así
     // una columna nueva aparece sin tener que reescribir el orden entero.
     if (colOrder?.length) {
@@ -327,7 +348,7 @@ export function ProspGrid({
       });
     }
     return built;
-  }, [base, columns, latLon, colOrder, colWidths, onColumnHeaderClick, t]);
+  }, [base, columns, latLon, colOrder, colWidths, onColumnHeaderClick, narrow, t]);
 
   /**
    * Pegado from Excel.

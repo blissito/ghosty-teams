@@ -1238,9 +1238,13 @@ export default function ArtifactPanel({
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+    // En táctil el sistema puede cancelar el gesto (scroll, llamada): sin esto `isDragging`
+    // se queda en true y el catcher de pantalla completa bloquea todos los toques.
+    window.addEventListener("pointercancel", onUp);
     return () => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
     };
   }, []);
 
@@ -1361,7 +1365,7 @@ export default function ArtifactPanel({
                       setWidth(Math.min(DEFAULT_W, window.innerWidth - 40))
                     }
                     title={t("Arrastra para redimensionar (doble clic: reset)")}
-                    className="absolute left-0 top-0 z-10 -ml-1 h-full w-2 cursor-col-resize transition-colors hover:bg-brand/40 active:bg-brand/60"
+                    className="absolute left-0 top-0 z-10 -ml-1 hidden h-full w-2 cursor-col-resize touch-none transition-colors hover:bg-brand/40 active:bg-brand/60 lg:block"
                   />
                 ) : null}
                 {/* Colapsar: pastilla contrastante DENTRO del borde izquierdo (el overflow-hidden

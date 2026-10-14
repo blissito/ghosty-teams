@@ -1,9 +1,9 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence, useReducedMotion } from "motion/react";
-import { Target as TargetIcon, ArrowLeft, Search, Loader2, Archive, ArchiveRestore, ChevronRight, ClipboardPaste, MessageCircle, Trash2, X } from "lucide-react";
+import { Target as TargetIcon, ArrowLeft, Search, Loader2, Archive, ArchiveRestore, ChevronRight, ClipboardPaste, MessageCircle, Trash2, Upload, X } from "lucide-react";
 import { CtaSetting, SenderSetting } from "../components/prospeccion/SenderSetting";
-import { DropZone, type Sheet } from "../components/prospeccion/DropZone";
+import { DropZone, PickSheetButton, type Sheet } from "../components/prospeccion/DropZone";
 import { ImportReview } from "../components/prospeccion/ImportReview";
 import { planImport, type Plan, type Target } from "../lib/prospeccion-mapping";
 import { importInChunks } from "../lib/prospeccion-import-client";
@@ -346,6 +346,14 @@ function ProspeccionPage() {
           >
             <ClipboardPaste size={13} /> {t("o suelta aquí tu .xlsx o .csv — o empieza con una lista vacía")}
           </button>
+          {/* En táctil no se puede soltar un archivo: el selector del sistema lo suple. Con
+              mouse se queda oculto (ahí se arrastra). */}
+          <PickSheetButton
+            disabled={searching}
+            className="mt-2 ml-3 hidden items-center pointer-coarse:inline-flex gap-1.5 text-xs text-muted hover:text-ink disabled:opacity-50"
+          >
+            <Upload size={13} /> {t("Elegir archivo")}
+          </PickSheetButton>
           <AnimatePresence>
             {error ? (
               <motion.p

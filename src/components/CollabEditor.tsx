@@ -11,7 +11,7 @@ import {
   ThreadStoreAuth,
   YjsThreadStore,
 } from "@blocknote/core/comments";
-import { MessageSquare } from "lucide-react";
+import { MessageSquare, X } from "lucide-react";
 import { useT } from "../i18n";
 import { en as blockNoteEn } from "@blocknote/core/locales";
 import {
@@ -546,10 +546,22 @@ export default function CollabEditor({
           </div>
         </div>
         {sidebar && (
-          <aside className="thin-scroll w-[380px] shrink-0 overflow-y-auto overflow-x-hidden border-l border-border bg-surface px-3 py-4">
-            <p className="px-1 pb-2 text-xs font-semibold uppercase tracking-wide text-muted">
-              {t("Comentarios")}
-            </p>
+          // En teléfono 380px dejaban el documento en 0: bajo md el panel es una hoja a
+          // pantalla completa con su propio cerrar; en md+ queda como columna lateral.
+          <aside className="thin-scroll fixed inset-0 z-50 overflow-y-auto overflow-x-hidden bg-surface px-3 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] md:static md:z-auto md:w-[380px] md:shrink-0 md:border-l md:border-border md:pt-4">
+            <div className="flex items-center justify-between gap-2 pb-2">
+              <p className="px-1 text-xs font-semibold uppercase tracking-wide text-muted">
+                {t("Comentarios")}
+              </p>
+              <button
+                type="button"
+                onClick={alternarHilos}
+                aria-label={t("Cerrar")}
+                className="gt-tap grid size-8 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-ink md:hidden"
+              >
+                <X size={16} />
+              </button>
+            </div>
             {abiertos === 0 && (
               <p className="px-1 text-xs leading-relaxed text-muted">
                 {t("Selecciona texto y usa el botón de comentario para abrir un hilo.")}

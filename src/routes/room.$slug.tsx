@@ -620,7 +620,8 @@ function RoomAbierto() {
           )}
 
           <div
-            className={`absolute right-4 top-4 flex flex-wrap items-center justify-end gap-2 transition-opacity ${
+            // top con safe-area: en iPhone con muesca los botones caían bajo la barra de estado.
+            className={`absolute right-4 top-[calc(env(safe-area-inset-top)+1rem)] flex flex-wrap items-center justify-end gap-2 transition-opacity md:top-4 ${
               panelSala ? "pointer-events-none opacity-0" : "opacity-100"
             }`}
           >
@@ -790,7 +791,7 @@ function RoomAbierto() {
           {...dropHandlers}
           // ⚠️ El `sm:flex` de antes forzaba el chat SIEMPRE visible en escritorio: el botón
           // de ocultar no hacía nada porque esta clase lo pisaba.
-          className={`${chatAbierto ? "flex sm:flex" : "hidden sm:hidden"} absolute inset-y-0 right-0 z-10 w-full flex-col border-l border-border bg-surface sm:relative sm:z-0 sm:w-80 sm:shrink-0 lg:w-96`}
+          className={`${chatAbierto ? "flex sm:flex" : "hidden sm:hidden"} absolute inset-y-0 right-0 z-10 w-full flex-col border-l border-border bg-surface pt-[env(safe-area-inset-top)] sm:relative sm:z-0 sm:w-80 sm:shrink-0 sm:pt-0 lg:w-96`}
         >
           <DropOverlay show={dragOver} />
           <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">

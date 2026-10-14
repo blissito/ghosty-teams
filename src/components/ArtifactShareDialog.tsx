@@ -206,7 +206,7 @@ export default function ArtifactShareDialog({
         role="dialog"
         aria-modal="true"
         aria-label={t("Compartir artefacto")}
-        className="absolute right-2 top-11 z-50 flex w-[min(26rem,calc(100vw-1rem))] flex-col gap-4 rounded-xl border border-border bg-surface-2 p-4 shadow-xl"
+        className="absolute right-2 top-11 z-50 flex max-h-[calc(100dvh-4rem)] w-[min(26rem,calc(100vw-1rem))] flex-col gap-4 overflow-y-auto rounded-xl border border-border bg-surface-2 p-4 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-3">

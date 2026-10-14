@@ -478,7 +478,7 @@ function ListPage() {
   const { list } = data;
 
   return (
-    <div className="h-screen bg-surface text-ink flex flex-col">
+    <div className="h-screen bg-surface text-ink flex flex-col pt-[env(safe-area-inset-top)] md:pt-0">
       <header className="shrink-0 border-b border-border px-5 py-3">
         <Link to="/prospeccion" className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-ink mb-1.5">
           <ArrowLeft size={13} /> {t("Prospección")}
@@ -492,7 +492,9 @@ function ListPage() {
               <p className="text-xs text-muted mt-0.5">{list.criteria}</p>
             ) : null}
           </div>
-          <div className="flex items-center gap-4">
+          {/* En teléfono los contadores van en su propia fila (con scroll lateral) y los
+              botones envuelven debajo; en sm+ todo sigue en una sola línea. */}
+          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-nowrap sm:gap-4">
             {/*
               El embudo, en el vocabulario de prospección y no en el del mecanismo.
               «Abrieron» y «contestaron» nombran lo que pasó; TIBIO y CALIENTE nombran qué
@@ -505,6 +507,7 @@ function ListPage() {
               Cada número FILTRA al hacer clic: un contador que no lleva a las filas que
               cuenta obliga a reconstruir el filtro a mano.
             */}
+            <div className="thin-scroll flex w-full items-center gap-4 overflow-x-auto sm:w-auto sm:overflow-visible">
             {[
               { n: list.rows, l: t("filas"), c: null as Condition | null, hint: t("Toda la lista") },
               { n: list.sent, l: t("enviados"), c: { op: "status", value: "sent" } as Condition, hint: t("Ya les salió el correo") },
@@ -517,7 +520,7 @@ function ListPage() {
                 onClick={() => setFilter(x.c ? [x.c] : [])}
                 title={x.hint}
                 disabled={!x.n && !!x.c}
-                className="text-center px-1 rounded-lg hover:bg-surface-3 disabled:hover:bg-transparent disabled:opacity-50 transition-colors"
+                className="shrink-0 text-center px-1 rounded-lg hover:bg-surface-3 disabled:hover:bg-transparent disabled:opacity-50 transition-colors"
               >
                 <div className={`text-base font-bold tabular-nums ${x.l === t("calientes") && x.n ? "text-amber-500" : ""}`}>
                   {x.n}
@@ -525,6 +528,7 @@ function ListPage() {
                 <div className="text-[10px] uppercase tracking-wide text-muted">{x.l}</div>
               </button>
             ))}
+            </div>
             {/*
               ⚠️ El botón dice el NÚMERO, nunca sólo el verbo. Del spec: «Mandar» sobre una
               vista de 312 y sobre una lista de 10,728 es la misma palabra y dos

@@ -69,6 +69,14 @@ export default function CommentsLayer({
   const [lista, setLista] = useState(false);
   const [ocupado, setOcupado] = useState(false);
   const [margen, setMargen] = useState(false);
+  // «Resolver todas» pide un segundo toque: en el teléfono el chip es diminuto y un roce
+  // cerraba todas las observaciones de golpe. Se desarma solo a los 3 s.
+  const [armado, setArmado] = useState(false);
+  useEffect(() => {
+    if (!armado) return;
+    const id = setTimeout(() => setArmado(false), 3000);
+    return () => clearTimeout(id);
+  }, [armado]);
   const [tops, setTops] = useState<Record<string, number>>({});
 
   const idx = actual ? abiertas.findIndex((c) => c.id === actual) : -1;
@@ -284,7 +292,7 @@ export default function CommentsLayer({
       {visible ? (
         <div
           style={{ position: "fixed", top, right: pos.derecha }}
-          className="z-[70] flex items-center gap-0.5 rounded-full border border-border bg-surface/95 px-1.5 py-1 text-ink shadow-lg backdrop-blur"
+          className="z-[70] flex items-center gap-0.5 pointer-coarse:gap-1 rounded-full border border-border bg-surface/95 px-1.5 py-1 text-ink shadow-lg backdrop-blur"
         >
           {abiertas.length ? (
             <>
@@ -294,14 +302,14 @@ export default function CommentsLayer({
                 aria-label={t("Observación anterior")}
                 disabled={idx <= 0}
                 onClick={() => abiertas[idx - 1] && ir(abiertas[idx - 1])}
-                className="rounded-full p-1 transition hover:text-brand disabled:opacity-40"
+                className="gt-tap rounded-full p-1 transition hover:text-brand disabled:opacity-40"
               >
                 <ChevronLeft size={14} />
               </button>
               <button
                 type="button"
                 onClick={() => ir(abiertas[Math.max(0, idx)])}
-                className="px-1 text-[11px] font-semibold tabular-nums text-ink hover:text-brand"
+                className="gt-tap px-1 text-[11px] font-semibold tabular-nums text-ink hover:text-brand"
                 title={t("Observaciones del agente sobre este documento")}
               >
                 {idx < 0
@@ -317,7 +325,7 @@ export default function CommentsLayer({
                 aria-label={t("Observación siguiente")}
                 disabled={idx >= abiertas.length - 1}
                 onClick={() => abiertas[idx + 1] && ir(abiertas[idx + 1])}
-                className="rounded-full p-1 transition hover:text-brand disabled:opacity-40"
+                className="gt-tap rounded-full p-1 transition hover:text-brand disabled:opacity-40"
               >
                 <ChevronRight size={14} />
               </button>
@@ -326,20 +334,25 @@ export default function CommentsLayer({
                 aria-label={t("Ver todas")}
                 title={t("Ver todas")}
                 onClick={() => setLista((v) => !v)}
-                className="rounded-full p-1 transition hover:text-brand"
+                className="gt-tap rounded-full p-1 transition hover:text-brand"
               >
                 <List size={14} />
               </button>
               {abiertas.length > 1 ? (
                 <button
                   type="button"
-                  aria-label={t("Resolver todas")}
-                  title={t("Resolver todas")}
+                  aria-label={armado ? t("¿Seguro? Resolver todas") : t("Resolver todas")}
+                  title={armado ? t("¿Seguro? Resolver todas") : t("Resolver todas")}
                   disabled={ocupado}
-                  onClick={() => void resolver("*", true)}
-                  className="rounded-full p-1 transition hover:text-emerald-600 disabled:opacity-40"
+                  onClick={() => {
+                    if (!armado) { setArmado(true); return; }
+                    setArmado(false);
+                    void resolver("*", true);
+                  }}
+                  className={`gt-tap inline-flex items-center gap-1 rounded-full p-1 transition hover:text-emerald-600 disabled:opacity-40 ${armado ? "bg-emerald-600 px-2 text-white hover:text-white" : ""}`}
                 >
                   <CheckCheck size={14} />
+                  {armado ? <span className="text-[11px] font-semibold">{t("¿Seguro?")}</span> : null}
                 </button>
               ) : null}
               {nota && !margen ? (
@@ -347,7 +360,7 @@ export default function CommentsLayer({
                   type="button"
                   aria-label={t("Cerrar observación")}
                   onClick={() => setActual(null)}
-                  className="rounded-full p-1 transition hover:text-brand"
+                  className="gt-tap rounded-full p-1 transition hover:text-brand"
                 >
                   <X size={14} />
                 </button>

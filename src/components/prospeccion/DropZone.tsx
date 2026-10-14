@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useRef, useState } from "react";
 import { motion, AnimatePresence, useReducedMotion } from "motion/react";
 import { FileSpreadsheet, Loader2, Upload } from "lucide-react";
 import { useT } from "../../i18n";
@@ -75,6 +75,50 @@ function splitCsvLine(line: string, sep: string): string[] {
   return out;
 }
 
+/** El mismo `handleFile` de la zona, para que un botón adentro abra el selector. */
+const PickCtx = createContext<((file: File) => void) | null>(null);
+
+/**
+ * Botón que abre el selector de archivos del sistema. En teléfono no hay arrastrar y
+ * soltar: sin esto importar una hoja era imposible. Debe ir DENTRO de un <DropZone>.
+ */
+export function PickSheetButton({
+  className,
+  disabled,
+  children,
+}: {
+  className?: string;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  const handleFile = useContext(PickCtx);
+  const inputRef = useRef<HTMLInputElement>(null);
+  return (
+    <>
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".xlsx,.xls,.csv"
+        hidden
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          // Se limpia para que volver a elegir el MISMO archivo dispare otra vez.
+          e.target.value = "";
+          if (f && handleFile) handleFile(f);
+        }}
+      />
+      <button
+        type="button"
+        disabled={disabled || !handleFile}
+        onClick={() => inputRef.current?.click()}
+        className={className}
+      >
+        {children}
+      </button>
+    </>
+  );
+}
+
 /**
  * Zona de soltar que envuelve a sus hijos.
  *
@@ -129,7 +173,7 @@ export function DropZone({
         if (f) void handleFile(f);
       }}
     >
-      {children}
+      <PickCtx.Provider value={(f) => void handleFile(f)}>{children}</PickCtx.Provider>
 
       <AnimatePresence>
         {over || reading ? (
