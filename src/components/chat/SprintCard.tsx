@@ -32,10 +32,10 @@ const STATUS: Record<string, { label: string; cls: string }> = {
 };
 
 /**
- * En el hilo va de LECTURA: objetivo, avance y cada ticket en una fila corta (número, tamaño,
- * título, «tras #n», estado y ligas), más la acción principal. Las ediciones (interruptores,
- * títulos, criterios, pedir cambios) viven en el panel lateral (`expanded`). La versión que
- * sólo traía el conteo obligaba a abrir el panel para saber qué se iba a construir (14-oct).
+ * La MISMA tarjeta en el hilo y en el panel lateral (`expanded`): tickets, interruptores,
+ * títulos, criterios, «Dejar como issue» y «Pedir cambios» se usan sin salir de la
+ * conversación. En el hilo suma «Ver sprint» para abrirla en grande. Una versión compacta
+ * (01-oct) y luego una de sólo lectura (14-oct) obligaban a abrir el panel para decidir.
  */
 export function SprintCard({ card, channelId, expanded = false }: { card: { sprintId: number }; channelId: number; expanded?: boolean }) {
   const t = useT();
@@ -88,93 +88,6 @@ export function SprintCard({ card, channelId, expanded = false }: { card: { spri
     s === "you_review" ? t("te toca revisar el PR") : s === "you_decide" ? t("te toca decidir") : s === "box_wait" ? t("en espera de caja") : (s ?? "");
   const openPanel = () => onOpenArtifact?.({ kind: "sprint", title: st.title, sprintId: st.id, channelId });
 
-  if (!expanded) {
-    return (
-      <div className="mt-1.5 max-w-xl overflow-hidden rounded-lg gt-card">
-        <button type="button" onClick={openPanel} className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-surface-3/40">
-          <span className="text-[11px] font-bold uppercase tracking-wide text-ink">🧩 {t("Sprint")}</span>
-          <span className="min-w-0 flex-1 truncate text-sm font-semibold text-ink">{st.title}</span>
-          <span
-            className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-              draft ? "bg-amber-500/15 text-amber-700 dark:text-amber-400" : done ? STATUS.merged.cls : "bg-brand/15 text-brand"
-            }`}
-          >
-            {draft ? t("Borrador") : done ? t("Terminado") : `${merged}/${included.length}`}
-          </span>
-        </button>
-        <div className="px-3 pb-3">
-          <div className="flex gap-1" role="img" aria-label={`${merged} / ${included.length}`}>
-            {included.map((i) => (
-              <div key={i.id} className={`h-1.5 flex-1 rounded-full ${i.status === "merged" || i.status === "skipped" ? "bg-violet-500" : i.status === "pr" ? "bg-emerald-500" : i.status === "active" ? "bg-brand" : "bg-surface-3"}`} />
-            ))}
-          </div>
-          {st.goal && <p className="mt-2 line-clamp-2 text-xs text-muted">{st.goal}</p>}
-          <ol className="mt-2 divide-y divide-border rounded-md border border-border">
-            {st.items.map((i) => {
-              const deps = i.dependsOn.map((d) => byKey.get(d)?.idx).filter(Boolean);
-              const s = STATUS[i.status] ?? STATUS.pending;
-              return (
-                <li key={i.id} className={`flex items-center gap-2 px-2 py-1 text-xs ${!i.included ? "opacity-50" : ""}`}>
-                  <span className="w-4 shrink-0 text-right font-mono text-[10px] text-muted">{i.idx}</span>
-                  <span className="shrink-0 rounded border border-border px-1 font-mono text-[10px] text-muted">{i.size}</span>
-                  <span className={`min-w-0 flex-1 truncate text-ink ${!i.included ? "line-through" : ""}`} title={i.title}>
-                    {i.title}
-                  </span>
-                  {deps.length > 0 && <span className="hidden shrink-0 text-[10px] text-muted sm:inline">{t("tras")} #{deps.join(", #")}</span>}
-                  {!draft && i.threadUrl && (
-                    <a href={i.threadUrl} className="shrink-0 text-[11px] text-brand hover:underline">
-                      {t("Pedido")} →
-                    </a>
-                  )}
-                  {!draft && i.prUrl && (
-                    <a href={i.prUrl} target="_blank" rel="noreferrer" className="shrink-0 text-[11px] text-muted hover:text-ink">
-                      PR ↗
-                    </a>
-                  )}
-                  {!draft && i.included && <span className={`shrink-0 rounded-full px-1.5 py-px text-[10px] font-semibold ${s.cls}`}>{t(s.label)}</span>}
-                </li>
-              );
-            })}
-          </ol>
-          <p className="mt-1.5 text-xs text-muted">
-            {included.length} {included.length === 1 ? t("ticket") : t("tickets")}
-            {!draft && working ? ` · ${working} ${t("en curso")}` : ""}
-            {!draft && st.items.length > included.length ? ` · ${st.items.length - included.length} ${t("fuera")}` : ""}
-            {st.repo && <span className="ml-1 font-mono">· {st.repo}</span>}
-          </p>
-          {!draft && !done && current && (
-            <p className="mt-1 truncate text-xs text-ink">
-              <span className="text-muted">{t("Ahora")}:</span> #{current.idx} {current.title}
-              {current.stage && <span className="font-semibold"> · {stageLabel(current.stage)}</span>}
-              {current.threadUrl && (
-                <a href={current.threadUrl} className="ml-1.5 text-brand hover:underline">
-                  {t("Pedido")} →
-                </a>
-              )}
-            </p>
-          )}
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            {draft && st.canEdit && (
-              <button
-                type="button"
-                disabled={!!busy || included.length === 0}
-                onClick={() => void run("approve", () => factorySprintApproveFn({ data: { sprintId: st.id } }))}
-                className="flex items-center gap-1.5 rounded-full bg-brand px-3 py-1 text-xs font-bold text-brand-fg hover:opacity-90 disabled:opacity-60"
-              >
-                {busy === "approve" ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
-                {t("Crear sprint")} · {included.length}
-              </button>
-            )}
-            <button type="button" onClick={openPanel} className="rounded-full border border-border px-3 py-1 text-xs font-semibold text-muted hover:text-ink">
-              {t("Ver sprint")}
-            </button>
-          </div>
-          {err && <p className="mt-2 text-xs text-red-600 dark:text-red-400">{err}</p>}
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="mt-1.5 max-w-xl overflow-hidden rounded-lg gt-card">
       <div className="flex items-center gap-2 border-b border-border px-3 py-2">
@@ -187,6 +100,11 @@ export function SprintCard({ card, channelId, expanded = false }: { card: { spri
         >
           {draft ? t("Borrador") : done ? t("Terminado") : `${merged}/${included.length}`}
         </span>
+        {!expanded && (
+          <button type="button" onClick={openPanel} className="shrink-0 rounded-full border border-border px-2.5 py-0.5 text-[11px] font-semibold text-muted hover:text-ink">
+            {t("Ver sprint")}
+          </button>
+        )}
       </div>
       <div className="p-3">
         <p className="text-xs text-muted">
@@ -199,6 +117,13 @@ export function SprintCard({ card, channelId, expanded = false }: { card: { spri
               <div key={i.id} className={`h-1.5 flex-1 rounded-full ${i.status === "merged" || i.status === "skipped" ? "bg-violet-500" : i.status === "pr" ? "bg-emerald-500" : i.status === "active" ? "bg-brand" : "bg-surface-3"}`} />
             ))}
           </div>
+        )}
+        {!draft && !done && current && (
+          <p className="mt-1.5 truncate text-xs text-ink">
+            <span className="text-muted">{t("Ahora")}:</span> #{current.idx} {current.title}
+            {current.stage && <span className="font-semibold"> · {stageLabel(current.stage)}</span>}
+            {working > 1 && <span className="text-muted"> · {working} {t("en curso")}</span>}
+          </p>
         )}
         <ol className="mt-2 divide-y divide-border rounded-md border border-border">
           {st.items.map((i) => {
