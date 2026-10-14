@@ -999,6 +999,16 @@ async function migrate(): Promise<void> {
   await exec("CREATE INDEX IF NOT EXISTS gt_factory_sprint_items_sprint ON gt_factory_sprint_items(sprint_id, idx)");
   // Sprint activo que éste reemplaza al aprobarse (la persona re-partió el trabajo, MailMask 4-oct).
   await addColumn("gt_factory_sprints", "replaces", "INTEGER");
+  // «Pedir cambios» con rastro (14-oct, patrón Copilot/Linear): la nota que se pidió, quién,
+  // cuándo, el mensaje que la publicó en el hilo y sobre qué versión se pidió (pendiente
+  // mientras version == change_version). `prev_*` = foto del borrador anterior para el diff.
+  await addColumn("gt_factory_sprints", "change_note", "TEXT");
+  await addColumn("gt_factory_sprints", "change_by_name", "TEXT");
+  await addColumn("gt_factory_sprints", "change_msg_id", "INTEGER");
+  await addColumn("gt_factory_sprints", "change_at", "INTEGER");
+  await addColumn("gt_factory_sprints", "change_version", "INTEGER");
+  await addColumn("gt_factory_sprints", "prev_items", "TEXT");
+  await addColumn("gt_factory_sprints", "prev_version", "INTEGER");
   await addColumn("gt_factory_runs", "sprint_item_id", "INTEGER");
   // Issue de GitHub del ticket / pedido: la PLATAFORMA mete `Closes #N` en su PR (como Copilot,
   // Jules o Devin); un ticket que se deja fuera puede quedar como issue para después (5-oct).

@@ -1220,6 +1220,9 @@ async function readSprint(sprintId: number) {
       threadUrl: run ? `/c/${ch.slug}?thread=${run.rootMsgId}` : null,
     });
   }
+  // Qué cambió respecto al borrador anterior, por `key` (los ids cambian en cada reenvío).
+  const diff = sprint.prevItems && sprint.prevVersion ? S.sprintDiff(sprint.prevItems, items) : null;
+  const root = sprint.rootMsgId ?? sprint.cardMsgId;
   return {
     id: sprint.id,
     title: sprint.title,
@@ -1228,7 +1231,22 @@ async function readSprint(sprintId: number) {
     status: sprint.status,
     version: sprint.version,
     canEdit,
-    threadUrl: sprint.cardMsgId ? `/c/${ch.slug}?thread=${sprint.cardMsgId}` : null,
+    threadUrl: root ? `/c/${ch.slug}?thread=${root}` : null,
+    // La última nota de «Pedir cambios». `pending` = se pidió sobre la versión que hay ahora y
+    // Arqui todavía no entrega otra; sale del servidor para que sobreviva a recargas y la vea todo el room.
+    change: sprint.changeNote
+      ? {
+          note: sprint.changeNote,
+          byName: sprint.changeByName,
+          at: sprint.changeAt,
+          msgId: sprint.changeMsgId,
+          pending: sprint.changeVersion === sprint.version,
+          // La versión actual es la respuesta a esa nota.
+          answered: sprint.prevVersion != null && sprint.changeVersion === sprint.prevVersion,
+        }
+      : null,
+    prevVersion: sprint.prevVersion,
+    diff,
     items: out,
   };
 }
@@ -1313,11 +1331,50 @@ export const factorySprintChangesFn = createServerFn({ method: "POST" })
     const note = String(data.note ?? "").trim().slice(0, 2000);
     if (!note) throw new Error("di qué cambiar");
     const items = await S.getSprintItems(sprint.id);
-    const current = items.map((i) => `${i.key}. ${i.title} [${i.size}]${i.included ? "" : " (fuera)"}${i.dependsOn.length ? ` · tras ${i.dependsOn.join(", ")}` : ""}`).join("\n");
-    await wakePlanForSprint(me.sub, sprint.channelId, sprint.cardMsgId, `sprint:${sprint.id}`,
+    // El borrador COMPLETO, con cuerpo: la persona pudo editar tickets a mano y Arqui los
+    // reescribía desde su memoria (se perdían). Los que están fuera se marcan.
+    const current = items
+      .map(
+        (i) =>
+          `### ${i.key}. ${i.title} [${i.size}]${i.included ? "" : " (FUERA: la persona lo dejó fuera)"}${i.dependsOn.length ? ` · tras ${i.dependsOn.join(", ")}` : ""}\n${i.bodyMd.replace(/^# .*\n+/, "").trim()}`,
+      )
+      .join("\n\n");
+    // Hilo REAL de la tarjeta: si el sprint se pidió dentro de un hilo, la tarjeta es una
+    // respuesta y su raíz es la del pedido.
+    const root = sprint.rootMsgId ?? sprint.cardMsgId;
+    // La nota se publica en el hilo como mensaje de quien la pidió: es el acuse y la evidencia
+    // (patrón Copilot/Linear). Inserción directa y no postMessageAs: su auto-seguir abriría
+    // OTRO turno de @plan además del despertador de abajo.
+    const db = await import("../../db.server");
+    const bus = await import("../bus.server");
+    const { currentNamespace } = await import("../tenant.server");
+    let noteMsgId: number | null = null;
+    if (root) {
+      const rootMsg = await db.getMessage(root).catch(() => null);
+      const { id } = await db.createMessage({
+        channelId: sprint.channelId,
+        parentId: root,
+        sender: me.name ?? "Una persona",
+        senderSub: me.sub,
+        avatar: me.avatar ?? "",
+        body: `🔁 **Cambios al sprint** (v${sprint.version}): ${note}`,
+        topic: (rootMsg as { topic?: string } | null)?.topic ?? "general",
+      });
+      noteMsgId = id;
+      const msg = await db.getMessage(id);
+      if (msg) bus.publish(bus.ch.room(await currentNamespace(), sprint.channelId), { t: "message:new", msg });
+    }
+    const { dbq } = await import("../../dbq.server");
+    await dbq(
+      "UPDATE gt_factory_sprints SET change_note = ?, change_by_name = ?, change_msg_id = ?, change_at = unixepoch(), change_version = version WHERE id = ?",
+      [note, me.name ?? null, noteMsgId, sprint.id],
+    );
+    await wakePlanForSprint(me.sub, sprint.channelId, root, `sprint:${sprint.id}`,
       `${me.name ?? "Una persona"} pidió cambios al sprint «${sprint.title}» (sprint_id ${sprint.id}, repo ${sprint.repo ?? "—"}): «${note}».\n` +
-        `Ajústalo y entrégalo otra vez con factory_sprint_submit mandando sprint_id ${sprint.id}. No discutas lo decidido.\n\n## Borrador actual\n${current}`);
-    return { ok: true as const };
+        `Ajústalo y entrégalo otra vez con factory_sprint_submit mandando sprint_id ${sprint.id}. No discutas lo decidido. ` +
+        `Conserva el texto de cada ticket tal cual (pudo editarse a mano) salvo lo que la nota pida cambiar, y respeta los que están FUERA. ` +
+        `Al entregar, di en una línea qué cambiaste.\n\n## Borrador actual (v${sprint.version})\n${current}`);
+    return readSprint(sprint.id);
   });
 
 /** Ticket fallido: reintentarlo o quitarlo del sprint. */

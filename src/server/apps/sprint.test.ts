@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { findCycle, itemStatusOf, nextReady, ticketFiles, ticketLine, validateSprintItems } from "./sprint.server";
+import { findCycle, itemStatusOf, nextReady, sprintDiff, ticketFiles, ticketLine, validateSprintItems } from "./sprint.server";
 
 const t = (key: string, depends_on: string[] = [], size = "S") => ({ key, title: `Ticket ${key} del CLI`, size, depends_on, criteria: "- pasa `npm test` y el lint" });
 
@@ -80,5 +80,17 @@ describe("ticketLine (avisos del hilo del sprint)", () => {
   it("activo o pendiente no se anuncian (el arranque lo avisa startItem)", () => {
     expect(ticketLine("active", it0, 3, null, "")).toBeNull();
     expect(ticketLine("pending", it0, 3, null, "")).toBeNull();
+  });
+});
+
+describe("sprint: qué cambió por la nota de «Pedir cambios»", () => {
+  const p = (key: string, title = `T ${key}`, bodyMd = "x") => ({ key, title, size: "S", dependsOn: [] as string[], bodyMd, included: true });
+  it("nuevo, cambió y salió se calculan por key", () => {
+    const d = sprintDiff([p("A"), p("B"), p("C")], [p("A"), p("B", "T B renombrado"), p("D")]);
+    expect(d).toEqual({ added: ["D"], changed: ["B"], removed: [{ key: "C", title: "T C" }] });
+  });
+  it("un cuerpo editado cuenta como cambio; lo idéntico no", () => {
+    expect(sprintDiff([p("A"), p("B")], [p("A"), p("B", "T B", "y")]).changed).toEqual(["B"]);
+    expect(sprintDiff([p("A")], [p("A")])).toEqual({ added: [], changed: [], removed: [] });
   });
 });

@@ -168,7 +168,36 @@ export type SprintRow = {
   approvedBy: string | null;
   origin: string | null;
   goalRef: string | null;
+  changeNote: string | null;
+  changeByName: string | null;
+  changeMsgId: number | null;
+  changeAt: number | null;
+  changeVersion: number | null;
+  prevItems: PrevItem[] | null;
+  prevVersion: number | null;
 };
+
+/** Foto de un ticket del borrador anterior (para el diff «qué cambió por tu nota»). */
+export type PrevItem = { key: string; title: string; size: string; dependsOn: string[]; bodyMd: string; included: boolean };
+
+/** Qué cambió entre dos borradores, por `key` (los ids cambian en cada reenvío). */
+export function sprintDiff(
+  prev: PrevItem[],
+  items: { key: string; title: string; size: string; dependsOn: string[]; bodyMd: string }[],
+): { added: string[]; changed: string[]; removed: { key: string; title: string }[] } {
+  const before = new Map(prev.map((p) => [p.key, p]));
+  const now = new Set(items.map((i) => i.key));
+  return {
+    added: items.filter((i) => !before.has(i.key)).map((i) => i.key),
+    changed: items
+      .filter((i) => {
+        const p = before.get(i.key);
+        return !!p && (p.title !== i.title || p.bodyMd !== i.bodyMd || p.size !== i.size || p.dependsOn.join() !== i.dependsOn.join());
+      })
+      .map((i) => i.key),
+    removed: prev.filter((p) => !now.has(p.key)).map((p) => ({ key: p.key, title: p.title })),
+  };
+}
 
 export type SprintItemRow = {
   id: number;
@@ -199,6 +228,20 @@ const toSprint = (r: Record<string, any>): SprintRow => ({
   approvedBy: r.approved_by ?? null,
   origin: r.origin ?? null,
   goalRef: r.goal_ref ?? null,
+  changeNote: r.change_note ?? null,
+  changeByName: r.change_by_name ?? null,
+  changeMsgId: r.change_msg_id != null ? Number(r.change_msg_id) : null,
+  changeAt: r.change_at != null ? Number(r.change_at) : null,
+  changeVersion: r.change_version != null ? Number(r.change_version) : null,
+  prevItems: (() => {
+    if (!r.prev_items) return null;
+    try {
+      return JSON.parse(String(r.prev_items));
+    } catch {
+      return null;
+    }
+  })(),
+  prevVersion: r.prev_version != null ? Number(r.prev_version) : null,
 });
 
 const toItem = (r: Record<string, any>): SprintItemRow => ({
@@ -274,14 +317,19 @@ export async function submitSprint(opts: {
     const cur = await getSprint(opts.sprintId);
     if (!cur) throw new Error("no existe ese sprint");
     if (cur.status !== "draft") throw new Error("ese sprint ya se aprobó: propón uno nuevo");
+    // Foto del borrador que se va a reemplazar: la tarjeta enseña qué cambió (por key).
+    const prev = await getSprintItems(cur.id);
+    const snap: PrevItem[] = prev.map((i) => ({ key: i.key, title: i.title, size: i.size, dependsOn: i.dependsOn, bodyMd: i.bodyMd, included: i.included }));
     await dbq("DELETE FROM gt_factory_sprint_items WHERE sprint_id = ?", [cur.id]);
     await insertItems(cur.id, opts.items);
-    await dbq("UPDATE gt_factory_sprints SET title = ?, goal = ?, replaces = ?, version = version + 1, updated_at = unixepoch() WHERE id = ?", [
-      opts.title,
-      opts.goal,
-      opts.replaces ?? null,
-      cur.id,
-    ]);
+    // Lo que la persona dejó fuera sigue fuera: antes un reenvío lo volvía a encender.
+    const off = prev.filter((i) => !i.included).map((i) => i.key);
+    if (off.length)
+      await dbq(`UPDATE gt_factory_sprint_items SET included = 0 WHERE sprint_id = ? AND key IN (${off.map(() => "?").join(",")})`, [cur.id, ...off]);
+    await dbq(
+      "UPDATE gt_factory_sprints SET title = ?, goal = ?, replaces = ?, prev_items = ?, prev_version = version, version = version + 1, updated_at = unixepoch() WHERE id = ?",
+      [opts.title, opts.goal, opts.replaces ?? null, JSON.stringify(snap), cur.id],
+    );
     void R.refreshRoom(cur.channelId);
     return (await getSprint(cur.id))!;
   }

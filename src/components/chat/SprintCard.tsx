@@ -53,10 +53,13 @@ export function SprintCard({ card, channelId, expanded = false }: { card: { spri
   // (se abre AHÍ, no al fondo de la tarjeta, para que se vea qué se está pidiendo).
   const [asking, setAsking] = useState<"sprint" | number | null>(null);
   const [note, setNote] = useState("");
-  // La nota que ya se mandó: se enseña arriba con spinner hasta que llega la versión nueva.
-  const [sent, setSent] = useState<string | null>(null);
-  const [sentAt, setSentAt] = useState(0);
+  // La nota pendiente sale del SERVIDOR (`change.pending`): sobrevive a recargas y la ve todo
+  // el room. Se enseña arriba con contador hasta que Arqui entrega la versión nueva.
+  const sent = st?.change?.pending ? st.change.note : null;
+  const sentAt = (st?.change?.at ?? 0) * 1000;
   const [now, setNow] = useState(() => Date.now());
+  // Se cerró el aviso «v{N} · por la nota de …» de esta versión.
+  const [seenVersion, setSeenVersion] = useState<number | null>(null);
   // Reloj del aviso: rehacer un sprint son minutos (Arqui relee el repo); sin un contador el
   // spinner parece colgado.
   useEffect(() => {
@@ -64,9 +67,6 @@ export function SprintCard({ card, channelId, expanded = false }: { card: { spri
     const iv = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(iv);
   }, [sent]);
-  // Llegó una versión nueva del borrador: se puede volver a pedir cambios.
-  const version = st?.version;
-  useEffect(() => setSent(null), [version]);
 
   const refresh = useCallback(() => {
     factorySprintFn({ data: { sprintId: card.sprintId } }).then(setSt).catch(() => {});
@@ -141,7 +141,38 @@ export function SprintCard({ card, channelId, expanded = false }: { card: { spri
                   ? t("Está tardando más de lo normal: revisa la respuesta de Arqui en el hilo.")
                   : t("Relee el repo y vuelve a armar los tickets; suele tomar unos minutos. Su avance se ve en el hilo.")}
               </span>
+              {st.threadUrl && (
+                <a href={st.threadUrl} className="mt-0.5 inline-block text-[11px] font-semibold text-brand hover:underline">
+                  {t("Ver en el hilo")} →
+                </a>
+              )}
             </span>
+          </div>
+        )}
+        {draft && !sent && st.change?.answered && st.diff && seenVersion !== st.version && (
+          <div className="mt-2 rounded-md border border-border px-2.5 py-2 text-xs text-ink" role="status">
+            <div className="flex items-start gap-2">
+              <span className="min-w-0 flex-1">
+                <span className="font-semibold">
+                  v{st.version} · {t("por la nota de")} {st.change.byName ?? t("alguien")}
+                </span>
+                <span className="block truncate text-muted">«{st.change.note}»</span>
+                <span className="mt-0.5 block text-[11px] text-muted">
+                  {st.diff.added.length + st.diff.changed.length + st.diff.removed.length === 0
+                    ? t("Sin cambios en los tickets.")
+                    : [
+                        st.diff.added.length ? `${st.diff.added.length} ${t("nuevos")}` : "",
+                        st.diff.changed.length ? `${st.diff.changed.length} ${t("cambiaron")}` : "",
+                        st.diff.removed.length ? `${t("salieron")}: ${st.diff.removed.map((r) => r.title).join(", ")}` : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                </span>
+              </span>
+              <button type="button" onClick={() => setSeenVersion(st.version)} aria-label={t("Cerrar")} className="shrink-0 text-muted hover:text-ink">
+                ×
+              </button>
+            </div>
           </div>
         )}
         {!draft && (
@@ -184,6 +215,11 @@ export function SprintCard({ card, channelId, expanded = false }: { card: { spri
                   ) : (
                     <button type="button" onClick={() => setOpen(open === i.id ? null : i.id)} className="flex min-w-0 flex-1 items-center gap-1 text-left">
                       <span className="truncate text-sm text-ink">{i.title}</span>
+                      {draft && st.diff && seenVersion !== st.version && (st.diff.added.includes(i.key) || st.diff.changed.includes(i.key)) && (
+                        <span className="shrink-0 rounded-full bg-brand/15 px-1.5 text-[10px] font-semibold text-brand">
+                          {st.diff.added.includes(i.key) ? t("nuevo") : t("cambió")}
+                        </span>
+                      )}
                       <ChevronDown size={12} className={`shrink-0 text-muted transition-transform ${open === i.id ? "rotate-180" : ""}`} />
                     </button>
                   )}
@@ -392,8 +428,6 @@ export function SprintCard({ card, channelId, expanded = false }: { card: { spri
     if (!ok) return; // el error ya se ve abajo; la nota se queda para reintentar
     setAsking(null);
     setNote("");
-    setSent(text);
-    setSentAt(Date.now());
     setNow(Date.now());
   }
 }
