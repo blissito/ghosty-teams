@@ -680,6 +680,11 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         }
         if (!findings) return { ok: false, error: "con pass=false los hallazgos son obligatorios" };
         if (a.blocked === true) {
+          // Un CI en fila o corriendo no es un bloqueo: se espera. @check escaló el #75 de business
+          // (13-oct) por un run «queued» 16 min que luego corrió solo; la persona decidió sobre nada.
+          const ci = run.prUrl ? await R.prCi(sub, run.prUrl) : null;
+          if (ci?.state === "pending")
+            return { ok: false, error: "el CI todavía está en fila o corriendo, y eso no es un bloqueo: usa github_watch_pr y da tu veredicto cuando termine." };
           const next = await R.applyEvent(run, "check_blocked", checked, { actor: "check", data: { findings: findings.slice(0, 4000) } });
           await R.postInThread(
             next,
