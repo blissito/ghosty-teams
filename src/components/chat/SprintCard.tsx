@@ -46,6 +46,9 @@ export function SprintCard({ card, channelId, expanded = false }: { card: { spri
   const [err, setErr] = useState("");
   const [open, setOpen] = useState<number | null>(null);
   const [editing, setEditing] = useState<{ id: number; title: string } | null>(null);
+  // Cuerpo en edición: se edita SIN el renglón `# título` (ése es el título de arriba) y se
+  // vuelve a anteponer al guardar.
+  const [editingBody, setEditingBody] = useState<{ id: number; head: string; body: string } | null>(null);
   const [asking, setAsking] = useState(false);
   const [note, setNote] = useState("");
   const [sent, setSent] = useState(false);
@@ -216,12 +219,71 @@ export function SprintCard({ card, channelId, expanded = false }: { card: { spri
                     </button>
                   </div>
                 )}
-                {open === i.id && (
-                  // Renderizado, no crudo: el cuerpo trae ## secciones, listas y `código`.
-                  <div className="gt-plan mt-1.5 pl-7 text-[11.5px] leading-relaxed text-muted [&_h2]:mt-2 [&_h2]:text-[12px] [&_h2]:font-semibold [&_h2]:text-ink">
-                    <Markdown body={i.bodyMd.replace(/^# .*\n+/, "")} />
+                {open === i.id && editingBody?.id === i.id ? (
+                  <div className="mt-1.5 pl-7">
+                    <textarea
+                      value={editingBody.body}
+                      onChange={(e) => setEditingBody({ ...editingBody, body: e.target.value })}
+                      onKeyDown={(e) => e.key === "Escape" && setEditingBody(null)}
+                      rows={Math.min(18, Math.max(6, editingBody.body.split("\n").length + 1))}
+                      className="w-full rounded-md border border-border bg-surface px-2 py-1.5 font-mono text-[11.5px] leading-relaxed text-ink"
+                      autoFocus
+                    />
+                    <div className="mt-1 flex items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={!!busy || !editingBody.body.trim()}
+                        onClick={() =>
+                          void run(`b${i.id}`, () =>
+                            factorySprintEditFn({ data: { sprintId: st.id, itemId: i.id, bodyMd: `${editingBody.head}${editingBody.body.trim()}` } })
+                          ).then(() => setEditingBody(null))
+                        }
+                        className="rounded-md bg-brand px-2.5 py-1 text-[11px] font-semibold text-brand-fg disabled:opacity-50"
+                      >
+                        {busy === `b${i.id}` ? <Loader2 size={11} className="animate-spin" /> : t("Guardar")}
+                      </button>
+                      <button type="button" onClick={() => setEditingBody(null)} className="text-[11px] text-muted hover:text-ink">
+                        {t("Cancelar")}
+                      </button>
+                      <span className="ml-auto text-[10px] text-muted">{t("Markdown · Esc para cancelar")}</span>
+                    </div>
                   </div>
-                )}
+                ) : open === i.id ? (
+                  <div className="mt-1.5 pl-7">
+                    {/* Renderizado, no crudo: el cuerpo trae ## secciones, listas y `código`. */}
+                    <div className="gt-plan text-[11.5px] leading-relaxed text-muted [&_h2]:mt-2 [&_h2]:text-[12px] [&_h2]:font-semibold [&_h2]:text-ink">
+                      <Markdown body={i.bodyMd.replace(/^# .*\n+/, "")} />
+                    </div>
+                    {draft && st.canEdit && (
+                      <div className="mt-1.5 flex gap-3 text-[11px]">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const head = i.bodyMd.match(/^# .*\n+/)?.[0] ?? "";
+                            setEditingBody({ id: i.id, head, body: i.bodyMd.slice(head.length) });
+                          }}
+                          className="inline-flex items-center gap-1 font-semibold text-brand hover:underline"
+                        >
+                          <Pencil size={11} /> {t("Editar ticket")}
+                        </button>
+                        {/* Preferencias o correcciones que prefieres que Arqui aplique (y propague a
+                            los demás tickets) en vez de escribirlas tú: abre «Pedir cambios» ya
+                            apuntando a este ticket. */}
+                        <button
+                          type="button"
+                          disabled={sent}
+                          onClick={() => {
+                            setNote(`#${i.idx} «${i.title}»: `);
+                            setAsking(true);
+                          }}
+                          className="text-muted hover:text-ink disabled:opacity-50"
+                        >
+                          {t("Pedir cambios a este ticket")}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ) : null}
               </li>
             );
           })}

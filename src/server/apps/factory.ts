@@ -1239,7 +1239,7 @@ export const factorySprintFn = createServerFn({ method: "POST" })
 
 /** Borrador: dejar fuera/incluir un ticket o cambiarle el título. */
 export const factorySprintEditFn = createServerFn({ method: "POST" })
-  .validator((d: { sprintId: number; itemId: number; included?: boolean; title?: string }) => d)
+  .validator((d: { sprintId: number; itemId: number; included?: boolean; title?: string; bodyMd?: string }) => d)
   .handler(async ({ data }) => {
     const { sprint, canEdit } = await sprintAccess(Number(data.sprintId));
     if (!canEdit) throw new Error("sólo el dueño o quien pidió el sprint lo edita");
@@ -1266,6 +1266,12 @@ export const factorySprintEditFn = createServerFn({ method: "POST" })
       await dbq("UPDATE gt_factory_sprint_items SET included = ? WHERE id = ? AND sprint_id = ?", [data.included ? 1 : 0, data.itemId, sprint.id]);
     const title = String(data.title ?? "").trim().slice(0, 120);
     if (title) await dbq("UPDATE gt_factory_sprint_items SET title = ? WHERE id = ? AND sprint_id = ?", [title, data.itemId, sprint.id]);
+    // El cuerpo (qué y cómo, criterios, archivos) es lo que lee @code: editarlo a mano es
+    // la forma directa de corregir un ticket sin pedirle a Arqui que rehaga todo el sprint.
+    if (typeof data.bodyMd === "string") {
+      const body = data.bodyMd.trim().slice(0, 20000);
+      if (body) await dbq("UPDATE gt_factory_sprint_items SET body_md = ? WHERE id = ? AND sprint_id = ?", [body, data.itemId, sprint.id]);
+    }
     return readSprint(sprint.id);
   });
 
