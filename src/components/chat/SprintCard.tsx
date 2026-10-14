@@ -12,6 +12,7 @@ import { Check, ChevronDown, Loader2, Pencil } from "lucide-react";
 import { useT } from "../../i18n";
 import { useRtSubscribe } from "../../utils/rt-bus";
 import { Toggle } from "../Toggle";
+import { Markdown } from "../Markdown";
 import {
   factorySprintApproveFn,
   factorySprintChangesFn,
@@ -215,7 +216,12 @@ export function SprintCard({ card, channelId, expanded = false }: { card: { spri
                     </button>
                   </div>
                 )}
-                {open === i.id && <p className="mt-1.5 whitespace-pre-wrap pl-7 text-[11.5px] leading-relaxed text-muted">{i.bodyMd.replace(/^# .*\n+/, "")}</p>}
+                {open === i.id && (
+                  // Renderizado, no crudo: el cuerpo trae ## secciones, listas y `código`.
+                  <div className="gt-plan mt-1.5 pl-7 text-[11.5px] leading-relaxed text-muted [&_h2]:mt-2 [&_h2]:text-[12px] [&_h2]:font-semibold [&_h2]:text-ink">
+                    <Markdown body={i.bodyMd.replace(/^# .*\n+/, "")} />
+                  </div>
+                )}
               </li>
             );
           })}
