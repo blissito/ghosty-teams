@@ -3,7 +3,9 @@ import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Bot, Plus, Trash2, X, Bell, Smile, Loader2, Pencil, Mail, ExternalLink } from "lucide-react";
 import { FleetAgentControls } from "./FleetAgentControls";
-import { NativeAgentConfig } from "./NativeAgentConfig";
+import { NativeAgentConfig, AGENT_MODEL_EVENT } from "./NativeAgentConfig";
+import { AgentBot } from "./AgentBot";
+import { parseFactoryAvatar } from "../utils/factory-avatar";
 import { BrandPanel } from "./BrandPanel";
 import { AppsPanel } from "./AppsPanel";
 import { Avatar } from "./Avatar";
@@ -1825,6 +1827,17 @@ function AgentModelChip({ agentId, fleetId }: { agentId: number; fleetId: string
       .catch(() => {});
     return () => { vivo = false; };
   }, [agentId, fleetId]);
+  // Cambiar el modelo en el modal lo avisa: sin esto la lista enseñaba el viejo (cache de módulo).
+  useEffect(() => {
+    const on = (e: Event) => {
+      const d = (e as CustomEvent<{ agentId: number; label: string }>).detail;
+      if (d?.agentId !== agentId) return;
+      modelChipCache.set(agentId, d.label);
+      setLabel(d.label);
+    };
+    window.addEventListener(AGENT_MODEL_EVENT, on);
+    return () => window.removeEventListener(AGENT_MODEL_EVENT, on);
+  }, [agentId]);
   if (!label) return null;
   return <span className="text-ink/80">{label} · </span>;
 }
@@ -2598,6 +2611,8 @@ function EditAgentForm({
   const [name, setName] = useState(agent.name);
   const [handle, setHandle] = useState(agent.handle);
   const [persona, setPersona] = useState(agent.system_prompt ?? "");
+  // Lo pendiente de la columna derecha (prompt base de Studio): se guarda con el mismo «Guardar».
+  const flushRef = useRef<(() => Promise<void>) | null>(null);
   const [avatar, setAvatar] = useState(agent.avatar ?? "");
   // A2A: la URL del card se edita porque la dirección de una caja cambia al recrearla, y sin
   // esto la única salida era borrar el agente y darlo de alta otra vez —perdiendo su @handle
@@ -2735,6 +2750,7 @@ function EditAgentForm({
     setBusy(true);
     setErr(null);
     try {
+      await flushRef.current?.();
       const cleanHandle = handle.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
       await updateAgentFn({
         data: {
@@ -2796,7 +2812,10 @@ function EditAgentForm({
           {/* ── Columna izquierda: identidad + persona local + colaboradores ── */}
           <div className="space-y-4 lg:col-span-1">
             <div className="flex items-center gap-3">
-              {avatar ? (
+              {/* Un rol de la fábrica es su robot (el mismo del perfil y de la tira de cajas). */}
+              {parseFactoryAvatar(avatar) ? (
+                <AgentBot handle={parseFactoryAvatar(avatar)!.role} size={56} color={parseFactoryAvatar(avatar)!.color} />
+              ) : avatar ? (
                 <img src={avatar} alt="" loading="lazy" decoding="async" className="h-14 w-14 shrink-0 rounded-xl object-cover" />
               ) : (
                 <div className="grid h-14 w-14 shrink-0 place-items-center rounded-xl bg-brand/15 text-brand">
@@ -3090,12 +3109,12 @@ function EditAgentForm({
           {/* ── Columna derecha (2/3): capacidades de flota (o nota webhook) ── */}
           <div className="lg:col-span-2 lg:border-l lg:border-border lg:pl-6">
             {agent.kind === "fleet" ? (
-              <FleetAgentControls agentId={agent.id} />
+              <FleetAgentControls agentId={agent.id} flushRef={flushRef} />
             ) : agent.kind === "acp" ? (
               /* Un ACP no tiene canales que configurar (su transporte ES el WebSocket), así
                  que recibe sólo la config del agente —modelo y prompt base—, no el resto de
                  `FleetAgentControls`. */
-              <NativeAgentConfig agentId={agent.id} />
+              <NativeAgentConfig agentId={agent.id} flushRef={flushRef} />
             ) : (
               <div className="rounded-lg border border-dashed border-border p-4 text-center text-xs text-muted">
                 {t("Los bots por webhook no tienen capacidades de flota. Su comportamiento lo controla tu servidor.")}

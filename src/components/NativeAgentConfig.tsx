@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type MutableRefObject } from "react";
 import { nativeAgentConfigFn, setNativeAgentConfigFn, type NativeAgentConfig as Cfg } from "../server/agent-config";
 import { useT } from "../i18n";
 
@@ -29,7 +29,15 @@ function groupByProvider<M extends { provider?: string }>(models: M[]): Array<[s
  * era un concepto de EasyBits y el select salía vacío), el MOTOR (cambiarlo es otra
  * clase de caja) y la búsqueda web nativa (perilla de admin, vive en Studio).
  */
-export function NativeAgentConfig({ agentId }: { agentId: number }) {
+/** Aviso a la lista de agentes (chip del modelo) cuando el modelo cambia desde aquí. */
+export const AGENT_MODEL_EVENT = "gt-agent-model";
+
+/**
+ * `flushRef`: dentro del modal de un agente el ÚNICO botón es el «Guardar» del pie. Con él,
+ * el prompt base se guarda al darle ahí (antes tenía su propio botón y el del pie no lo
+ * guardaba: se perdía al cerrar).
+ */
+export function NativeAgentConfig({ agentId, flushRef }: { agentId: number; flushRef?: MutableRefObject<(() => Promise<void>) | null> }) {
   const t = useT();
   const [cfg, setCfg] = useState<Cfg | null>(null);
   const [prompt, setPrompt] = useState("");
@@ -51,11 +59,19 @@ export function NativeAgentConfig({ agentId }: { agentId: number }) {
     };
   }, [agentId]);
 
+  if (flushRef) {
+    flushRef.current = async () => {
+      if (!cfg || prompt === (cfg.prompt ?? "")) return;
+      await setNativeAgentConfigFn({ data: { id: agentId, body: { action: "set-prompt", prompt } } });
+      setCfg((c) => (c ? { ...c, prompt } : c));
+    };
+  }
+
   if (!cfg) {
     return <div className="h-40 animate-pulse rounded-xl bg-surface-2" />;
   }
 
-  const aplicar = async (body: Record<string, unknown>, optimista: () => void, revertir: () => void) => {
+  const aplicar = async (body: Record<string, unknown>, optimista: () => void, revertir: () => void, listo?: () => void) => {
     setBusy(true);
     setError(null);
     setSaved(null);
@@ -63,6 +79,7 @@ export function NativeAgentConfig({ agentId }: { agentId: number }) {
     try {
       await setNativeAgentConfigFn({ data: { id: agentId, body } });
       setSaved(t("Guardado."));
+      listo?.();
     } catch (e) {
       revertir();
       setError(e instanceof Error ? e.message : String(e));
@@ -77,6 +94,10 @@ export function NativeAgentConfig({ agentId }: { agentId: number }) {
       { action: "set-model", model },
       () => setCfg((c) => (c ? { ...c, model } : c)),
       () => setCfg((c) => (c ? { ...c, model: antes } : c)),
+      () => {
+        const label = cfg.models.find((m) => m.id === model)?.label ?? model;
+        window.dispatchEvent(new CustomEvent(AGENT_MODEL_EVENT, { detail: { agentId, label } }));
+      },
     );
   };
 
@@ -153,14 +174,14 @@ export function NativeAgentConfig({ agentId }: { agentId: number }) {
           <p className="text-xs text-muted">
             {t("Es la identidad del agente en todos los espacios. Se aplica al siguiente turno.")}
           </p>
-          <button
+          {!flushRef && <button
             type="button"
             disabled={busy || prompt === (cfg.prompt ?? "")}
             onClick={guardarPrompt}
             className="shrink-0 rounded-lg bg-brand px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40"
           >
             {t("Guardar")}
-          </button>
+          </button>}
         </div>
       </div>
 

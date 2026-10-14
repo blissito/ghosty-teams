@@ -1,5 +1,5 @@
 import { Toggle as Switch } from "./Toggle";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { fleetChannelStateFn, setFleetChannelFn } from "../server/agent-config";
 import { FleetCapabilities } from "./FleetCapabilities";
 import { NativeAgentConfig } from "./NativeAgentConfig";
@@ -17,7 +17,7 @@ const STUDIO = "https://www.ghosty.studio";
  * ⚠️ Lo decide el BINDING DEL AGENTE, no el tenant (ver `nativeRuntime` en
  * agent-config): un workspace puede tener uno de cada tipo.
  */
-export function FleetAgentControls({ agentId }: { agentId: number }) {
+export function FleetAgentControls({ agentId, flushRef }: { agentId: number; flushRef?: MutableRefObject<(() => Promise<void>) | null> }) {
   const t = useT();
   const [state, setState] = useState<
     | { loading: true }
@@ -76,7 +76,7 @@ export function FleetAgentControls({ agentId }: { agentId: number }) {
         <Switch on={state.teams} onChange={toggle} disabled={busy} />
       </div>
 
-      <NativeAgentConfig agentId={agentId} />
+      <NativeAgentConfig agentId={agentId} flushRef={flushRef} />
 
       <a
         href={`${STUDIO}/app/fleet/${state.fleetId}`}
