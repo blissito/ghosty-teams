@@ -1466,6 +1466,8 @@ export const en: Record<string, string> = {
   "Aprobar": "Approve",
   "Aprobado": "Approved",
   "Pedir cambios": "Request changes",
+  "Arqui está rehaciendo el sprint con tu nota": "Arqui is redoing the sprint with your note",
+  "Cambios enviados ✓": "Changes sent ✓",
   "Editar ticket": "Edit ticket",
   "Pedir cambios a este ticket": "Request changes to this ticket",
   "Markdown · Esc para cancelar": "Markdown · Esc to cancel",

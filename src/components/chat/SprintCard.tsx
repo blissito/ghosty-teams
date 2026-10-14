@@ -49,12 +49,15 @@ export function SprintCard({ card, channelId, expanded = false }: { card: { spri
   // Cuerpo en edición: se edita SIN el renglón `# título` (ése es el título de arriba) y se
   // vuelve a anteponer al guardar.
   const [editingBody, setEditingBody] = useState<{ id: number; head: string; body: string } | null>(null);
-  const [asking, setAsking] = useState(false);
+  // Dónde está abierta la nota de «Pedir cambios»: al sprint completo o junto a un ticket
+  // (se abre AHÍ, no al fondo de la tarjeta, para que se vea qué se está pidiendo).
+  const [asking, setAsking] = useState<"sprint" | number | null>(null);
   const [note, setNote] = useState("");
-  const [sent, setSent] = useState(false);
+  // La nota que ya se mandó: se enseña arriba con spinner hasta que llega la versión nueva.
+  const [sent, setSent] = useState<string | null>(null);
   // Llegó una versión nueva del borrador: se puede volver a pedir cambios.
   const version = st?.version;
-  useEffect(() => setSent(false), [version]);
+  useEffect(() => setSent(null), [version]);
 
   const refresh = useCallback(() => {
     factorySprintFn({ data: { sprintId: card.sprintId } }).then(setSt).catch(() => {});
@@ -74,8 +77,10 @@ export function SprintCard({ card, channelId, expanded = false }: { card: { spri
       const r = await fn();
       if (r && "items" in r) setSt(r);
       else refresh();
+      return true;
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
+      return false;
     } finally {
       setBusy(null);
     }
@@ -115,6 +120,15 @@ export function SprintCard({ card, channelId, expanded = false }: { card: { spri
           {st.goal}
           {st.repo && <span className="ml-1.5 font-mono">· {st.repo}</span>}
         </p>
+        {draft && sent && (
+          <div className="mt-2 flex items-start gap-2 rounded-md bg-brand/10 px-2.5 py-2 text-xs text-ink" role="status">
+            <Loader2 size={13} className="mt-0.5 shrink-0 animate-spin text-brand" />
+            <span className="min-w-0">
+              <span className="font-semibold">{t("Arqui está rehaciendo el sprint con tu nota")}</span>
+              <span className="block truncate text-muted">«{sent}»</span>
+            </span>
+          </div>
+        )}
         {!draft && (
           <div className="mt-2 flex gap-1" role="img" aria-label={`${merged} / ${included.length}`}>
             {included.map((i) => (
@@ -271,17 +285,18 @@ export function SprintCard({ card, channelId, expanded = false }: { card: { spri
                             apuntando a este ticket. */}
                         <button
                           type="button"
-                          disabled={sent}
+                          disabled={!!sent}
                           onClick={() => {
                             setNote(`#${i.idx} «${i.title}»: `);
-                            setAsking(true);
+                            setAsking(i.id);
                           }}
                           className="text-muted hover:text-ink disabled:opacity-50"
                         >
-                          {t("Pedir cambios a este ticket")}
+                          {sent ? t("Cambios enviados ✓") : t("Pedir cambios a este ticket")}
                         </button>
                       </div>
                     )}
+                    {asking === i.id && noteBox()}
                   </div>
                 ) : null}
               </li>
@@ -301,24 +316,20 @@ export function SprintCard({ card, channelId, expanded = false }: { card: { spri
               {t("Crear sprint")} · {included.length} {included.length === 1 ? t("ticket") : t("tickets")}
             </button>
             <p className="mt-1 text-center text-[11px] text-muted">{t("Una sola aprobación: cada ticket se construye en orden, @check revisa y tú haces merge.")}</p>
-            {!asking ? (
-              <button type="button" onClick={() => setAsking(true)} disabled={sent} className="mx-auto mt-1 block text-xs text-muted hover:text-ink disabled:opacity-60">
+            {asking !== "sprint" ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setNote("");
+                  setAsking("sprint");
+                }}
+                disabled={!!sent}
+                className="mx-auto mt-1 block text-xs text-muted hover:text-ink disabled:opacity-60"
+              >
                 {sent ? t("Arqui está rehaciendo el sprint…") : t("Pedir cambios")}
               </button>
             ) : (
-              <div className="mt-2 flex gap-2">
-                <input
-                  value={note}
-                  onChange={(e) => setNote(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && note.trim() && void send()}
-                  placeholder={t("¿Qué cambiarías?")}
-                  className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-ink"
-                  autoFocus
-                />
-                <button type="button" disabled={!note.trim() || !!busy} onClick={() => void send()} className="rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">
-                  {t("Enviar")}
-                </button>
-              </div>
+              noteBox()
             )}
           </div>
         )}
@@ -331,10 +342,41 @@ export function SprintCard({ card, channelId, expanded = false }: { card: { spri
     </div>
   );
 
+  function noteBox() {
+    const sending = busy === "changes";
+    return (
+      <div className="mt-2 flex gap-2">
+        <input
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && note.trim() && !sending) void send();
+            if (e.key === "Escape") setAsking(null);
+          }}
+          placeholder={t("¿Qué cambiarías?")}
+          disabled={sending}
+          className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-ink disabled:opacity-60"
+          autoFocus
+        />
+        <button
+          type="button"
+          disabled={!note.trim() || !!busy}
+          onClick={() => void send()}
+          className="inline-flex items-center gap-1 rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+        >
+          {sending && <Loader2 size={12} className="animate-spin" />}
+          {sending ? t("Enviando…") : t("Enviar")}
+        </button>
+      </div>
+    );
+  }
+
   async function send() {
-    await run("changes", () => factorySprintChangesFn({ data: { sprintId: st!.id, note } }));
-    setAsking(false);
+    const text = note.trim();
+    const ok = await run("changes", () => factorySprintChangesFn({ data: { sprintId: st!.id, note: text } }));
+    if (!ok) return; // el error ya se ve abajo; la nota se queda para reintentar
+    setAsking(null);
     setNote("");
-    setSent(true);
+    setSent(text);
   }
 }
