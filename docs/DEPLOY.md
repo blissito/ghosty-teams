@@ -21,11 +21,17 @@
 > | Qué cambió | Herramienta | Efecto |
 > |---|---|---|
 > | Sólo código (`src/`, `packages/`) | `~/sandbox-host/scripts/deploy_ghosty_teams.sh` | **Hot-deploy**: build local → push del `.output` a la caja viva → restart del unit. Segundos, sin recrear nada, sin tocar la DB. |
+> | Push a `main` | `.github/workflows/deploy.yml` (automático) | Corre el MISMO `deploy_ghosty_teams.sh` desde Actions con `CI=true`: sólo código, **no toca `/app/secrets.env`**, se salta un commit que ya no es la punta de main y no imprime el journal (los logs son públicos). Botón «Run workflow» con `force` = `FORCE=1`. |
 > | Deps (`package.json`) o el template | `~/sandbox-host/scripts/rebake_ghosty_teams.sh` | Hornea `ghosty-teams.ext4`. **No** afecta a la caja viva. |
 >
-> **Antes de un hot-deploy**: respalda el bundle DENTRO de la caja
-> (`cp -a /opt/ghosty-teams/.output /opt/ghosty-teams/.output.bak-<ts>`) — el script hace
-> `rm -rf .output` y no deja copia. Ese respaldo es el único rollback.
+> **Respaldo y rollback**: desde 2026-10-14 el script respalda solo el bundle vivo en
+> `/opt/ghosty-teams/.output.bak-<AAAAMMDD-HHMMSS>` antes del swap y conserva los últimos 3
+> (`KEEP_BACKUPS`). Volver a uno, dentro de la caja:
+> `systemctl stop ghosty-teams && rm -rf .output && cp -a .output.bak-<ts> .output && systemctl start ghosty-teams`.
+> Un candado en el host (`/tmp/gc-deploy.lock`) impide que un deploy de la Mac y uno de CI se crucen.
+>
+> **Secreto nuevo** (`/app/secrets.env`): CI no lo siembra. Agrégalo a la allowlist del script y
+> córrelo desde la Mac con el `.env` local, o edítalo en la caja.
 >
 > **Antes de un rebake**: respalda el ext4 a mano
 > (`cp -f …/ghosty-teams.ext4 …/ghosty-teams.ext4.bak-$(date +%Y%m%d-%H%M)`). El script

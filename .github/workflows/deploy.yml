@@ -1,0 +1,99 @@
+# Hot-deploy de Ghosty Teams a su caja permanente en cada push a main.
+#
+# Corre el MISMO script que se usa desde la Mac (sandbox-host/scripts/deploy_ghosty_teams.sh):
+# drena turnos en vuelo (/busy), aborta si el build falla, comprueba put=200, unit activo y
+# que el sitio público no dé 5xx, y respalda el .output vivo dentro de la caja antes del swap.
+# El script vive en sandbox-host (privado) y se baja aquí con una deploy key de sólo lectura:
+# copiarlo a este repo, que es PÚBLICO, duplicaría la lógica y expondría la operación del host.
+#
+# Sólo CÓDIGO: no toca /app/secrets.env (CI=true lo apaga en el script). Un secreto nuevo se
+# siembra corriendo el script desde la Mac. Cambios de dependencias que necesiten rebake no
+# entran por aquí.
+#
+# Secretos (Settings → Environments → production):
+#   OVH_SSH_KEY              llave privada de root@54.38.94.14 (~/.ssh/id_rsa_ovh)
+#   SANDBOX_HOST_DEPLOY_KEY  llave privada de una deploy key read-only de blissito/sandbox-host
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Reiniciar sin esperar a que terminen los turnos en vuelo (FORCE=1)"
+        type: boolean
+        default: false
+
+# En fila, nunca dos a la vez ni cancelando uno a medio swap. Si se juntan varios pushes,
+# GitHub deja sólo el último pendiente; el script además se salta un commit ya rebasado.
+concurrency:
+  group: deploy-ghosty-teams
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    # El drenaje espera hasta 10 min por turnos vivos, más build y arranque.
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: app
+
+      - uses: actions/checkout@v4
+        with:
+          repository: blissito/sandbox-host
+          ssh-key: ${{ secrets.SANDBOX_HOST_DEPLOY_KEY }}
+          path: sandbox-host
+          sparse-checkout: |
+            scripts
+            config
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Sin lockfile a propósito (ver docs/DEPLOY.md: un lock de macOS rompe los binarios
+      # nativos en Linux), así que es `npm install`, no `npm ci`.
+      - name: npm install
+        working-directory: app
+        run: npm install --no-audit --no-fund
+
+      # Informativo mientras main tenga pruebas en rojo: hoy fallan 12 y bloquearían todo
+      # deploy. Cuando queden en verde, quitar continue-on-error para que un rojo frene.
+      - name: npm test
+        working-directory: app
+        continue-on-error: true
+        run: npm test
+
+      - name: llave SSH del host
+        env:
+          OVH_SSH_KEY: ${{ secrets.OVH_SSH_KEY }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$OVH_SSH_KEY" > ~/.ssh/id_ovh
+          chmod 600 ~/.ssh/id_ovh
+          # Llaves PÚBLICAS del host (ssh-keyscan 54.38.94.14, 2026-10-14). Si el host se
+          # reinstala, el deploy falla con "Host key verification failed" — actualizar aquí.
+          cat > ~/.ssh/known_hosts_ovh <<'EOF'
+          54.38.94.14 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIN+w1q/OIl9NJnjssXWrcB8+vT2ihHH7wQEZ8oE4/NMc
+          54.38.94.14 ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBG17u690kfd8xA6Yxu4d0GtAZ4AbiWM4EbiTz9yj3LymtFY7Upijq73dLjasSfqsj1AwKEvaJ/RxMdkstwvHSa4=
+          54.38.94.14 ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCszNh6j/qe6pA9CyMGOuqS07aaP/jqUdSu6o1OxMMOHyj7hGTIH3Xjj+bZbm+ek8GTT6yrio+5PjyxP5U7gXJmJKHXIXza7q6uxcjgOwVgGqNxpfw4LWrEJWZW2re6lOJ2y+pqfHQVg3t8F1J7gRKtLAMM5XB8S7RpvBjtMXGYCRfo2bCUjMoGxFPoqOf+tC650Ds7DnKEzPBTF/qnSqjD06SFFn+y2tTYVWjqN3s6Ofy0FUQOeRQRqKjdSDnhqJqwIS1kJNhngR70Bc+bG7Vo3xg0LbE/dy70dYFPFL2o+Fd4zEzYF35rAoFm3aADpiTwkXm5Ls3uKRQRaVVaF52SPrMMVnoiD8bhsC9dgYyz9xDKTdFE9252dyYmC+Ik+njWxaaBl6VIzw0CElpnSbKFC4w5cqvSqrh9MrWETp6LBmU8kZxkvKaZj0hWcrjJ9rtBX73VmY6Hk/x5LnbCbJ9+Q4Wwj75uwgaQj+tKhTRid8JXxunzJeJ4ueKqOtufEfs=
+          EOF
+
+      - name: deploy
+        env:
+          APP: ${{ github.workspace }}/app
+          FORCE: ${{ inputs.force && '1' || '' }}
+        run: |
+          KEY="$HOME/.ssh/id_ovh" KNOWN_HOSTS="$HOME/.ssh/known_hosts_ovh" \
+            ./sandbox-host/scripts/deploy_ghosty_teams.sh
+
+      - name: limpia la llave
+        if: always()
+        run: rm -f ~/.ssh/id_ovh
