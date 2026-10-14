@@ -74,3 +74,23 @@ export const listMutesFn = createServerFn({ method: "GET" }).handler(async () =>
   if (!me) return [];
   return db.listMutes(me.sub);
 });
+
+// Rooms fijados arriba en el sidebar (personal; sigue a la persona entre dispositivos).
+export const listRoomPinsFn = createServerFn({ method: "GET" }).handler(async () => {
+  const db = await import("../db.server");
+  const me = await sessionUser();
+  if (!me) return [];
+  return db.listRoomPins(me.sub);
+});
+
+export const setRoomPinsFn = createServerFn({ method: "POST" })
+  .validator((d: { channelIds: number[] }) => ({
+    channelIds: [...new Set(d.channelIds.filter((n) => Number.isInteger(n)))].slice(0, 200),
+  }))
+  .handler(async ({ data }) => {
+    const db = await import("../db.server");
+    const me = await sessionUser();
+    if (!me) throw new Error("no autorizado");
+    await db.setRoomPins(me.sub, data.channelIds);
+    return { ok: true as const };
+  });

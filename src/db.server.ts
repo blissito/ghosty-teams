@@ -1610,6 +1610,23 @@ export async function toggleMute(
   return { muted: true };
 }
 
+// Rooms fijados arriba en el sidebar, en el orden en que se fijaron.
+export async function listRoomPins(userSub: string): Promise<number[]> {
+  const rows = await dbq("SELECT channel_id FROM gc_room_pins WHERE user_sub = ? ORDER BY position", [userSub]);
+  return rows.map((r) => num(r.channel_id));
+}
+
+// Reemplaza la lista completa (el cliente manda el orden ya resuelto).
+export async function setRoomPins(userSub: string, channelIds: number[]): Promise<void> {
+  await dbq("DELETE FROM gc_room_pins WHERE user_sub = ?", [userSub]);
+  for (const [i, id] of channelIds.entries()) {
+    await dbq(
+      "INSERT INTO gc_room_pins (user_sub, channel_id, position) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
+      [userSub, id, i]
+    );
+  }
+}
+
 // Scopes silenciados por el usuario (para pintar dimmed y suprimir badge/push).
 export async function listMutes(userSub: string): Promise<{ scope: string; scope_id: string }[]> {
   const rows = await dbq("SELECT scope, scope_id FROM gc_mutes WHERE user_sub = ?", [userSub]);

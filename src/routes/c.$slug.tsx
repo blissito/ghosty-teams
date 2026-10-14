@@ -111,7 +111,7 @@ import {
   maintenanceNoticeFn,
   type Announcement,
 } from "../server/announcements";
-import { toggleStarFn, togglePinFn, getPinsFn, toggleMuteFn, listMutesFn } from "../server/stars";
+import { toggleStarFn, togglePinFn, getPinsFn, toggleMuteFn, listMutesFn, listRoomPinsFn, setRoomPinsFn } from "../server/stars";
 import { listMyWorkspacesFn } from "../server/workspaces";
 import {
   getChannelView,
@@ -857,6 +857,11 @@ function useCachedQuery<K, T>(
 // contenido (streaming de la respuesta del agente rellena el body de UN mensaje → el
 // conteo no cambia, por eso antes no scrolleaba). El guard `stick` evita tironear si
 // el usuario subió a leer historia. `onScroll` (devuelto) va en el div scrollable.
+// No-leídos en los que YA se aterrizó. El salto al divisor es para la PRIMERA vez que entras;
+// al volver al room desde un hilo o DM la vista se vuelve a montar con el mismo divisor y
+// aterrizar otra vez te dejaba a media historia en vez de abajo.
+const landedUnread = new Set<number>();
+
 function useChatScroll(
   scrollRef: React.RefObject<HTMLDivElement | null>,
   msgs: { body?: string | null }[] | null,
@@ -873,10 +878,13 @@ function useChatScroll(
   const [atBottom, setAtBottom] = useState(true);
   const count = msgs?.length ?? 0;
   const contentLen = msgs?.reduce((n, m) => n + (m.body?.length ?? 0), 0) ?? 0;
-  useEffect(() => {
-    didLand.current = false;
-  }, [resetKey]);
   const lastTop = useRef(0);
+  useEffect(() => {
+    // Cambio de room con la misma vista montada: se arranca pegado al fondo.
+    didLand.current = false;
+    stick.current = true;
+    lastTop.current = 0;
+  }, [resetKey]);
   const onScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
@@ -920,7 +928,7 @@ function useChatScroll(
       const near = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
       setAtBottom((prev) => (prev === near ? prev : near));
     };
-    if (unreadId != null && !didLand.current) {
+    if (unreadId != null && !didLand.current && !landedUnread.has(unreadId)) {
       const el = document.getElementById(`msg-${unreadId}`);
       if (el) {
         // Aterrizar en el no-leído ES estar leyendo historial: sin esto, el `scroll` que
@@ -928,6 +936,7 @@ function useChatScroll(
         stick.current = false;
         el.scrollIntoView({ block: "center" });
         didLand.current = true;
+        landedUnread.add(unreadId);
         requestAnimationFrame(measure);
         return;
       }
@@ -4087,7 +4096,8 @@ function Sidebar({
   }, [closedDms]);
   const cerrarDm = (id: number) => setClosedDms((prev) => new Set(prev).add(id));
 
-  // Rooms FIJADOS arriba (por persona, en este navegador, como los DMs cerrados). El orden de
+  // Rooms FIJADOS arriba (por persona, guardados en el servidor para que sigan entre web y
+  // móvil; localStorage sólo es cache para pintar al instante). El orden de
   // la lista es estable a propósito: una lista que se reacomoda sola rompe la memoria de
   // dónde está cada room. Lo único que se mueve es lo que tú fijas, y los rooms sin
   // mensajes en 7 días, que bajan a «Poco usados».
@@ -4106,8 +4116,24 @@ function Sidebar({
       /* modo privado: sin fijados no se rompe nada */
     }
   }, [pinnedRooms]);
-  const togglePinRoom = (id: number) =>
-    setPinnedRooms((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  // Al montar: manda el servidor. Si allá no hay nada pero este navegador sí tenía
+  // fijados (de antes de guardarlos en el servidor), se suben una vez.
+  useEffect(() => {
+    listRoomPinsFn()
+      .then((ids) => {
+        if (ids.length) return setPinnedRooms(ids);
+        setPinnedRooms((local) => {
+          if (local.length) setRoomPinsFn({ data: { channelIds: local } }).catch(() => {});
+          return local;
+        });
+      })
+      .catch(() => {});
+  }, []);
+  const togglePinRoom = (id: number) => {
+    const next = pinnedRooms.includes(id) ? pinnedRooms.filter((x) => x !== id) : [...pinnedRooms, id];
+    setPinnedRooms(next);
+    setRoomPinsFn({ data: { channelIds: next } }).catch(() => {});
+  };
 
   const [collapsedThreads, setCollapsedThreads] = useState<Set<string>>(() => {
     if (typeof window === "undefined") return new Set();

@@ -267,6 +267,14 @@ async function migrate(): Promise<void> {
     created_at INTEGER NOT NULL DEFAULT (unixepoch()),
     PRIMARY KEY (channel_id, message_id)
   )`);
+  // Rooms fijados arriba en el sidebar: personal, pero en el servidor para que sigan
+  // a la persona entre web y móvil (antes vivían en localStorage de cada navegador).
+  await exec(`CREATE TABLE IF NOT EXISTS gc_room_pins (
+    user_sub   TEXT NOT NULL,
+    channel_id INTEGER NOT NULL,
+    position   INTEGER NOT NULL,
+    PRIMARY KEY (user_sub, channel_id)
+  )`);
   await exec(`CREATE TABLE IF NOT EXISTS gc_mutes (
     user_sub TEXT NOT NULL,
     scope    TEXT NOT NULL,               -- 'room' | 'dm'
