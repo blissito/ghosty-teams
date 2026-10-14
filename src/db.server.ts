@@ -1133,6 +1133,21 @@ export async function pruneArtifactVersions(
   return doomed.map((r: any) => r.src).filter((s: any): s is string => !!s);
 }
 
+/** La fila tal cual, con su mensaje ancla: lo mínimo para estampar una tarjeta inline (ask-user). */
+export async function getArtifactRow(
+  id: number
+): Promise<{ id: number; messageId: number; kind: string; md: string | null } | null> {
+  const rows = await dbq(`SELECT id, message_id, kind, md FROM gc_artifacts WHERE id = ? LIMIT 1`, [id]);
+  const r = rows[0];
+  return r ? { id: num(r.id), messageId: num(r.message_id), kind: String(r.kind ?? ""), md: r.md ?? null } : null;
+}
+
+/** Compare-and-swap del `md`: mismo criterio que `swapMessageBody`. */
+export async function swapArtifactMd(id: number, prev: string | null, next: string): Promise<boolean> {
+  const rows = await dbq(`UPDATE gc_artifacts SET md = ? WHERE id = ? AND md IS ? RETURNING id`, [next, id, prev]);
+  return rows.length > 0;
+}
+
 // Una versión concreta (para servir la congelada en el link público).
 export async function getArtifactVersion(
   id: number
@@ -1610,21 +1625,26 @@ export async function toggleMute(
   return { muted: true };
 }
 
-// Rooms fijados arriba en el sidebar, en el orden en que se fijaron.
-export async function listRoomPins(userSub: string): Promise<number[]> {
-  const rows = await dbq("SELECT channel_id FROM gc_room_pins WHERE user_sub = ? ORDER BY position", [userSub]);
-  return rows.map((r) => num(r.channel_id));
+// Preferencias del sidebar por persona: { kind → lista JSON }.
+export async function listSidebarPrefs(userSub: string): Promise<Record<string, (string | number)[]>> {
+  const rows = await dbq("SELECT kind, value FROM gc_sidebar_prefs WHERE user_sub = ?", [userSub]);
+  const out: Record<string, (string | number)[]> = {};
+  for (const r of rows) {
+    try {
+      const v = JSON.parse(String(r.value));
+      if (Array.isArray(v)) out[String(r.kind)] = v;
+    } catch {
+      /* fila corrupta: se ignora y el cliente se queda con su cache */
+    }
+  }
+  return out;
 }
 
-// Reemplaza la lista completa (el cliente manda el orden ya resuelto).
-export async function setRoomPins(userSub: string, channelIds: number[]): Promise<void> {
-  await dbq("DELETE FROM gc_room_pins WHERE user_sub = ?", [userSub]);
-  for (const [i, id] of channelIds.entries()) {
-    await dbq(
-      "INSERT INTO gc_room_pins (user_sub, channel_id, position) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
-      [userSub, id, i]
-    );
-  }
+export async function setSidebarPref(userSub: string, kind: string, value: unknown[]): Promise<void> {
+  await dbq(
+    "INSERT INTO gc_sidebar_prefs (user_sub, kind, value) VALUES (?, ?, ?) ON CONFLICT (user_sub, kind) DO UPDATE SET value = excluded.value",
+    [userSub, kind, JSON.stringify(value)]
+  );
 }
 
 // Scopes silenciados por el usuario (para pintar dimmed y suprimir badge/push).
@@ -1678,6 +1698,17 @@ export async function setMessageBody(id: number, body: string): Promise<void> {
 /** Escritura PARCIAL del streaming (ver body-flush.server.ts). Marca el mensaje en vuelo. */
 export async function setMessageBodyStreaming(id: number, body: string): Promise<void> {
   await dbq("UPDATE gc_messages SET body = ?, streaming = 1 WHERE id = ?", [body, id]);
+}
+
+/**
+ * Reescribe el body SÓLO si sigue siendo `prev` (compare-and-swap). Es lo que deja estampar la
+ * respuesta de una tarjeta (ver `card-state.ts`) sin que dos clics simultáneos —dos
+ * dispositivos— ganen los dos. No toca `streaming` ni `edited_at`: no es un turno que termina
+ * ni una edición del autor.
+ */
+export async function swapMessageBody(id: number, prev: string, next: string): Promise<boolean> {
+  const rows = await dbq("UPDATE gc_messages SET body = ? WHERE id = ? AND body = ? RETURNING id", [next, id, prev]);
+  return rows.length > 0;
 }
 
 // ── Agentes (multi-agente): el "ghosty" implícito del wizard + estos extra ──

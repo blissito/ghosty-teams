@@ -25,6 +25,13 @@ export const answerAgentAskFn = createServerFn({ method: "POST" })
       groupId: string;
       /** Lo que se contesta: el `id` de la opción elegida, o texto libre. */
       answer: string;
+      /**
+       * El mensaje de la tarjeta y el texto del botón. Con ellos la respuesta queda escrita EN
+       * el mensaje (ver `card-state.ts`) y otro dispositivo ve la pregunta cerrada. Opcionales:
+       * un cliente viejo sigue contestando como antes.
+       */
+      msgId?: number;
+      label?: string;
     }) => d,
   )
   .handler(async ({ data }) => {
@@ -42,22 +49,37 @@ export const answerAgentAskFn = createServerFn({ method: "POST" })
       throw new Error("este agente no soporta preguntas con respuesta diferida");
     }
 
+    // Se reclama ANTES de desbloquear el turno: si otro ya contestó, aquí se para y no se le
+    // manda al agente una segunda respuesta a una tarea que ya siguió.
+    let claim: import("./card-state").CardClaim = { ok: true };
+    if (data.msgId != null && data.label) {
+      const { claimMessageCard } = await import("./card-state");
+      claim = await claimMessageCard(user, Number(data.msgId), "ask", String(data.label));
+      if (!claim.ok) return { ok: false as const, taken: claim.taken };
+    }
+
     const { runA2ATurn } = await import("./a2a-client.server");
     const { currentNamespace } = await import("./tenant.server");
 
     let texto = "";
-    await runA2ATurn({
-      cardUrl: agent.backend.runtimeUrl,
-      contextId: data.groupId,
-      // El `taskId` es lo que convierte esto en "continúa aquella tarea" y no en "empieza una
-      // nueva". Es el mismo mecanismo que A2A usa para el STEER.
-      taskId: data.taskId,
-      text: data.answer,
-      workspaceNs: await currentNamespace(),
-      onChunk: (c) => {
-        texto += c;
-      },
-    });
+    try {
+      await runA2ATurn({
+        cardUrl: agent.backend.runtimeUrl,
+        contextId: data.groupId,
+        // El `taskId` es lo que convierte esto en "continúa aquella tarea" y no en "empieza una
+        // nueva". Es el mismo mecanismo que A2A usa para el STEER.
+        taskId: data.taskId,
+        text: data.answer,
+        workspaceNs: await currentNamespace(),
+        onChunk: (c) => {
+          texto += c;
+        },
+      });
+    } catch (e) {
+      // La respuesta no llegó: la tarjeta se reabre para que se pueda volver a intentar.
+      if (claim.ok) await claim.undo?.().catch(() => {});
+      throw e;
+    }
 
     return { ok: true as const, reply: texto };
   });

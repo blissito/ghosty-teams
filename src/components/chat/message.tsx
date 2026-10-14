@@ -90,10 +90,11 @@ import { registerModalEsc } from "../../utils/modal-esc";
 import { useScrollLock } from "../../utils/scroll-lock";
 import { type ArtifactView, viewFromAttachment } from "../../components/ArtifactPanel";
 import { FxOverlay } from "./FxOverlay";
-import { extractFx, extractEbDoc, bubbleWithoutEbDoc, extractToolState, extractSubagents, extractSteps, extractTodos, extractAlert, extractAsk, extractPermission, extractAllPr, extractAllGh, extractTask, extractTests, extractPlanCard, extractRunCard, extractRelay, type RelayData, extractVerdictCard, extractPreviewErrorCard, extractSprintCard, extractAsksCard, extractAdsProposalCard, extractAdsCampaignCard, extractAdsReportCard, extractAdsPendingCard, type ToolState, type TodoState, type AlertCardData, type AskCardData, type PermissionCardData, type GhCardData, type PrCardData, type TaskCardData, type TestsCardData } from "../../lib/ebdoc";
+import { extractFx, extractEbDoc, bubbleWithoutEbDoc, extractToolState, extractSubagents, extractSteps, extractTodos, extractAlert, extractAsk, extractPermission, extractAllPr, extractAllGh, extractTask, extractTests, extractPlanCard, extractRunCard, extractRelay, type RelayData, extractVerdictCard, extractPreviewErrorCard, extractSprintCard, extractAsksCard, extractAdsProposalCard, extractAdsCampaignCard, extractAdsReportCard, extractAdsPendingCard, parseAskUserMd, type ToolState, type TodoState, type AlertCardData, type AskCardData, type PermissionCardData, type GhCardData, type PrCardData, type TaskCardData, type TestsCardData } from "../../lib/ebdoc";
 import { SubagentList } from "./SubagentList";
 import { prCardStateFn, runCardActionFn, taskCardStateFn, runTaskCardActionFn } from "../../server/connectors";
 import { answerAgentAskFn } from "../../server/agent-ask";
+import { claimAlertFn, claimAskUserFn } from "../../server/card-state";
 import { answerAcpPermissionFn } from "../../server/agent-permission";
 import { ThinkingRing } from "../../components/ThinkingRing";
 import { AgentBot, type AgentBotStatus } from "../../components/AgentBot";
@@ -1000,9 +1001,8 @@ export function artifactToView(a: Artifact): ArtifactView {
   if (a.kind === "sheet") return { kind: "sheet", title, documentId: a.url, csv: a.md ?? "" };
   if (a.kind === "artifact") return { kind: "artifact", title, documentId: a.url, html: a.md ?? "", src: a.src ?? "", messageId: a.messageId, versionId: a.id };
   if (a.kind === "ask-user") {
-    let options: string[] = [];
-    try { const p = JSON.parse(a.md ?? "[]"); if (Array.isArray(p)) options = p.map(String); } catch {}
-    return { kind: "ask-user", title, question: a.title ?? "", options };
+    // `md` es el arreglo de opciones o, ya contestada, `{options, answered}`.
+    return { kind: "ask-user", title, question: a.title ?? "", options: parseAskUserMd(a.md).options };
   }
   const kind = ARTIFACT_KIND_META[a.kind] ? a.kind : "file";
   return ARTIFACT_KIND_META[kind].embed
@@ -1130,7 +1130,10 @@ function writeAskState(msgId: number, label: string): void {
 
 export function AskCard({ msgId, a }: { msgId: number; a: AskCardData }) {
   const t = useT();
-  const [respondido, setRespondido] = useState<string | null>(() => readAskState(msgId));
+  // Lo que dice el MENSAJE gana, como en PermissionCard: lo estampa el servidor al contestar
+  // y lo ve todo el canal, en cualquier dispositivo. El localStorage es el eco optimista.
+  const [local, setRespondido] = useState<string | null>(() => readAskState(msgId));
+  const respondido = a.answered ?? local;
   const [enviando, setEnviando] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -1148,9 +1151,13 @@ export function AskCard({ msgId, a }: { msgId: number; a: AskCardData }) {
     setEnviando(id);
     setErr(null);
     try {
-      await answerAgentAskFn({ data: { handle: a.handle, groupId: a.groupId, taskId: a.taskId, answer: id } });
-      setRespondido(label);
-      writeAskState(msgId, label);
+      const r = await answerAgentAskFn({
+        data: { handle: a.handle, groupId: a.groupId, taskId: a.taskId, answer: id, msgId, label },
+      });
+      // Alguien ya había contestado (otro dispositivo, otra persona): se pinta lo suyo.
+      const final = r.ok ? label : r.taken;
+      setRespondido(final);
+      writeAskState(msgId, final);
     } catch (e) {
       setErr(e instanceof Error ? e.message : t("no se pudo responder"));
       setEnviando(null);
@@ -1345,7 +1352,10 @@ export function PermissionCard({ msgId, p }: { msgId: number; p: PermissionCardD
 
 export function AlertCard({ msgId, a, onAct }: { msgId: number; a: AlertCardData; onAct: (send: string) => void }) {
   const t = useT();
-  const [asked, setAsked] = useState<string | null>(readAlertState(msgId).asked ?? null);
+  // El `asked` del mensaje gana (lo estampa el servidor, ver `claimAlertFn`); el localStorage
+  // es el respaldo de mensajes viejos y el eco de quien hizo clic.
+  const [local, setAsked] = useState<string | null>(readAlertState(msgId).asked ?? null);
+  const asked = a.asked ?? local;
 
   const grave = a.level === "fatal" || a.level === "error";
   const franja = a.level === "fatal" ? "bg-red-600" : a.level === "error" ? "bg-red-500" : a.level === "warning" ? "bg-amber-500" : "bg-brand";
@@ -1366,9 +1376,17 @@ export function AlertCard({ msgId, a, onAct }: { msgId: number; a: AlertCardData
     a.env,
   ].filter(Boolean);
 
-  const act = (send: string) => {
+  const act = async (send: string) => {
     setAsked(send);
     writeAlertState(msgId, { asked: send });
+    // Se reclama ANTES de mandar: si alguien ya pidió el fix, no se pide dos veces. Si el
+    // reclamo falla por red, se manda igual — es como funcionaba antes de existir.
+    const r = await claimAlertFn({ data: { msgId, send } }).catch(() => ({ ok: true as const }));
+    if (!r.ok) {
+      setAsked(r.taken);
+      writeAlertState(msgId, { asked: r.taken });
+      return;
+    }
     onAct(send);
   };
 
@@ -2026,26 +2044,37 @@ export function AskUserCard({
   artifactId,
   question,
   options,
+  answered: served,
   onPick,
 }: {
   artifactId: number;
   question: string;
   options: string[];
+  /** Lo que ya se eligió según el SERVIDOR (ver `claimAskUserFn`). Gana sobre el localStorage. */
+  answered?: string;
   onPick: (opt: string) => void;
 }) {
   const t = useT();
   const init = readAuState(artifactId);
-  const [answered, setAnswered] = useState<string | null>(init.answered ?? null);
+  const [local, setAnswered] = useState<string | null>(init.answered ?? null);
+  const answered = served ?? local;
   const [dismissed, setDismissed] = useState<boolean>(!!init.dismissed);
   const [focusIdx, setFocusIdx] = useState(-1);
   const btnRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const containerRef = useRef<HTMLDivElement>(null);
   const active = !answered && !dismissed;
 
-  const pick = useCallback((opt: string) => {
+  const pick = useCallback(async (opt: string) => {
     if (!opt) return;
     setAnswered(opt);
     writeAuState(artifactId, { answered: opt });
+    // Primero gana: si otro dispositivo ya eligió, se pinta lo suyo y no se manda nada.
+    const r = await claimAskUserFn({ data: { artifactId, answer: opt } }).catch(() => ({ ok: true as const }));
+    if (!r.ok) {
+      setAnswered(r.taken);
+      writeAuState(artifactId, { answered: r.taken });
+      return;
+    }
     onPick(opt);
   }, [artifactId, onPick]);
   const dismiss = useCallback(() => {
@@ -2162,6 +2191,7 @@ export function ArtifactCard({ artifact, ownerMsg }: { artifact: Artifact; owner
         artifactId={artifact.id}
         question={view.question}
         options={view.options}
+        answered={parseAskUserMd(artifact.md).answered}
         onPick={(opt) => sendQuickReply?.(opt, ownerMsg)}
       />
     );

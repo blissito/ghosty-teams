@@ -341,6 +341,25 @@ export function extractAskUser(body: string): AskUser | null {
   }
 }
 
+/**
+ * El `md` del artefacto ask-user. Nació como el arreglo de opciones a secas; al contestar, el
+ * servidor lo reescribe como `{options, answered}` para que la respuesta viva en el servidor y
+ * no en el localStorage de quien hizo clic. Se leen las dos formas: hay filas viejas.
+ */
+export function parseAskUserMd(md: string | null | undefined): { options: string[]; answered?: string } {
+  try {
+    const p = JSON.parse(md ?? "[]") as unknown;
+    if (Array.isArray(p)) return { options: p.map(String) };
+    const o = (p ?? {}) as { options?: unknown; answered?: unknown };
+    return {
+      options: Array.isArray(o.options) ? o.options.map(String) : [],
+      answered: typeof o.answered === "string" && o.answered ? o.answered : undefined,
+    };
+  } catch {
+    return { options: [] };
+  }
+}
+
 // Texto de la burbuja SIN el bloque ask-user (narración alrededor). La pregunta se
 // muestra dentro de la card, así que si no hay narración dejamos el bubble vacío.
 export function stripAskUser(body: string): string {
@@ -391,6 +410,12 @@ export type AskCardData = {
   question: string;
   /** Opciones a pintar. Si vienen vacías, se usan Sí/No. */
   options: { id: string; label: string; tone?: string }[];
+  /**
+   * Lo que ya se contestó (el texto del botón). Lo estampa el SERVIDOR en el propio fence al
+   * contestar — ver `stampFence` — para que el otro dispositivo, y el resto del canal, vean la
+   * pregunta cerrada y no vuelvan a desbloquear un turno que ya siguió.
+   */
+  answered?: string;
 };
 
 export function extractAsk(body: string): AskCardData | null {
@@ -417,7 +442,7 @@ export function extractAsk(body: string): AskCardData | null {
           .filter((o) => o.id && o.label)
           .slice(0, 4)
       : [];
-    return { taskId, handle, groupId, question, options };
+    return { taskId, handle, groupId, question, options, answered: str(p.answered) || undefined };
   } catch {
     return null;
   }
@@ -582,6 +607,8 @@ export type AlertCardData = {
   shortId: string;
   url: string;
   actions: AlertAction[];
+  /** El `send` que ya se pidió. Lo estampa el servidor (`stampFence`): si no, dos personas piden el mismo fix. */
+  asked?: string;
 };
 
 export function extractAlert(body: string): AlertCardData | null {
@@ -619,7 +646,30 @@ export function extractAlert(body: string): AlertCardData | null {
       shortId: str(p.shortId),
       url: str(p.url),
       actions,
+      asked: str(p.asked) || undefined,
     };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Reescribe el JSON del PRIMER fence `lang` cerrado mezclándole `patch`. Null si no hay fence
+ * o su JSON está roto: estampar sobre algo que no se puede leer sería inventar la tarjeta.
+ *
+ * Es como el servidor deja escrita una respuesta DENTRO de la tarjeta (pregunta contestada,
+ * fix pedido): lo que rodea al fence queda igual y sus campos también, así que lo que lo
+ * extraía lo sigue extrayendo, y los mensajes viejos —sin el campo— se leen como "aún no".
+ */
+export function stampFence(body: string, lang: string, patch: Record<string, unknown>): string | null {
+  const open = body.match(new RegExp("```" + lang + "\\b[^\\n]*\\n"));
+  if (!open || open.index == null) return null;
+  const start = open.index + open[0].length;
+  const closeIdx = body.slice(start).indexOf("```");
+  if (closeIdx === -1) return null;
+  try {
+    const p = JSON.parse(body.slice(start, start + closeIdx).trim()) as Record<string, unknown>;
+    return body.slice(0, start) + JSON.stringify({ ...p, ...patch }) + "\n" + body.slice(start + closeIdx);
   } catch {
     return null;
   }
