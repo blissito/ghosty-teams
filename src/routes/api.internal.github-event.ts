@@ -56,10 +56,39 @@ const LINE: Record<PrEvent["action"], (ev: PrEvent) => string> = {
   ci: () => "",
 };
 
+/** Pinta en la tarjeta `gt-gh` de cada room cómo salió el CI del PR (sin aviso en el hilo). */
+async function paintPrCardCi(repo: string, number: number, conclusion: string): Promise<void> {
+  const { dbq } = await import("../dbq.server");
+  const db = await import("../db.server");
+  const bus = await import("../server/bus.server");
+  const { currentNamespace } = await import("../server/tenant.server");
+  const ns = await currentNamespace();
+  const cards = await dbq("SELECT channel_id, msg_id FROM gt_pr_cards WHERE repo = ? AND number = ?", [repo.toLowerCase(), number]);
+  for (const c of cards as unknown as { channel_id: number; msg_id: number }[]) {
+    const msg = await db.getMessage(Number(c.msg_id));
+    if (!msg) continue;
+    let changed = false;
+    // Sólo el fence de ESTE PR; lo demás del cuerpo (el aviso) se queda igual.
+    const body = msg.body.replace(/```gt-gh\n([\s\S]*?)\n```/g, (whole: string, raw: string) => {
+      try {
+        const card = JSON.parse(raw) as Record<string, unknown>;
+        if (card.kind !== "pr" || String(card.ref) !== String(number) || card.ci === conclusion) return whole;
+        changed = true;
+        return "```gt-gh\n" + JSON.stringify({ ...card, ci: conclusion }) + "\n```";
+      } catch {
+        return whole;
+      }
+    });
+    if (!changed) continue;
+    await db.editMessage(msg.id, body);
+    bus.publish(bus.ch.room(ns, Number(c.channel_id)), { t: "message:edited", id: msg.id, body, edited_at: Math.floor(Date.now() / 1000) });
+  }
+}
+
 /** Aviso + tarjeta `gt-gh` (sin botones: es un hecho, no algo que accionar desde aquí). */
-export function prMessageBody(ev: PrEvent): string {
+export function prMessageBody(ev: PrEvent, ci?: string): string {
   const state = ev.action === "merged" ? "merged" : ev.action === "closed" ? "closed" : "open";
-  const card = { kind: "pr", repo: ev.repo, ref: String(ev.number), title: ev.title, url: ev.url, state, author: ev.author ?? "" };
+  const card = { kind: "pr", repo: ev.repo, ref: String(ev.number), title: ev.title, url: ev.url, state, author: ev.author ?? "", ...(ci ? { ci } : {}) };
   return `${LINE[ev.action](ev)} · \`${ev.repo}\`\n\n\`\`\`gt-gh\n${JSON.stringify(card)}\n\`\`\``;
 }
 
@@ -128,6 +157,9 @@ export const Route = createFileRoute("/api/internal/github-event")({
             const { refreshRoom } = await import("../server/apps/factory-runs.server");
             for (const c of new Set(runs.map((r) => r.channelId))) void refreshRoom(c);
             await (await import("../server/pr-watches.server")).sweepPrWatchesNow();
+            // La tarjeta del aviso «PR abierto» enseña cómo salió el CI, también en un PR que
+            // no es pedido de la fábrica (antes sólo lo veían las tarjetas de pedido).
+            if (ev.ci?.conclusion) await paintPrCardCi(ev.repo, ev.number, ev.ci.conclusion).catch((e) => console.warn("[github-event] ci en tarjeta", e));
             return Response.json({ ok: true, runs: runs.length });
           }
           if (ev.action === "review" || ev.action === "comment") {
@@ -204,8 +236,12 @@ export const Route = createFileRoute("/api/internal/github-event")({
             if (cardMsg) {
               // Ya hay tarjeta de este PR en el room: se ACTUALIZA (deja de decir «abierto») y el
               // cambio se cuenta en su hilo, para que el merge se note y no sólo se corrija en silencio.
-              await db.editMessage(cardMsg.id, body);
-              bus.publish(bus.ch.room(ns, channelId), { t: "message:edited", id: cardMsg.id, body, edited_at: Math.floor(Date.now() / 1000) });
+              // El CI ya pintado se conserva al pasar a merged/closed.
+              const { extractAllGh } = await import("../lib/ebdoc");
+              const ci = extractAllGh(cardMsg.body).find((g) => g.kind === "pr")?.ci;
+              const edited = ci ? prMessageBody(ev, ci) : body;
+              await db.editMessage(cardMsg.id, edited);
+              bus.publish(bus.ch.room(ns, channelId), { t: "message:edited", id: cardMsg.id, body: edited, edited_at: Math.floor(Date.now() / 1000) });
               const who = await roomAgent(channelId);
               const { id } = await db.postAgent(channelId, cardMsg.id, LINE[ev.action](ev), "msg", who.handle, who.name, "general", who.avatar);
               const reply = await db.getMessage(id);

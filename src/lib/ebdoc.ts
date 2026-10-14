@@ -1277,6 +1277,8 @@ export type GhCardData = {
   /** `open`/`closed`/`merged`. Vacío si el agente no lo miró — nunca se inventa. */
   state: string;
   author: string;
+  /** Sólo PR: cómo salió el CI de su cabeza (`success`/`failure`/…). Lo pone la plataforma. */
+  ci?: string;
 };
 
 const GH_KINDS = new Set(["issue", "commit", "branch", "pr"]);
@@ -1312,6 +1314,7 @@ function unaTarjetaGh(crudo: string): GhCardData | null {
       url,
       state: str(p.state).toLowerCase(),
       author: str(p.author),
+      ...(str(p.ci) ? { ci: str(p.ci).toLowerCase() } : {}),
     };
   } catch {
     return null;

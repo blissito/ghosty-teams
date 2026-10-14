@@ -1677,6 +1677,20 @@ export function GhCard({ gh, channelId = 0 }: { gh: GhCardData; channelId?: numb
       <span className={`min-w-0 flex-1 truncate text-[13px] ${cerrado ? "text-muted line-through" : "text-ink"}`}>
         {gh.title || etiqueta}
       </span>
+      {gh.kind === "pr" && gh.ci ? (
+        <span
+          title={t("CI")}
+          className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+            gh.ci === "success"
+              ? "bg-emerald-500/15 text-emerald-600"
+              : gh.ci === "failure" || gh.ci === "timed_out"
+                ? "bg-red-500/15 text-red-500"
+                : "bg-surface-3 text-muted"
+          }`}
+        >
+          {gh.ci === "success" ? "CI ✓" : gh.ci === "failure" || gh.ci === "timed_out" ? "CI ✗" : `CI · ${gh.ci}`}
+        </span>
+      ) : null}
       {gh.state ? (
         <span
           className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
