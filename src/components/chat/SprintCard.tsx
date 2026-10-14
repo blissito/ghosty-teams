@@ -55,6 +55,15 @@ export function SprintCard({ card, channelId, expanded = false }: { card: { spri
   const [note, setNote] = useState("");
   // La nota que ya se mandó: se enseña arriba con spinner hasta que llega la versión nueva.
   const [sent, setSent] = useState<string | null>(null);
+  const [sentAt, setSentAt] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
+  // Reloj del aviso: rehacer un sprint son minutos (Arqui relee el repo); sin un contador el
+  // spinner parece colgado.
+  useEffect(() => {
+    if (!sent) return;
+    const iv = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(iv);
+  }, [sent]);
   // Llegó una versión nueva del borrador: se puede volver a pedir cambios.
   const version = st?.version;
   useEffect(() => setSent(null), [version]);
@@ -125,7 +134,13 @@ export function SprintCard({ card, channelId, expanded = false }: { card: { spri
             <Loader2 size={13} className="mt-0.5 shrink-0 animate-spin text-brand" />
             <span className="min-w-0">
               <span className="font-semibold">{t("Arqui está rehaciendo el sprint con tu nota")}</span>
+              <span className="ml-1.5 font-mono text-muted">{fmtElapsed(now - sentAt)}</span>
               <span className="block truncate text-muted">«{sent}»</span>
+              <span className="block text-[11px] text-muted">
+                {now - sentAt > 8 * 60_000
+                  ? t("Está tardando más de lo normal: revisa la respuesta de Arqui en el hilo.")
+                  : t("Relee el repo y vuelve a armar los tickets; suele tomar unos minutos. Su avance se ve en el hilo.")}
+              </span>
             </span>
           </div>
         )}
@@ -378,5 +393,12 @@ export function SprintCard({ card, channelId, expanded = false }: { card: { spri
     setAsking(null);
     setNote("");
     setSent(text);
+    setSentAt(Date.now());
+    setNow(Date.now());
   }
+}
+
+function fmtElapsed(ms: number): string {
+  const sec = Math.max(0, Math.floor(ms / 1000));
+  return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
 }

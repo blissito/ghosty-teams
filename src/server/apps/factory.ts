@@ -1356,7 +1356,7 @@ async function wakePlanForSprint(sub: string, channelId: number, parentId: numbe
   const { resolvedAgents, agentGroupId } = await import("../../agents.server");
   const plan = (await resolvedAgents()).find((a) => a.handle === "plan");
   if (!plan) throw new Error("no hay agente en @plan");
-  const { enqueueWakeup, mintWakeRef, armWakeups } = await import("../wakeups.server");
+  const { enqueueWakeup, mintWakeRef, kickWakeups } = await import("../wakeups.server");
   const { currentNamespace } = await import("../tenant.server");
   const { reqOrigin } = await import("../../origin.server");
   const ns = await currentNamespace();
@@ -1374,7 +1374,10 @@ async function wakePlanForSprint(sub: string, channelId: number, parentId: numbe
     origin: await reqOrigin().catch(() => ""),
     dueAt: Math.floor(Date.now() / 1000),
   });
-  armWakeups(ns);
+  // kick y no arm: con el timer ya armado, arm sólo esperaba al siguiente tick (30 s, o más
+  // con varios espacios en serie) y «Pedir cambios» tardaba ~55 s en despertar a Arqui
+  // (MailMask, sprint 10, 14-oct). Alguien está mirando el spinner.
+  kickWakeups(ns);
 }
 
 /**

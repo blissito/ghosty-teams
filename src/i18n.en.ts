@@ -1466,6 +1466,8 @@ export const en: Record<string, string> = {
   "Aprobar": "Approve",
   "Aprobado": "Approved",
   "Pedir cambios": "Request changes",
+  "Está tardando más de lo normal: revisa la respuesta de Arqui en el hilo.": "This is taking longer than usual: check Arqui's reply in the thread.",
+  "Relee el repo y vuelve a armar los tickets; suele tomar unos minutos. Su avance se ve en el hilo.": "Arqui rereads the repo and rebuilds the tickets; it usually takes a few minutes. Progress shows in the thread.",
   "Arqui está rehaciendo el sprint con tu nota": "Arqui is redoing the sprint with your note",
   "Cambios enviados ✓": "Changes sent ✓",
   "Editar ticket": "Edit ticket",
