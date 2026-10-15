@@ -366,6 +366,17 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         const base = await origin();
         if (!base) return { ok: false, error: "no pude resolver la dirección de este espacio" };
         const { mintGitSession } = await import("./factory-git.server");
+        // PR que ya existía (Dependabot, pedidos viejos): su rama se fija aquí, o el primer push
+        // abriría una rama aparte y el PR —con su CI y su preview— se quedaría roto.
+        if (!run.branch && run.prUrl) {
+          const R = await import("./factory-runs.server");
+          const ref = (await R.prHead(sub, run.prUrl).catch(() => null))?.ref ?? null;
+          if (ref) {
+            const { dbq } = await import("../../dbq.server");
+            await dbq("UPDATE gt_factory_runs SET branch = ? WHERE id = ? AND branch IS NULL", [ref, run.id]).catch(() => {});
+            run.branch = ref;
+          }
+        }
         const token = await mintGitSession({ runId: run.id, repo: run.repo, sub, branch: run.branch });
         const host = base.replace(/^https?:\/\//, "");
         const remote = `${base.startsWith("http://") ? "http" : "https"}://x-access-token:${token}@${host}/api/git/${run.id}/${run.repo}.git`;
@@ -479,7 +490,10 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           `Revisa el PR ${url} contra el plan APROBADO (v${run.planVersion}). Resultado que reporta @build: ${String(a.tests).slice(0, 500)}\n\n` +
             `## Plan aprobado\n${plan?.planMd ?? "(no encontré el plan)"}\n\n` +
             (touchesGithub
-              ? `⚠️ Este PR modifica archivos de .github/ (CI o CODEOWNERS). Si el pedido NO es agregar o arreglar el CI, es un hallazgo: repórtalo con pass=false. `
+              ? `⚠️ Este PR modifica archivos de .github/ (CI o CODEOWNERS). Si el pedido NO es agregar o arreglar el CI, es un hallazgo: repórtalo con pass=false` +
+                (run.kind === "dependabot"
+                  ? ` (excepción: en una subida de Dependabot se pide agregar un grupo de paquetes hermanos a .github/dependabot.yml; sólo eso, nada de workflows ni CODEOWNERS). `
+                  : `. `)
               : "") +
             `Si el repo publica previews, pide la URL con factory_preview (runId ${run.id}): comprueba AHÍ los criterios de ` +
             `aceptación que se ven en pantalla y cita la URL en tu veredicto; si está en camino, espera a que esté lista. ` +

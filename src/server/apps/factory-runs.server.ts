@@ -29,6 +29,8 @@ export type Run = {
   checkedSha?: string | null;
   /** Firmado pero sin lugar en el tier: espera su caja (`box_state = 'waiting'`). */
   boxWaiting?: boolean;
+  /** `sprint`, `dependabot`… (NULL en los pedidos sueltos). */
+  kind?: string | null;
 };
 
 const toRun = (r: Record<string, any>): Run => ({
@@ -49,6 +51,7 @@ const toRun = (r: Record<string, any>): Run => ({
   boxWaiting: r.box_state === "waiting",
   approvedBy: r.approved_by ?? null,
   checkedSha: r.checked_sha ?? null,
+  kind: r.kind ?? null,
 });
 
 export async function getRun(id: number): Promise<Run | null> {
@@ -970,7 +973,7 @@ export function parsePrUrl(url: string): { repo: string; number: number } | null
 }
 
 /** La cabeza del PR y si es borrador. null si GitHub no contesta. */
-export async function prHead(sub: string, url: string): Promise<{ sha: string; draft: boolean } | null> {
+export async function prHead(sub: string, url: string): Promise<{ sha: string; draft: boolean; ref: string | null } | null> {
   const pr = parsePrUrl(url);
   if (!pr) return null;
   try {
@@ -978,7 +981,7 @@ export async function prHead(sub: string, url: string): Promise<{ sha: string; d
     const tool = allTools().find((t) => t.name === "github_get_pr");
     const r = (await tool?.handler(sub, { repo: pr.repo, number: pr.number })) as any;
     if (!r || r.error || !r.headSha) return null;
-    return { sha: String(r.headSha), draft: !!r.draft };
+    return { sha: String(r.headSha), draft: !!r.draft, ref: typeof r.head === "string" ? r.head : null };
   } catch {
     return null;
   }
@@ -1045,7 +1048,17 @@ export async function decide(opts: {
     const text =
       (again
         ? `${who} pidió otra vuelta. Revisa los últimos hallazgos de @check en este hilo, corrige en la misma rama y cierra con factory_build_done.`
-        : `${who} aprobó el plan v${version}. Constrúyelo: rama nueva, código, pruebas, PR en BORRADOR, y cierra con factory_build_done.`) +
+        : run.prUrl
+          ? // El PR ya existe (Dependabot, PR adoptado): se arregla EN su rama, o su CI y su preview
+            // se quedan rojos para siempre mientras el arreglo vive en otro PR.
+            `${who} aprobó el plan v${version}. Constrúyelo sobre el PR que ya existe (${run.prUrl}): ` +
+            `trabaja y empuja en SU rama${run.branch ? ` (${run.branch})` : ""} con factory_git_remote, no abras otro PR, y cierra con factory_build_done.` +
+            (run.kind === "dependabot"
+              ? ` Es una subida de Dependabot: si un paquete exige a sus hermanos en la misma versión (peer dependencies, p. ej. \`@scope/*\`), súbelos juntos ` +
+                `y regenera el lockfile con el gestor del repo. En el mismo PR agrega a .github/dependabot.yml un grupo (\`groups\` con \`patterns\`) ` +
+                `para esa familia, así la próxima subida llega completa. Tu push detiene los rebases de Dependabot en esa rama: es lo esperado.`
+              : "")
+          : `${who} aprobó el plan v${version}. Constrúyelo: rama nueva, código, pruebas, PR en BORRADOR, y cierra con factory_build_done.`) +
       (await takeNotes(run.id)) +
       (again ? "" : await critiqueSuggestions(run.id, version)) +
       `\n\n## Plan aprobado (v${version})\n${plan?.planMd ?? ""}`;

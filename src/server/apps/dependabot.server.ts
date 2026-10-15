@@ -63,9 +63,10 @@ export async function adoptDependabotPr(ev: PrOpened, opts: { room?: number } = 
 
     const head = await R.prHead(sub, ev.url).catch(() => null);
     const rows = await dbq(
-      `INSERT INTO gt_factory_runs (channel_id, root_msg_id, topic, title, status, repo, requested_by, approved_by, kind, task_ref, pr_url, head_sha)
-       VALUES (?, ?, 'general', ?, 'checking', ?, ?, ?, 'dependabot', ?, ?, ?) RETURNING id`,
-      [room, rootId, ev.title.slice(0, 200), ev.repo, sub, sub, dependabotRef(level), ev.url, head?.sha ?? null],
+      // `branch` = la cabeza del PR: si @build lo arregla, empuja AHÍ (el CI y la preview viven en ese PR).
+      `INSERT INTO gt_factory_runs (channel_id, root_msg_id, topic, title, status, repo, requested_by, approved_by, kind, task_ref, pr_url, head_sha, branch)
+       VALUES (?, ?, 'general', ?, 'checking', ?, ?, ?, 'dependabot', ?, ?, ?, ?) RETURNING id`,
+      [room, rootId, ev.title.slice(0, 200), ev.repo, sub, sub, dependabotRef(level), ev.url, head?.sha ?? null, head?.ref ?? null],
     );
     const run = (await R.getRun(Number(rows[0].id)))!;
     await R.logEvent(run.id, "adopted", "dependabot", { pr: ev.url, level });
@@ -84,7 +85,7 @@ export async function adoptDependabotPr(ev: PrOpened, opts: { room?: number } = 
         (level === "patch" || level === "minor"
           ? `risk=low salvo que encuentres algo raro.\n`
           : `risk=high y en readFirst los archivos que usan lo que cambió, con por qué.\n`) +
-        `- pass=false con blocked=true si algo impide el merge (rompe, CI rojo por la subida): explica qué y qué haría falta. No hay @build para esto: Dependabot reescribe su rama.\n` +
+        `- pass=false con blocked=true si algo impide el merge (rompe, CI rojo por la subida): explica qué y qué haría falta (p. ej. subir juntos los paquetes hermanos). Si una persona lo manda a construir, @build lo arregla en la rama de este PR.\n` +
         `NO edites ni empujes nada.`,
       // Llega por el webhook (sin request de una persona): como `noteFromGithub`, sin origin.
       "",
