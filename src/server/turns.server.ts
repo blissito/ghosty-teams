@@ -467,7 +467,7 @@ export async function recentDoneTurns(ns: string, desdeMs = 10 * 60 * 1000): Pro
   try {
     const { dbq } = await import("../dbq.server");
     const filas = await dbq(
-      `SELECT message_id, agent, avatar, channel_id, parent_id, invoker_sub, tarea, outcome, started_at
+      `SELECT message_id, agent, agent_handle, avatar, channel_id, parent_id, invoker_sub, tarea, outcome, started_at
          FROM gt_turns
         WHERE state = 'done' AND ended_at IS NOT NULL AND ended_at > ?
         ORDER BY ended_at DESC LIMIT 20`,

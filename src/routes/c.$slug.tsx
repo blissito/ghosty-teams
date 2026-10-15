@@ -1382,6 +1382,10 @@ function ChannelPage() {
           });
         }
         const vivos = new Set(next.map((x) => x.id));
+        // Un id que vuelve vivo (turno adoptado tras un deploy, o una respuesta vieja del reconcile)
+        // sale de los terminados: con el mismo id en las dos listas React duplicaba filas y quedaban
+        // relojes corriendo de turnos que ya no existían (bliss, 15-oct: 7 filas con «· 1» arriba).
+        setDoneTurns((d) => (d.some((x) => vivos.has(x.id)) ? d.filter((x) => !vivos.has(x.id)) : d));
         const recienTerminados = liveTurnsRef.current.filter((x) => !vivos.has(x.id));
         liveTurnsRef.current = next;
         setLiveTurns(next);
@@ -1429,7 +1433,9 @@ function ChannelPage() {
     // ~135 consultas por minuto para pintar seis renglones.
     const h = setInterval(refreshLiveTurns, 60000);
     return () => clearInterval(h);
-  }, [refreshLiveTurns, turns.size, liveTurns.length, doneTurns.length]);
+    // Sólo si hay o no algo que pintar: con los conteos, cada relevo de la fábrica reiniciaba el
+    // intervalo y el reconcile casi nunca llegaba a correr.
+  }, [refreshLiveTurns, Boolean(turns.size || liveTurns.length || doneTurns.length)]);
 
   // Siembra los turnos EN VUELO al montar. El estado de un turno llega por SSE (`t:"turn"`)
   // y un evento no se puede volver a escuchar: quien recargaba a media respuesta se quedaba
@@ -2129,6 +2135,8 @@ function ChannelPage() {
           const resto = liveTurnsRef.current.filter((x) => x.id !== ev.id);
           liveTurnsRef.current = [...resto, fila];
           setLiveTurns(liveTurnsRef.current);
+          // Vivo otra vez (adoptado): ya no es «terminó».
+          setDoneTurns((d) => (d.some((x) => x.id === ev.id) ? d.filter((x) => x.id !== ev.id) : d));
         }
         break;
       }
@@ -3893,7 +3901,9 @@ function LiveTurnsPanel({
   const agents = useMentions().filter((m) => m.kind === "agent");
   const handleOf = (x: LiveTurnRow) =>
     x.handle || (agents.find((a) => a.name === x.agent)?.handle ?? agents.find((a) => !!x.avatar && a.avatar === x.avatar)?.handle ?? null);
-  const filas = [...turns, ...done];
+  // Un id en las dos listas se pinta una vez (la viva gana): duplicado, React dejaba filas huérfanas.
+  const vivosIds = new Set(turns.map((x) => x.id));
+  const filas = [...turns, ...done.filter((x) => !vivosIds.has(x.id))];
   if (!filas.length) return null;
   const nombreDe = (id: number | null) => channels.find((c) => c.id === id)?.name ?? "";
   return (
