@@ -3926,7 +3926,10 @@ function LiveTurnsPanel({
               // Robot sólo para los roles de la fábrica; en DMs y rooms normales, el avatar.
               if (h && !x.dmId && parseFactoryAvatar(x.avatar)) {
                 const st: AgentBotStatus = x.state === "queued" ? "queued" : x.state === "done" ? "done" : x.state === "stopped" ? "failed" : "running";
-                return <AgentBot handle={h} status={st} size={22} />;
+                // El color es el que el dueño guardó en la fila del agente (como en el chat y el
+                // perfil); sin él salía el de `lookFor` y no coincidía.
+                const flame = parseFactoryAvatar(agents.find((a) => a.handle === h)?.avatar) ?? parseFactoryAvatar(x.avatar);
+                return <AgentBot handle={h} status={st} size={22} color={flame?.color} />;
               }
               return x.avatar ? <img src={x.avatar} alt="" className="h-4 w-4 shrink-0 rounded-full object-cover" /> : null;
             })()}
