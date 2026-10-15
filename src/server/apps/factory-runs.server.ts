@@ -1421,7 +1421,13 @@ export async function closeFinishedRuns(): Promise<void> {
     const run = toRun(row);
     if (lastPrCheck.has(-run.id)) continue; // una vez por proceso basta
     lastPrCheck.set(-run.id, Date.now());
-    if (!(await prIsMerged(run.approvedBy ?? run.requestedBy, run.prUrl!))) continue;
+    const o = await prOutcome(run.approvedBy ?? run.requestedBy, run.prUrl!);
+    // Reabierto sin que llegara el webhook (o antes de que existiera `onPrReopened`).
+    if (o?.outcome === "open") {
+      await onPrReopened(run).catch((e) => console.error("[factory] reabrir", run.id, e));
+      continue;
+    }
+    if (o?.outcome !== "merged") continue;
     const fixed = await dbq("UPDATE gt_factory_runs SET status = 'done', updated_at = unixepoch() WHERE id = ? AND status = 'cancelled' RETURNING *", [run.id]);
     if (fixed[0]) {
       const done = toRun(fixed[0]);
@@ -1635,6 +1641,27 @@ export async function onPrEvent(run: Run, outcome: "merged" | "closed", role: "c
   const gone = await applyEvent(run, "cancel", {}, { data: { reason: "pr_closed" } }).catch(() => null);
   if (gone) await postInThread(gone, role, `⏹️ El PR se cerró sin merge: pedido cancelado. ${run.prUrl}`);
   return gone;
+}
+
+/**
+ * PR reabierto en GitHub: el pedido que se canceló SÓLO porque el PR se cerró vuelve a la etapa en que
+ * iba (el `from` de su evento `cancel`). Uno cancelado a mano se queda cancelado. Antes nada lo sacaba
+ * de `cancelled` y la tarjeta seguía en rojo con el PR abierto (bliss, 15-oct).
+ */
+export async function onPrReopened(run: Run): Promise<Run | null> {
+  if (run.status !== "cancelled") return null;
+  const info = await cancelInfo(run.id);
+  if (info?.reason !== "pr_closed") return null;
+  const to = info.from && info.from !== "cancelled" && info.from !== "done" ? info.from : "pr_review";
+  const fixed = await dbq("UPDATE gt_factory_runs SET status = ?, updated_at = unixepoch() WHERE id = ? AND status = 'cancelled' RETURNING *", [to, run.id]);
+  if (!fixed[0]) return null;
+  const back = toRun(fixed[0]);
+  void logEvent(back.id, "reopened", null, { from: "cancelled", to });
+  void import("./factory").then((F) => F.forgetPrClosed(back.id)).catch(() => {});
+  void refreshRoom(back.channelId);
+  void import("./sprint.server").then((S) => S.onSprintRunChanged(back.id)).catch(() => {});
+  await postInThread(back, "check", `🔄 El PR se reabrió: el pedido sigue donde iba. ${back.prUrl ?? ""}`.trim());
+  return back;
 }
 
 /** Pedidos cuyo PR es `repo#number` (webhook), en cualquier estado: `onPrEvent` es idempotente

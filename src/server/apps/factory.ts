@@ -630,6 +630,10 @@ export const factoryRunCardFn = createServerFn({ method: "POST" })
  * motivo y el chip «PR» no lo decía (#17 de MailMask). Cerrado es final: se cachea.
  */
 const prClosedCache = new Map<number, boolean>();
+/** Un PR reabierto deja de estar «cerrado»: la caché asumía que cerrado era final. */
+export function forgetPrClosed(runId: number): void {
+  prClosedCache.delete(runId);
+}
 async function cancelledView(run: { id: number; prUrl: string | null; approvedBy?: string | null; requestedBy?: string | null }, meSub: string) {
   const R = await import("./factory-runs.server");
   const info = await R.cancelInfo(run.id);

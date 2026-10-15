@@ -141,7 +141,7 @@ export const Route = createFileRoute("/api/internal/github-event")({
           //    cara de @check/@build). En esos rooms no va tarjeta suelta: la de veredicto del
           //    pedido ya trae «Ver PR / Mezclar», y repetirla es ruido.
           const runRooms = new Set<number>();
-          const { runsByPr, onPrEvent, recordFirstReview } = await import("../server/apps/factory-runs.server");
+          const { runsByPr, onPrEvent, onPrReopened, recordFirstReview } = await import("../server/apps/factory-runs.server");
           // Una review no se anuncia en los rooms: sólo se mide (¿la fábrica pasó a la primera?).
           // Terminó el CI del PR: lo que el sondeo de 2 min haría, ya. @check despierta por su
           // vigilancia (`pr-watches`) y un rojo en «PR listo» regresa a @build sin esperar.
@@ -189,6 +189,7 @@ export const Route = createFileRoute("/api/internal/github-event")({
           for (const run of prRuns) {
             runRooms.add(run.channelId);
             if (ev.action === "merged" || ev.action === "closed") await onPrEvent(run, ev.action);
+            if (ev.action === "reopened") await onPrReopened(run);
             if (ev.action === "merged") {
               // El ✅ del deploy va en el «Pedido terminado» del hilo (no en la raíz: ahí el ✅ es la firma).
               const [notice] = await dbq(
