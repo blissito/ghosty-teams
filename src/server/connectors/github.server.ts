@@ -320,6 +320,45 @@ async function tarballUrl(token: string, p: string, ref: string): Promise<string
   }
 }
 
+/**
+ * Registra la preview de un commit en GitHub como Deployment de entorno `preview` (transitorio):
+ * el PR enseña «This branch was successfully deployed · View deployment» y el botón queda en el commit.
+ * Antes la liga sólo vivía en el hilo de Ghosty y el PR no sabía que había preview (bliss, 15-oct).
+ * Va como el bot si la App tiene permiso de deployments; si no, como el usuario.
+ */
+export async function publishPreviewDeployment(sub: string, repo: string, sha: string, url: string): Promise<{ ok: true } | { error: string }> {
+  const auth = await writeToken(sub, repo);
+  if ("error" in auth) return auth;
+  const userToken = auth.bot ? await getValidToken(sub, "github") : null;
+  const tokens = [auth.token, ...(userToken ? [userToken] : [])];
+  let last = "sin token";
+  for (const token of tokens) {
+    const dep = await apiWith(token, `/repos/${repo}/deployments`, {
+      method: "POST",
+      body: JSON.stringify({
+        ref: sha,
+        environment: "preview",
+        transient_environment: true,
+        production_environment: false,
+        required_contexts: [],
+        auto_merge: false,
+        description: "Preview de Ghosty",
+      }),
+    });
+    if (dep?.error || !dep?.id) {
+      last = dep?.error ?? "sin id";
+      continue;
+    }
+    const st = await apiWith(token, `/repos/${repo}/deployments/${dep.id}/statuses`, {
+      method: "POST",
+      body: JSON.stringify({ state: "success", environment_url: url, log_url: url, auto_inactive: true, description: "Preview lista" }),
+    });
+    if (st?.error) return { error: st.error };
+    return { ok: true };
+  }
+  return { error: last };
+}
+
 /** Igual que `api`, pero con un token ya resuelto (el del bot o el del usuario). */
 async function apiWith(token: string, path: string, init?: RequestInit): Promise<any> {
   try {

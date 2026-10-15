@@ -1776,6 +1776,14 @@ export async function announcePreviews(): Promise<void> {
       // Mientras Build sigue empujando commits no se anuncia cada uno (sería ruido): la tarjeta
       // ya muestra la liga vigente. Se anuncia al llegar a revisión, escalado o PR listo.
       {
+        // En el PR de GitHub también (Deployment `preview` del commit), una vez por commit: el
+        // UPDATE de arriba sólo pasa cuando cambian estado o sha. Una preview de hosting externo
+        // (Vercel…) ya la registró su proveedor.
+        if (!next.provider && next.url)
+          void import("../connectors/github.server")
+            .then((G) => G.publishPreviewDeployment(sub, pr.repo, head.sha, next.url!))
+            .then((r) => { if ("error" in r) console.warn(`[factory] preview #${run.id} en el PR: ${r.error}`); })
+            .catch(() => {});
         if (run.status !== "building")
           await postInThread(run, "build", `🔎 **Preview ${row.preview_sha && !sameSha ? "actualizada" : "lista"}**${next.provider ? ` (${next.provider})` : ""} · [Abrir](${next.url})`);
         // Si @check ya dio su veredicto con otra versión (o sin preview), las capturas de su
