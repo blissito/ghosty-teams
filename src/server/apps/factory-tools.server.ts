@@ -733,7 +733,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           // Evidencia visual: la preview capturada en escritorio y móvil, en segundo plano.
           void import("./factory-shots.server").then((S) => S.captureVerdictShots(run.id, a.evidencePath ? String(a.evidencePath) : null));
           // El check «Ghosty · Preview» del PR, con lo mismo que acaba de pasar la puerta.
-          void import("./factory-preview-check.server").then((C) => C.syncPreviewCheck(run.id, { headSha: head?.sha ?? null }));
+          if (pr && head?.sha) void import("./factory-preview-check.server").then((C) => C.syncPrCheck(pr.repo, pr.number, head.sha));
           return { ok: true, status: next.status, note: "La plataforma ya avisó en el hilo y sacó el PR de borrador. Termina sin repetirlo." };
         }
         if (!findings) return { ok: false, error: "con pass=false los hallazgos son obligatorios" };

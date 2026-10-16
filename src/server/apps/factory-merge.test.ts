@@ -15,7 +15,7 @@ vi.mock("../../dbq.server", () => ({
   dbq: async (sql: string, args: unknown[] = []) => {
     if (sql.includes("INSERT INTO gt_factory_events")) events.push(String(args[2]));
     if (sql.includes("preview_state") && sql.startsWith("SELECT") && previewRow) return [previewRow];
-    if (sql.includes("type = 'smoke_fail'") && smokeFail) return [{ data_json: JSON.stringify(smokeFail) }];
+    if (sql.includes("gt_factory_events") && args[1] === "smoke_fail" && smokeFail) return [{ data_json: JSON.stringify(smokeFail) }];
     return [];
   },
 }));

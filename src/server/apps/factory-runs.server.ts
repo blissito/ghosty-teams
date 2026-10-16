@@ -269,6 +269,17 @@ export async function syncRunTask(run: Run, prevStatus: string): Promise<void> {
 // ── Bitácora y avisos ────────────────────────────────────────────────────────
 
 /** Un renglón INMUTABLE de la bitácora del pedido. Best-effort: nunca tumba la transición. */
+/** El último evento `type` del pedido si fue en el commit `sha` (smoke_fail, merge_without_preview). */
+export async function lastEventAt(runId: number, type: string, sha: string | null): Promise<{ actor: string | null; data: { sha?: string; fails?: string } } | null> {
+  if (!sha) return null;
+  const [e] = await dbq("SELECT actor, data_json FROM gt_factory_events WHERE run_id = ? AND type = ? ORDER BY id DESC LIMIT 1", [runId, type]).catch(() => []);
+  let data: { sha?: string; fails?: string } = {};
+  try {
+    data = e?.data_json ? JSON.parse(String(e.data_json)) : {};
+  } catch { /* bitácora ilegible: como si no hubiera */ }
+  return e && data.sha === sha ? { actor: e.actor ? String(e.actor) : null, data } : null;
+}
+
 export async function logEvent(runId: number, type: string, actor: string | null = null, data: Record<string, unknown> | null = null): Promise<void> {
   await dbq("INSERT INTO gt_factory_events (run_id, actor, type, data_json) VALUES (?, ?, ?, ?)", [
     runId,
@@ -1753,8 +1764,8 @@ export async function announcePreviews(): Promise<void> {
     [],
   ).catch(() => []);
   const P = await import("./preview.server");
-  // Pedidos mirados en esta vuelta: al final se publica su check «Ghosty · Preview» en GitHub.
-  const touched: { id: number; sha: string }[] = [];
+  // PRs mirados en esta vuelta: al final se publica su check «Ghosty · Preview» en GitHub.
+  const touched: { repo: string; number: number; sha: string }[] = [];
   for (const row of rows) {
     const run = toRun(row);
     // Construyendo se mira cada 20 s; lista o fallida, cada 2 min (por si hubo push nuevo).
@@ -1765,7 +1776,7 @@ export async function announcePreviews(): Promise<void> {
     const pr = parsePrUrl(run.prUrl!);
     const head = await prHead(sub, run.prUrl!);
     if (!pr || !head) continue;
-    touched.push({ id: run.id, sha: head.sha });
+    touched.push({ ...pr, sha: head.sha });
     // Preview apagada para el repo: gris y sin avisos en el hilo.
     if (await repoPreviewOff(pr.repo)) {
       if (row.preview_state !== "off") {
@@ -1888,7 +1899,7 @@ export async function announcePreviews(): Promise<void> {
   }
   if (touched.length) {
     const C = await import("./factory-preview-check.server");
-    for (const t of touched) await C.syncPreviewCheck(t.id, { headSha: t.sha });
+    for (const t of touched) await C.syncPrCheck(t.repo, t.number, t.sha);
   }
 }
 
@@ -1923,16 +1934,22 @@ async function warnPreviewBlocking(run: Run, state: "failed" | "needs_env", repo
  * olvida el estado y el siguiente tick las levanta otra vez. Lo usan «Reintentar» en la
  * tarjeta y guardar variables.
  */
-export async function retryPreviews(by: { runId?: number; repo?: string }): Promise<number> {
+export async function retryPreviews(by: { runId?: number; repo?: string; envChanged?: boolean }): Promise<number> {
+  // Variables nuevas: también las previews vivas (lista o construyéndose) de los pedidos abiertos,
+  // que seguían con el `.env` viejo (#106, 16-oct). Sin sha, el tick vuelve a pedir `up` y gs
+  // reconstruye el mismo commit con el `.env` nuevo.
+  const states = by.envChanged ? "('failed','needs_env','ready','pending')" : "('failed','needs_env')";
+  const open = by.envChanged ? " AND status NOT IN ('done','cancelled')" : "";
   const rows = await dbq(
     by.runId
-      ? `UPDATE gt_factory_runs SET preview_state = 'pending', preview_sha = NULL, preview_error = NULL WHERE id = ? AND preview_state IN ('failed','needs_env') RETURNING id, channel_id`
-      : `UPDATE gt_factory_runs SET preview_state = 'pending', preview_sha = NULL, preview_error = NULL WHERE repo = ? AND preview_state IN ('failed','needs_env') RETURNING id, channel_id`,
+      ? `UPDATE gt_factory_runs SET preview_state = 'pending', preview_sha = NULL, preview_error = NULL WHERE id = ? AND preview_state IN ${states}${open} RETURNING *`
+      : `UPDATE gt_factory_runs SET preview_state = 'pending', preview_sha = NULL, preview_error = NULL WHERE repo = ? AND preview_state IN ${states}${open} RETURNING *`,
     [by.runId ?? by.repo ?? ""],
   ).catch(() => []);
   for (const r of rows) {
     lastPreviewCheck.delete(Number(r.id));
     void refreshRoom(Number(r.channel_id));
+    if (by.envChanged) void postInThread(toRun(r), "build", "🔁 Reconstruyo la preview con las variables nuevas.").catch(() => {});
   }
   return rows.length;
 }
@@ -2129,7 +2146,7 @@ export async function mergeRun(
     const C = await import("./factory-preview-check.server");
     if (opts.skipPreview) {
       await logEvent(run.id, "merge_without_preview", sub, head ? { sha: head } : null);
-      await C.syncPreviewCheck(run.id, { headSha: head ?? null });
+      if (head) await C.syncPrCheck(pr.repo, pr.number, head);
     } else {
       const gate = await previewGate(run, head ?? null);
       if (gate)
@@ -2137,11 +2154,10 @@ export async function mergeRun(
           ? { ok: false, queue: true, error: `La preview del PR ${gate.reason}: el merge entra en cuanto esté lista.` }
           : { ok: false, error: `Falta la preview que exige este pedido (${gate.reason}). Arréglala o usa «Mezclar sin preview»` };
       // La preview de ESTA cabeza rechazó el POST del smoke: es lo que se iba a romper en prod.
-      const [sf] = await dbq("SELECT data_json FROM gt_factory_events WHERE run_id = ? AND type = 'smoke_fail' ORDER BY id DESC LIMIT 1", [run.id]).catch(() => []);
-      const failed = sf?.data_json ? (JSON.parse(String(sf.data_json)) as { sha?: string; fails?: string }) : null;
-      if (failed && head && failed.sha === head)
-        return { ok: false, error: `La preview de este commit rechaza envíos (${String(failed.fails ?? "").split("\n")[0]}). Pídele el arreglo a @build o usa «Mezclar sin preview»` };
-      await C.syncPreviewCheck(run.id, { headSha: head ?? null });
+      const failed = await lastEventAt(run.id, "smoke_fail", head ?? null);
+      if (failed)
+        return { ok: false, error: `La preview de este commit rechaza envíos (${String(failed.data.fails ?? "").split("\n")[0]}). Pídele el arreglo a @build o usa «Mezclar sin preview»` };
+      if (head) await C.syncPrCheck(pr.repo, pr.number, head);
     }
     const tool = allTools().find((t) => t.name === "github_merge_pr");
     const r = (await tool?.handler(sub, { repo: pr.repo, number: pr.number })) as any;

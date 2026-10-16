@@ -1,15 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { checkRunWrite, loosePrCheck, previewCheckFrom, type PreviewCheckInput } from "./factory-preview-check";
+import { checkRunWrite, previewCheckFrom } from "./factory-preview-check";
 import { aggregateChecks } from "../connectors/github-checks";
 
-const base: PreviewCheckInput = {
+const base = {
+  id: 96,
   required: true,
   repoOff: false,
-  preview: { state: "ready", sha: "abc", url: "https://pr-7.preview.test" },
+  preview: { state: "ready" as const, sha: "abc" as string | null, url: "https://pr-7.preview.test" },
   headSha: "abc",
-  smokeFail: null,
-  skippedBy: null,
-  runId: 96,
+  smokeFail: null as string | null,
+  skippedBy: null as string | null,
   threadUrl: "https://denik.teams.ghosty.studio/c/fabrica?thread=1&run=96",
   envUrl: "https://denik.teams.ghosty.studio/factory?repo=denik%2Fagenda",
 };
@@ -30,13 +30,13 @@ describe("check «Ghosty · Preview»", () => {
 
   it("el #96: faltan variables → failure con la liga para guardarlas", () => {
     const c = previewCheckFrom({ ...base, preview: { state: "needs_env", sha: null } });
-    expect(c).toMatchObject({ status: "completed", conclusion: "failure" });
+    expect(c).toMatchObject({ status: "completed", conclusion: "failure", title: "La preview espera las variables del repo" });
     expect(c.summary).toContain("/factory?repo=denik%2Fagenda");
   });
 
   it("preview que no arrancó → failure con el motivo", () => {
     const c = previewCheckFrom({ ...base, preview: { state: "failed", sha: null, error: "npm ci falló" } });
-    expect(c.conclusion).toBe("failure");
+    expect(c).toMatchObject({ conclusion: "failure", title: "La preview falló" });
     expect(c.summary).toContain("npm ci falló");
   });
 
@@ -60,7 +60,7 @@ describe("check «Ghosty · Preview»", () => {
   });
 
   it("PR suelto → neutral", () => {
-    expect(loosePrCheck()).toMatchObject({ status: "completed", conclusion: "neutral" });
+    expect(previewCheckFrom(null)).toMatchObject({ status: "completed", conclusion: "neutral" });
   });
 
   it("no cuenta como CI: un «Ghosty · Preview» construyéndose no deja el CI en pendiente", () => {
@@ -75,12 +75,12 @@ describe("check «Ghosty · Preview»", () => {
 describe("idempotencia por (repo, sha)", () => {
   it("decide crear, editar o nada", () => {
     expect(checkRunWrite(null, { status: "in_progress", sig: "a" })).toBe("post");
-    expect(checkRunWrite({ id: 1, completed: false, sig: "a" }, { status: "in_progress", sig: "a" })).toBe("skip");
-    expect(checkRunWrite({ id: 1, completed: false, sig: "a" }, { status: "completed", sig: "b" })).toBe("patch");
+    expect(checkRunWrite({ completed: false, sig: "a" }, { status: "in_progress", sig: "a" })).toBe("skip");
+    expect(checkRunWrite({ completed: false, sig: "a" }, { status: "completed", sig: "b" })).toBe("patch");
     // De terminado a construyéndose (p. ej. «Reintentar»): uno nuevo, GitHub enseña el último.
-    expect(checkRunWrite({ id: 1, completed: true, sig: "b" }, { status: "in_progress", sig: "c" })).toBe("post");
+    expect(checkRunWrite({ completed: true, sig: "b" }, { status: "in_progress", sig: "c" })).toBe("post");
     // Encontrado por nombre (sin contenido conocido): se edita, no se duplica.
-    expect(checkRunWrite({ id: 1, completed: true, sig: null }, { status: "completed", sig: "b" })).toBe("patch");
+    expect(checkRunWrite({ completed: true, sig: null }, { status: "completed", sig: "b" })).toBe("patch");
   });
 });
 

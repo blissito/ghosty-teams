@@ -354,17 +354,8 @@ export async function protectMain(sub: string, repo: string): Promise<{ ok: true
 
 /** Publica «Ghosty · Preview» en los PRs abiertos al exigirlo por primera vez. */
 async function backfillPreviewChecks(sub: string, repo: string): Promise<void> {
-  const G = await import("../connectors/github.server");
-  G.forgetRequiredChecks(repo);
   const prs = await githubApi(sub, `/repos/${repo}/pulls?state=open&per_page=50`);
   if (!Array.isArray(prs)) return;
-  const R = await import("./factory-runs.server");
-  const C = await import("./factory-preview-check.server");
-  for (const pr of prs) {
-    const n = Number(pr?.number), sha = String(pr?.head?.sha ?? "");
-    if (!n || !sha) continue;
-    const runs = await R.runsByPr(repo, n).catch(() => []);
-    if (runs.length) for (const run of runs) await C.syncPreviewCheck(run.id, { headSha: sha });
-    else await C.syncLoosePrCheck(repo, n, sha);
-  }
+  const { syncPrCheck } = await import("./factory-preview-check.server");
+  for (const pr of prs) if (pr?.number && pr?.head?.sha) await syncPrCheck(repo, Number(pr.number), String(pr.head.sha));
 }

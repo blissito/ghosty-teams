@@ -9,7 +9,6 @@ const posts: { path: string; body: any; method?: string }[] = [];
 
 vi.mock("../connectors/github.server", () => ({
   appCanWriteChecks: async () => canChecks,
-  forgetRequiredChecks: () => {},
   githubApi: async (_sub: string, path: string, init?: RequestInit) => {
     if (init?.method) {
       posts.push({ path, body: JSON.parse(String(init.body)), method: init.method });
