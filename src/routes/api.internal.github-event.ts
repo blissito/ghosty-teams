@@ -147,6 +147,9 @@ export const Route = createFileRoute("/api/internal/github-event")({
           // vigilancia (`pr-watches`) y un rojo en «PR listo» regresa a @build sin esperar.
           if (ev.action === "ci") {
             const runs = await runsByPr(ev.repo, ev.number);
+            // PR suelto en un repo cuyo ruleset exige «Ghosty · Preview»: cada commit nuevo lleva
+            // su `neutral` (el fin del CI es la señal de push que nos llega).
+            if (!runs.length) void import("../server/apps/factory-preview-check.server").then((C) => C.syncLoosePrCheck(ev.repo, ev.number, ev.ci?.sha));
             const { sweepRunNow } = await import("../server/apps/factory-runs.server");
             for (const run of runs) if (run.status === "pr_review") await sweepRunNow(run);
             // GitHub avisa del fin de un check antes de que su estado combinado lo refleje: una
@@ -180,6 +183,8 @@ export const Route = createFileRoute("/api/internal/github-event")({
             for (const c of await adoptDependabotPr(ev)) runRooms.add(c);
           }
           const prRuns = await runsByPr(ev.repo, ev.number);
+          if (!prRuns.length && (ev.action === "opened" || ev.action === "reopened" || ev.action === "ready_for_review"))
+            void import("../server/apps/factory-preview-check.server").then((C) => C.syncLoosePrCheck(ev.repo, ev.number));
           // PR sin pedido: si alguien le levantó preview con el botón de su tarjeta, su caja aparte
           // se tira al mezclar o cerrar (la de un pedido la tira `onPrEvent`). Sin caja, gs no hace nada.
           if ((ev.action === "merged" || ev.action === "closed") && !prRuns.length)

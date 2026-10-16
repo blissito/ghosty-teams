@@ -3,9 +3,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 let files: Record<string, boolean> = {};
 let checkRuns: string[] = [];
 let priv = false;
+let canChecks = false;
+let ruleset: any = null;
 const posts: { path: string; body: any; method?: string }[] = [];
 
 vi.mock("../connectors/github.server", () => ({
+  appCanWriteChecks: async () => canChecks,
+  forgetRequiredChecks: () => {},
   githubApi: async (_sub: string, path: string, init?: RequestInit) => {
     if (init?.method) {
       posts.push({ path, body: JSON.parse(String(init.body)), method: init.method });
@@ -20,12 +24,13 @@ vi.mock("../connectors/github.server", () => ({
       return files[f] ? { name: f } : { error: "404" };
     }
     if (path.includes("/check-runs")) return { check_runs: checkRuns.map((name) => ({ name })) };
-    if (path.endsWith("/rulesets")) return [];
+    if (path.endsWith("/rulesets")) return ruleset ? [{ id: 3, name: "Ghosty Factory" }] : [];
+    if (path.endsWith("/rulesets/3")) return ruleset;
     return { error: "?" };
   },
 }));
 
-import { buildCiStarter, protectMain, hasWorkflows, deployWorkflowOf, uncoveredScripts } from "./ci-starter.server";
+import { buildCiStarter, protectMain, hasWorkflows, deployWorkflowOf, uncoveredScripts, rulesetRequiresPreviewCheck, protectionState } from "./ci-starter.server";
 
 describe("CI starter", () => {
   beforeEach(() => {
@@ -109,6 +114,48 @@ describe("CI starter", () => {
   it("sin CI, la regla no exige checks (no bloquea todo PR)", async () => {
     await protectMain("u", "acme/app");
     expect(posts[0].body.rules.map((x: any) => x.type)).not.toContain("required_status_checks");
+  });
+
+  it("con la App capaz de escribir checks, exige «Ghosty · Preview» de NUESTRA App (16-oct)", async () => {
+    canChecks = true;
+    process.env.GITHUB_APP_ID = "4242";
+    checkRuns = ["verify", "Ghosty · Preview"];
+    try {
+      const r = await protectMain("u", "acme/app");
+      expect(r).toMatchObject({ ok: true, checks: ["verify", "Ghosty · Preview"] });
+      const rule = posts.find((p) => p.path.endsWith("/rulesets"))!.body.rules.find((x: any) => x.type === "required_status_checks");
+      expect(rule.parameters.required_status_checks).toEqual([{ context: "verify" }, { context: "Ghosty · Preview", integration_id: 4242 }]);
+    } finally {
+      canChecks = false;
+      delete process.env.GITHUB_APP_ID;
+    }
+  });
+
+  it("sin permiso de checks en la App, no se exige (nunca reportaría y bloquearía todo)", async () => {
+    checkRuns = ["verify"];
+    await protectMain("u", "acme/app");
+    const rule = posts[0].body.rules.find((x: any) => x.type === "required_status_checks");
+    expect(rule.parameters.required_status_checks).toEqual([{ context: "verify" }]);
+  });
+
+  it("un ruleset de antes (sin «Ghosty · Preview») cuenta como pendiente, sólo si la App puede publicarlo", async () => {
+    ruleset = { rules: [{ type: "required_status_checks", parameters: { required_status_checks: [{ context: "verify" }] } }] };
+    try {
+      expect(await protectionState("u", "acme/app")).toBe("protected");
+      canChecks = true;
+      expect(await protectionState("u", "acme/app")).toBe("unprotected");
+      ruleset.rules[0].parameters.required_status_checks.push({ context: "Ghosty · Preview" });
+      expect(await protectionState("u", "acme/app")).toBe("protected");
+    } finally {
+      canChecks = false;
+      ruleset = null;
+    }
+  });
+
+  it("detecta si un ruleset ya exige la preview", () => {
+    expect(rulesetRequiresPreviewCheck({ rules: [{ type: "required_status_checks", parameters: { required_status_checks: [{ context: "Ghosty · Preview" }] } }] })).toBe(true);
+    expect(rulesetRequiresPreviewCheck({ rules: [{ type: "required_status_checks", parameters: { required_status_checks: [{ context: "verify" }] } }] })).toBe(false);
+    expect(rulesetRequiresPreviewCheck(null)).toBe(false);
   });
 });
 

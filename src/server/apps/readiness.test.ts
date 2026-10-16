@@ -15,6 +15,7 @@ let calls = 0;
 const b64 = (s: string) => Buffer.from(s).toString("base64");
 
 vi.mock("../connectors/github.server", () => ({
+  appCanWriteChecks: async () => false,
   githubApi: async (_sub: string, path: string) => {
     calls++;
     if (path === "/repos/acme/app") return { default_branch: "main", owner: { login: "acme", type: "User" } };

@@ -9,6 +9,8 @@
 // un `get` y así la usan igual la tool del agente (token de quien la invoca) y la tarjeta
 // (token de quien la mira).
 
+import { PREVIEW_CHECK_NAME } from "../apps/factory-preview-check";
+
 export type ChecksState = "success" | "failure" | "pending" | "none";
 
 /** Un check por nombre, para la caja de merge (como la de GitHub: los rojos arriba). */
@@ -45,7 +47,11 @@ export function aggregateChecks(checkRuns: unknown, combined: unknown): ChecksSu
   const checks: CheckItem[] = [];
   let total = 0;
 
-  const runs = Array.isArray((checkRuns as any)?.check_runs) ? (checkRuns as any).check_runs : [];
+  // «Ghosty · Preview» no es CI: es la puerta de la preview, con su propia regla. Contarlo aquí
+  // dejaba el CI «corriendo» mientras se construía y regresaba a @build un PR sin preview.
+  const runs = (Array.isArray((checkRuns as any)?.check_runs) ? (checkRuns as any).check_runs : []).filter(
+    (r: any) => r?.name !== PREVIEW_CHECK_NAME,
+  );
   for (const r of runs) {
     total++;
     const name = String(r?.name ?? "check");

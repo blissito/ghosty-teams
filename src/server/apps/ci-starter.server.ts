@@ -9,7 +9,8 @@
 // Todo con el token de una PERSONA (`githubApi(sub, …)`): el CI lo escribe @build en un PR
 // que se firma; la protección la activa el dueño con un clic (nunca un agente: con
 // `administration` podría quitarla).
-import { githubApi } from "../connectors/github.server";
+import { appCanWriteChecks, githubApi } from "../connectors/github.server";
+import { PREVIEW_CHECK_NAME } from "./factory-preview-check";
 
 /** Las actions del workflow, por tag. El SHA se resuelve al generarlo (tj-actions, 2025). */
 const ACTIONS: Record<string, string> = {
@@ -253,7 +254,34 @@ export async function protectionState(sub: string, repo: string): Promise<Protec
     if (PLAN_REQUIRED.test(String(r.error))) return "plan_required";
     return /permiso|permission/i.test(String(r.error)) ? "no_permission" : "error";
   }
-  return Array.isArray(r) && r.some((x: any) => x?.name === RULESET_NAME) ? "protected" : "unprotected";
+  const own = Array.isArray(r) ? r.find((x: any) => x?.name === RULESET_NAME) : null;
+  if (!own) return "unprotected";
+  // Un ruleset de antes del 16-oct no exige «Ghosty · Preview»: cuenta como pendiente y «Proteger»
+  // lo pone al día. Si la App no puede escribir checks no se exige (nunca reportaría).
+  if (!(await appCanWriteChecks(repo).catch(() => false))) return "protected";
+  const full = await githubApi(sub, `/repos/${repo}/rulesets/${own.id}`);
+  return full?.error || rulesetRequiresPreviewCheck(full) ? "protected" : "unprotected";
+}
+
+/** El check de la preview como lo exige el ruleset: de NUESTRA App, para que nadie más lo «pase». */
+export function previewCheckRequirement(appId: number | null): { context: string; integration_id?: number } {
+  return { context: PREVIEW_CHECK_NAME, ...(appId ? { integration_id: appId } : {}) };
+}
+
+/** ¿El ruleset (GET /rulesets/{id}) ya exige «Ghosty · Preview»? */
+export function rulesetRequiresPreviewCheck(ruleset: any): boolean {
+  const rules = Array.isArray(ruleset?.rules) ? ruleset.rules : [];
+  return rules.some(
+    (r: any) => r?.type === "required_status_checks" && (r?.parameters?.required_status_checks ?? []).some((c: any) => c?.context === PREVIEW_CHECK_NAME),
+  );
+}
+
+/** Los checks exigidos: los que corren en main (sin el nuestro) y, si la App puede, la preview. */
+export function requiredChecksFor(observed: string[], preview: { appId: number | null } | null): { context: string; integration_id?: number }[] {
+  return [
+    ...observed.filter((n) => n !== PREVIEW_CHECK_NAME).map((context) => ({ context })),
+    ...(preview ? [previewCheckRequirement(preview.appId)] : []),
+  ];
 }
 
 /** Los checks que de verdad corren en la cabeza de la rama principal (sus nombres). */
@@ -271,11 +299,18 @@ async function observedChecks(sub: string, repo: string): Promise<string[]> {
  * verde, sin force-push ni borrado. Sin bypass.
  *
  * ⚠️ Los checks exigidos son los que YA corren en la rama principal, no nombres supuestos:
- * exigir un check que el repo no produce bloquea todo PR para siempre. Sin CI todavía, la
+ * exigir un check que el repo no produce bloquea todo PR para siempre. «Ghosty · Preview» sí va
+ * siempre que la App pueda escribir checks: lo publicamos nosotros en cada PR (neutral si el
+ * pedido no exige preview o el PR no es de la fábrica). Sin CI todavía, la
  * regla no exige checks; al mezclar el CI starter se vuelve a proteger y ya los exige.
  */
 export async function protectMain(sub: string, repo: string): Promise<{ ok: true; checks: string[] } | { error: string }> {
-  const checks = await observedChecks(sub, repo);
+  const observed = await observedChecks(sub, repo);
+  // «Ghosty · Preview» (la puerta de la preview, publicada por la App en cada PR): sólo si la
+  // instalación puede escribir checks; si no, el check nunca llegaría y bloquearía todo PR.
+  const preview = (await appCanWriteChecks(repo).catch(() => false)) ? { appId: Number(process.env.GITHUB_APP_ID ?? 0) || null } : null;
+  const required = requiredChecksFor(observed, preview);
+  const checks = required.map((c) => c.context);
   const rules: any[] = [
     { type: "deletion" },
     { type: "non_fast_forward" },
@@ -295,7 +330,7 @@ export async function protectMain(sub: string, repo: string): Promise<{ ok: true
       type: "required_status_checks",
       parameters: {
         strict_required_status_checks_policy: false,
-        required_status_checks: checks.map((context) => ({ context })),
+        required_status_checks: required,
       },
     });
   }
@@ -312,5 +347,24 @@ export async function protectMain(sub: string, repo: string): Promise<{ ok: true
     ? await githubApi(sub, `/repos/${repo}/rulesets/${existing.id}`, { method: "PUT", body })
     : await githubApi(sub, `/repos/${repo}/rulesets`, { method: "POST", body });
   if (r?.error) return { error: String(r.error) };
+  // Los PRs ya abiertos no tienen el check y quedarían bloqueados hasta su siguiente evento.
+  if (preview) void backfillPreviewChecks(sub, repo).catch(() => {});
   return { ok: true, checks };
+}
+
+/** Publica «Ghosty · Preview» en los PRs abiertos al exigirlo por primera vez. */
+async function backfillPreviewChecks(sub: string, repo: string): Promise<void> {
+  const G = await import("../connectors/github.server");
+  G.forgetRequiredChecks(repo);
+  const prs = await githubApi(sub, `/repos/${repo}/pulls?state=open&per_page=50`);
+  if (!Array.isArray(prs)) return;
+  const R = await import("./factory-runs.server");
+  const C = await import("./factory-preview-check.server");
+  for (const pr of prs) {
+    const n = Number(pr?.number), sha = String(pr?.head?.sha ?? "");
+    if (!n || !sha) continue;
+    const runs = await R.runsByPr(repo, n).catch(() => []);
+    if (runs.length) for (const run of runs) await C.syncPreviewCheck(run.id, { headSha: sha });
+    else await C.syncLoosePrCheck(repo, n, sha);
+  }
 }

@@ -1753,6 +1753,8 @@ export async function announcePreviews(): Promise<void> {
     [],
   ).catch(() => []);
   const P = await import("./preview.server");
+  // Pedidos mirados en esta vuelta: al final se publica su check «Ghosty · Preview» en GitHub.
+  const touched: { id: number; sha: string }[] = [];
   for (const row of rows) {
     const run = toRun(row);
     // Construyendo se mira cada 20 s; lista o fallida, cada 2 min (por si hubo push nuevo).
@@ -1763,6 +1765,7 @@ export async function announcePreviews(): Promise<void> {
     const pr = parsePrUrl(run.prUrl!);
     const head = await prHead(sub, run.prUrl!);
     if (!pr || !head) continue;
+    touched.push({ id: run.id, sha: head.sha });
     // Preview apagada para el repo: gris y sin avisos en el hilo.
     if (await repoPreviewOff(pr.repo)) {
       if (row.preview_state !== "off") {
@@ -1882,6 +1885,10 @@ export async function announcePreviews(): Promise<void> {
     else if (next.state === "failed")
       // Tarjeta con paso, causa, qué hacer y el log plegado (ver lib/preview-errors.ts).
       await postInThread(run, "build", "```gt-preview-error\n" + JSON.stringify({ runId: run.id }) + "\n```\n⚠️ La preview no arrancó.");
+  }
+  if (touched.length) {
+    const C = await import("./factory-preview-check.server");
+    for (const t of touched) await C.syncPreviewCheck(t.id, { headSha: t.sha });
   }
 }
 
@@ -2117,8 +2124,13 @@ export async function mergeRun(
     // Preview exigida y no lista en la cabeza: no se mezcla, como un required deployment de GitHub
     // (el #96 entró con la preview en `needs_env` y tumbó la reserva de Deník 18 h, 16-oct). Cubre
     // la tarjeta, el «mézclalo» del hilo y la cola. Construyéndose: queda en cola y entra al estar.
-    if (opts.skipPreview) await logEvent(run.id, "merge_without_preview", sub);
-    else {
+    // El check requerido «Ghosty · Preview» va antes del merge: si no, GitHub lo rechaza (en
+    // «Mezclar sin preview» sale `neutral` con quién la omitió, como el bypass de un admin).
+    const C = await import("./factory-preview-check.server");
+    if (opts.skipPreview) {
+      await logEvent(run.id, "merge_without_preview", sub, head ? { sha: head } : null);
+      await C.syncPreviewCheck(run.id, { headSha: head ?? null });
+    } else {
       const gate = await previewGate(run, head ?? null);
       if (gate)
         return gate.waits
@@ -2129,6 +2141,7 @@ export async function mergeRun(
       const failed = sf?.data_json ? (JSON.parse(String(sf.data_json)) as { sha?: string; fails?: string }) : null;
       if (failed && head && failed.sha === head)
         return { ok: false, error: `La preview de este commit rechaza envíos (${String(failed.fails ?? "").split("\n")[0]}). Pídele el arreglo a @build o usa «Mezclar sin preview»` };
+      await C.syncPreviewCheck(run.id, { headSha: head ?? null });
     }
     const tool = allTools().find((t) => t.name === "github_merge_pr");
     const r = (await tool?.handler(sub, { repo: pr.repo, number: pr.number })) as any;
