@@ -26,6 +26,9 @@ const consumed: number[] = [];
 let activeSprint: { id: number; title: string } | null = null;
 const sqlLog: { sql: string; args: unknown[] }[] = [];
 const logged: { type: string; data: Run }[] = [];
+let gate: { reason: string; waits: boolean } | null = null;
+let livePreview: { state: string; url: string | null; sha: string | null; error: string | null } = { state: "none", url: null, sha: null, error: null };
+let smokeResult: import("./factory-smoke.server").SmokeResult[] | null = null;
 
 vi.mock("./installed.server", () => ({ isInstalled: async () => true }));
 vi.mock("../hooks/generic-alert.server", () => ({ alertWebhookTools: () => [] }));
@@ -66,7 +69,19 @@ vi.mock("./factory-runs.server", () => ({
   logEvent: async (_id: number, type: string, _a: string, data: Run) => void logged.push({ type, data }),
   prCi: async () => ({ state: "success", failed: [] }),
   markPrReady: async () => true,
+  previewGate: async () => gate,
+  previewRequired: async () => !!gate,
+  runPreview: async () => livePreview,
+  prFiles: async () => [],
+  parsePrUrl: () => ({ repo: "o/r", number: 8 }),
+  runCardFence: () => "",
 }));
+vi.mock("./factory-smoke.server", async (orig) => ({
+  ...(await orig<typeof import("./factory-smoke.server")>()),
+  runActionSmoke: async () => smokeResult,
+}));
+vi.mock("./factory-shots.server", () => ({ captureVerdictShots: async () => {} }));
+vi.mock("../connectors/github.server", () => ({ githubApi: async () => ({}) }));
 
 vi.mock("../../dbq.server", () => ({
   dbq: async (sql: string, args: unknown[] = []) => (
@@ -91,6 +106,9 @@ const tool = async (name: string, dest: Record<string, unknown>) => (await facto
 beforeEach(() => {
   current = null;
   head = "aaa";
+  gate = null;
+  livePreview = { state: "none", url: null, sha: null, error: null };
+  smokeResult = null;
   byPr = [];
   applied.length = 0;
   sqlLog.length = 0;
@@ -144,6 +162,51 @@ describe("factory_check_verdict: la cabeza del PR se movió durante la revisión
     expect(sqlLog.some((q) => q.sql.startsWith("UPDATE gt_factory_runs SET head_sha") && q.args[0] === "ccc2222")).toBe(true);
     expect(logged).toEqual([{ type: "head_moved", data: { from: "aaa1111", to: "ccc2222" } }]);
     expect(applied).toHaveLength(0);
+  });
+});
+
+// El #96 (16-oct): @check aprobó «probado en la caja» con la preview exigida en `needs_env`.
+describe("factory_check_verdict: puerta de la preview", () => {
+  const dest = { channelId: 3, parentId: 99, handle: "check" };
+  it("preview exigida sin las variables: rechaza el pass y dice cómo escalar", async () => {
+    current = baseRun();
+    gate = { reason: "espera las variables del repo", waits: false };
+    const r: any = await (await tool("factory_check_verdict", dest)).handler("beto", { pass: true, summary: "probado en la caja" });
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("blocked=true");
+    expect(r.error).toContain("no la sustituye");
+    expect(applied).toHaveLength(0);
+  });
+  it("construyéndose: pide esperarla", async () => {
+    current = baseRun();
+    gate = { reason: "se está construyendo", waits: true };
+    const r: any = await (await tool("factory_check_verdict", dest)).handler("beto", { pass: true });
+    expect(r.error).toContain("espera a que esté lista");
+    expect(applied).toHaveLength(0);
+  });
+  it("pass=false con blocked sigue entrando aunque falte la preview", async () => {
+    current = baseRun();
+    gate = { reason: "espera las variables del repo", waits: false };
+    await (await tool("factory_check_verdict", dest)).handler("beto", { pass: false, blocked: true, findings: "faltan MONGO_URL y SESSION_SECRET" });
+    expect(applied[0]).toMatchObject({ event: "check_blocked" });
+  });
+  it("preview lista pero el POST del smoke da 400: no hay pass", async () => {
+    current = baseRun();
+    livePreview = { state: "ready", url: "https://p.test/?k=x", sha: "aaa", error: null };
+    smokeResult = [{ path: "/_root.data", method: "POST", status: 400, ok: false, why: "400: la app rechazó el envío (origen/CSRF)" }];
+    const r: any = await (await tool("factory_check_verdict", dest)).handler("beto", { pass: true });
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("POST /_root.data → 400");
+    expect(applied).toHaveLength(0);
+  });
+  it("preview lista y smoke verde: aprueba y guarda el smoke en el veredicto", async () => {
+    current = baseRun();
+    livePreview = { state: "ready", url: "https://p.test/?k=x", sha: "aaa", error: null };
+    smokeResult = [{ path: "/_root.data", method: "POST", status: 405, ok: true, why: "405: el envío pasó el chequeo de origen" }];
+    await (await tool("factory_check_verdict", dest)).handler("beto", { pass: true, summary: "ok" });
+    expect(applied[0]).toMatchObject({ event: "check_pass" });
+    const saved = sqlLog.find((q) => q.sql.startsWith("UPDATE gt_factory_runs SET verdict_json"));
+    expect(JSON.parse(String(saved?.args[0])).smoke[0].status).toBe(405);
   });
 });
 

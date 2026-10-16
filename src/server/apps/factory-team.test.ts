@@ -147,3 +147,13 @@ describe("DeepSeek con el arnés de Claude", () => {
     expect(resolveModelFor("claude", "claude-sonnet-5-5", "opus-5.5")).toBe("claude-opus-5-5");
   });
 });
+
+describe("smoke: en .ghosty/factory.md", () => {
+  it("lee las rutas a probar con POST", () => {
+    const f = parseTeamFile("---\nsmoke: [/reservar, \"/admin/usuarios\", nada, /../x]\n---\nconvenciones");
+    expect(f.smoke).toEqual(["/reservar", "/admin/usuarios"]);
+  });
+  it("la plantilla lo trae comentado y no rompe la lectura", () => {
+    expect(parseTeamFile(teamFileTemplate({})).smoke).toBeUndefined();
+  });
+});

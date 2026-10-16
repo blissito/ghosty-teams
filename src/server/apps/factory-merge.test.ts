@@ -7,7 +7,18 @@ let behindBy: number | null = 0;
 let merged = 0;
 let checks: { state: string; failed?: string[] } | { error: string } = { state: "success" };
 
-vi.mock("../../dbq.server", () => ({ dbq: async () => [] }));
+// La fila de la preview del pedido (lo que lee `runPreview`) y la bitácora (`smoke_fail`).
+let previewRow: Record<string, unknown> | null = null;
+let smokeFail: { sha: string; fails: string } | null = null;
+const events: string[] = [];
+vi.mock("../../dbq.server", () => ({
+  dbq: async (sql: string, args: unknown[] = []) => {
+    if (sql.includes("INSERT INTO gt_factory_events")) events.push(String(args[2]));
+    if (sql.includes("preview_state") && sql.startsWith("SELECT") && previewRow) return [previewRow];
+    if (sql.includes("type = 'smoke_fail'") && smokeFail) return [{ data_json: JSON.stringify(smokeFail) }];
+    return [];
+  },
+}));
 vi.mock("../../db.server", () => ({ getChannelById: async () => ({ id: 3, slug: "dev" }), filterMutedOut: async (s: string[]) => s }));
 vi.mock("../notify.server", () => ({ notify: async () => {} }));
 vi.mock("../bus.server", () => ({ publish: () => {}, ch: { room: () => "r" } }));
@@ -36,6 +47,9 @@ beforeEach(() => {
   calls.length = 0;
   merged = 0;
   checks = { state: "success" };
+  previewRow = null;
+  smokeFail = null;
+  events.length = 0;
 });
 
 describe("mergeRun: guarda de base", () => {
@@ -86,5 +100,49 @@ describe("mergeRun: guarda de CI", () => {
     checks = { error: "GitHub no contestó" };
     expect((await mergeRun(run, "beto")).ok).toBe(true);
     expect(merged).toBe(1);
+  });
+});
+
+// El #96 (16-oct): major de Dependabot mezclado con la preview en `needs_env`; la reserva de
+// Deník quedó 18 h rota. Como un required deployment de GitHub: lo que falta bloquea.
+describe("mergeRun: guarda de preview", () => {
+  const major = { ...run, taskRef: "dependabot:major" } as Run;
+  const row = (state: string, sha: string | null = "abc") => ({ status: "pr_review", preview_state: state, preview_url: "https://p", preview_error: null, preview_sha: sha, pr_url: null });
+  beforeEach(() => {
+    behindBy = 0;
+  });
+  it("preview exigida en needs_env: no mezcla y ofrece la salida", async () => {
+    previewRow = row("needs_env", null);
+    const r = await mergeRun(major, "beto");
+    expect(r.ok).toBe(false);
+    expect(!r.ok && r.error).toContain("Mezclar sin preview");
+    expect(!r.ok && r.queue).toBeFalsy();
+    expect(merged).toBe(0);
+  });
+  it("construyéndose: queda en cola", async () => {
+    previewRow = row("pending", null);
+    const r = await mergeRun(major, "beto");
+    expect(!r.ok && r.queue).toBe(true);
+    expect(merged).toBe(0);
+  });
+  it("lista en la cabeza: mezcla", async () => {
+    previewRow = row("ready", "abc");
+    expect((await mergeRun(major, "beto")).ok).toBe(true);
+  });
+  it("«Mezclar sin preview»: mezcla y queda en la bitácora", async () => {
+    previewRow = row("needs_env", null);
+    expect((await mergeRun(major, "beto", { skipPreview: true })).ok).toBe(true);
+    expect(events).toContain("merge_without_preview");
+  });
+  it("un patch sin plan que la pida no la exige", async () => {
+    previewRow = row("needs_env", null);
+    expect((await mergeRun({ ...run, taskRef: "dependabot:patch" } as Run, "beto")).ok).toBe(true);
+  });
+  it("la preview de esta cabeza rechazó el POST del smoke: no mezcla", async () => {
+    smokeFail = { sha: "abc", fails: "POST /_root.data → 400: la app rechazó el envío" };
+    const r = await mergeRun(run, "beto");
+    expect(!r.ok && r.error).toContain("rechaza envíos");
+    smokeFail = { sha: "viejo", fails: "x" };
+    expect((await mergeRun(run, "beto")).ok).toBe(true);
   });
 });

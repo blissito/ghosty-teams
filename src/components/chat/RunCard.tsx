@@ -5,7 +5,7 @@
 // revisión de @check (qué cambia, riesgo, qué leer) y deja hacer merge aquí: antes eso sólo vivía
 // en el hilo y desde el room se veía «el PR espera tu revisión» sin decir qué revisar.
 import { AgentBot } from "../AgentBot";
-import { ChatCtx } from "./message";
+import { ChatCtx, useAgentBotColor } from "./message";
 import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useT } from "../../i18n";
 import { useRtSubscribe } from "../../utils/rt-bus";
@@ -131,6 +131,8 @@ function RunCardBody({ card, channelId, inPanel }: { card: RunCardData; channelI
   meSub.current = me?.sub ?? null;
   const t = useT();
   const [st, setSt] = useState<State>(null);
+  // El robot de quien trabaja lleva el color oficial del agente, como en la cabecera del mensaje.
+  const workingColor = useAgentBotColor(st ? WORKING_HANDLE[st.status] : null);
   // ¿Ya contestó el servidor? Sin datos y sin respuesta = esqueleto; con respuesta vacía = nada.
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -289,7 +291,7 @@ function RunCardBody({ card, channelId, inPanel }: { card: RunCardData; channelI
   const ciChecks = review?.ci?.checks ?? [];
   const effort = review?.effort;
   const tone: "you" | "work" | "done" | "off" | "bad" | "merge" =
-    st.status === "done" ? "done" : st.status === "cancelled" ? (st.cancelled?.prClosed ? "bad" : "off") : st.status === "pr_review" && ciNow === "failure" ? "bad" : mergeQueued ? "merge" : yourTurn ? "you" : "work";
+    st.status === "done" ? "done" : st.status === "cancelled" ? (st.cancelled?.prClosed ? "bad" : "off") : st.status === "pr_review" && (ciNow === "failure" || (!!review?.previewGate && !review.previewGate.waits)) ? "bad" : mergeQueued ? "merge" : yourTurn ? "you" : "work";
   const statusText =
     st.status === "done"
       ? st.prod?.state === "success"
@@ -407,7 +409,7 @@ function RunCardBody({ card, channelId, inPanel }: { card: RunCardData; channelI
         </div>
         <p className={`mt-2 flex min-w-0 items-center gap-1.5 text-[12.5px] font-semibold ${TONE.text}`} role="status">
           {tone === "work" && !closed && WORKING_HANDLE[st.status] ? (
-            <AgentBot handle={WORKING_HANDLE[st.status]} status="running" size={20} />
+            <AgentBot handle={WORKING_HANDLE[st.status]} status="running" size={20} color={workingColor} />
           ) : tone === "work" && !closed && (
             <span className="relative flex h-2 w-2 shrink-0">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand opacity-60 motion-reduce:animate-none" />
@@ -426,11 +428,11 @@ function RunCardBody({ card, channelId, inPanel }: { card: RunCardData; channelI
   // completa y se sentía abrumadora (propuesta del 10-oct).
   if (reviewing && review?.verdict && !inPanel) {
     const v = review.verdict;
-    const doMerge = async () => {
+    const doMerge = async (skipPreview?: boolean) => {
       setBusy(true);
       setErr("");
       try {
-        const r = await factoryMergeFn({ data: { runId: st.runId } });
+        const r = await factoryMergeFn({ data: { runId: st.runId, skipPreview } });
         // Quedó en cola: se pinta ya, sin esperar la vuelta al servidor (el botón no reaparece).
         if (r?.queued) setReview((cur) => (cur ? { ...cur, mergeQueued: true } : cur));
         await refresh();
@@ -445,6 +447,12 @@ function RunCardBody({ card, channelId, inPanel }: { card: RunCardData; channelI
       <div className="mt-1.5 max-w-xl overflow-hidden rounded-xl gt-card">
         {header}
         {v.summary ? <p className="px-3.5 pt-2.5 text-[13.5px] leading-snug text-ink">{v.summary}</p> : null}
+        {/* Preview exigida que no está: se ve aquí, no sólo en el hilo (#96, 16-oct). */}
+        {review.previewGate && (
+          <p className={`mx-3.5 mt-2.5 rounded-lg px-3 py-2 text-xs ${review.previewGate.waits ? "bg-amber-500/10 text-amber-700 dark:text-amber-400" : "bg-red-600/10 text-red-700 dark:text-red-400"}`}>
+            <b>{t("Falta la preview que exige este pedido")}:</b> {t("la preview")} {review.previewGate.reason}.
+          </p>
+        )}
         {mergeBoxOpen && <div className="pt-2.5"><MergeBox st={review} busy={busy} onMerge={doMerge} onClose={() => setMerging(false)} /></div>}
         {err && <p className="px-3.5 text-xs text-red-600 dark:text-red-400">{err}</p>}
         <div className="flex flex-wrap items-center gap-2 px-3.5 pb-3 pt-2.5">
@@ -458,7 +466,7 @@ function RunCardBody({ card, channelId, inPanel }: { card: RunCardData; channelI
           </a>
           {!mergeBoxOpen && (
             <button type="button" onClick={() => setMerging(true)} className="rounded-full border border-emerald-600 px-3.5 py-1 text-xs font-bold text-emerald-700 hover:bg-emerald-600/10 dark:text-emerald-400">
-              {t("Merge")}
+              {review.previewGate && !review.previewGate.waits ? t("Falta la preview") : t("Merge")}
             </button>
           )}
           <button type="button" onClick={openPanel} className="rounded-full bg-ink px-3.5 py-1 text-xs font-bold text-surface hover:opacity-90">

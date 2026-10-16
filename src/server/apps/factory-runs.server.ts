@@ -79,6 +79,8 @@ export async function getPlan(runId: number, version: number) {
         /** Crítico del plan: pending | pass | fail | timeout, o null si no pasó por él. */
         critique: (r.critique ?? null) as string | null,
         critiqueNotes: (r.critique_notes ?? null) as string | null,
+        /** @plan declaró que se prueba en la preview; null = plan anterior a la marca. */
+        requiresPreview: r.requires_preview == null ? null : Number(r.requires_preview) === 1,
       }
     : null;
 }
@@ -1731,7 +1733,11 @@ export async function announcePreviews(): Promise<void> {
       }
       continue;
     }
-    if (sameSha && (row.preview_state === "ready" || row.preview_state === "failed" || row.preview_state === "needs_env")) continue;
+    if (sameSha && (row.preview_state === "failed" || row.preview_state === "needs_env")) {
+      await warnPreviewBlocking(run, row.preview_state, pr.repo);
+      continue;
+    }
+    if (sameSha && row.preview_state === "ready") continue;
     // Commit nuevo: la liga vieja ya no muestra el PR de hoy. Se quita YA (pendiente), aunque
     // pedir la nueva falle; antes, si `up` fallaba, la tarjeta seguía en verde con la vieja.
     if (!sameSha && row.preview_state === "ready") {
@@ -1760,7 +1766,8 @@ export async function announcePreviews(): Promise<void> {
         else if (b.phase === "failed") next = { state: "failed", url: null, provider: null, error: b.error };
         else next = { state: "pending", url: null, provider: null, error: null };
       } catch (e) {
-        // Sin capacidad o gs caído: se reintenta en el siguiente tick, sin avisar a nadie.
+        // Sin capacidad o gs caído: se reintenta en el siguiente tick. Con la preview exigida eso
+        // ya no deja pasar nada: el merge espera en «pendiente».
         console.warn(`[factory] preview #${run.id}: ${(e as Error).message}`);
         continue;
       }
@@ -1786,6 +1793,16 @@ export async function announcePreviews(): Promise<void> {
             .catch(() => {});
         if (run.status !== "building")
           await postInThread(run, "build", `🔎 **Preview ${row.preview_sha && !sameSha ? "actualizada" : "lista"}**${next.provider ? ` (${next.provider})` : ""} · [Abrir](${next.url})`);
+        // Smoke de acción en cada preview nueva (también tras un push con el PR ya aprobado): un
+        // POST con el Origin real. Sólo se avisa si falla (#96, 16-oct).
+        if (next.url) {
+          const S = await import("./factory-smoke.server");
+          const fails = S.smokeFailures(await S.runActionSmoke(next.url, pr.repo, sub));
+          if (fails) {
+            await logEvent(run.id, "smoke_fail", null, { sha: head.sha, fails: fails.slice(0, 800) });
+            await postInThread(run, "build", `⛔ **La preview rechaza envíos** (POST con el Origin real, como el navegador):\n${fails}\nNo lo mezcles así.`);
+          }
+        }
         // Si @check ya dio su veredicto con otra versión (o sin preview), las capturas de su
         // tarjeta se rehacen con ésta: la tarjeta se corrige sola aunque @check se adelantara.
         let verdict: { shotSha?: string; shotPath?: string | null; evidencePath?: string | null } | null = null;
@@ -1806,6 +1823,32 @@ export async function announcePreviews(): Promise<void> {
       // Tarjeta con paso, causa, qué hacer y el log plegado (ver lib/preview-errors.ts).
       await postInThread(run, "build", "```gt-preview-error\n" + JSON.stringify({ runId: run.id }) + "\n```\n⚠️ La preview no arrancó.");
   }
+}
+
+/**
+ * Preview exigida que no llega (`needs_env` / `failed`): se avisa otra vez al entrar a revisión y
+ * a PR listo, no sólo al primer commit. En el #96 el único aviso se perdió en el hilo y la tarjeta
+ * siguió en verde hasta el merge (16-oct). Una vez por etapa (la bitácora lo recuerda).
+ */
+async function warnPreviewBlocking(run: Run, state: "failed" | "needs_env", repo: string): Promise<void> {
+  if (run.status !== "checking" && run.status !== "pr_review") return;
+  if (!(await previewRequired(run))) return;
+  const seen = await dbq("SELECT 1 FROM gt_factory_events WHERE run_id = ? AND type = 'preview_blocking' AND data_json LIKE ? LIMIT 1", [
+    run.id,
+    `%"stage":"${run.status}"%`,
+  ]).catch(() => [1]);
+  if (seen.length) return;
+  await logEvent(run.id, "preview_blocking", null, { stage: run.status, state });
+  const why =
+    state === "needs_env"
+      ? `faltan las variables de \`${repo}\`: [Guardar variables](/factory?repo=${encodeURIComponent(repo)}) y arranca sola`
+      : "no arrancó (el motivo está en la tarjeta)";
+  await postInThread(
+    run,
+    "build",
+    `⛔ **Este pedido exige la preview y ${why}.** Sin ella @check no puede aprobar y el merge está bloqueado. ` +
+      `Si de verdad no hace falta, «Mezclar sin preview» en la tarjeta (queda registrado).`,
+  );
 }
 
 /**
@@ -1871,6 +1914,30 @@ async function missingPreviewEnv(sub: string, repo: string): Promise<boolean> {
 }
 
 export type RunPreviewState = "none" | "pending" | "ready" | "failed" | "needs_env" | "off";
+
+/** ¿El pedido exige la preview para aprobarse y mezclarse? Regla en `factory-preview-gate.ts`. */
+export async function previewRequired(run: Run): Promise<boolean> {
+  const repo = run.repo ?? (run.prUrl ? parsePrUrl(run.prUrl)?.repo : null);
+  const { previewRequiredFrom } = await import("./factory-preview-gate");
+  const { dependabotLevelOf } = await import("./dependabot.server");
+  const plan = run.planVersion ? await getPlan(run.id, run.planVersion).catch(() => null) : null;
+  return previewRequiredFrom({
+    repoOff: repo ? await repoPreviewOff(repo) : false,
+    requiresPreview: plan?.requiresPreview ?? null,
+    planMd: plan?.planMd ?? null,
+    dependabotLevel: dependabotLevelOf(run.taskRef),
+  });
+}
+
+/**
+ * La puerta de la preview para un pedido: null si no la exige o ya está lista en la cabeza;
+ * si no, el motivo y si se resuelve sola (`waits`). La aplican @check y el merge.
+ */
+export async function previewGate(run: Run, headSha: string | null): Promise<{ reason: string; waits: boolean } | null> {
+  if (!run.prUrl || !(await previewRequired(run))) return null;
+  const { previewGateBlock } = await import("./factory-preview-gate");
+  return previewGateBlock(await runPreview(run.id, { fresh: true }), headSha);
+}
 
 /**
  * Lo que la tarjeta y @check saben de la preview del pedido (leído de la fila).
@@ -1943,7 +2010,12 @@ export async function queueMerge(runId: number, sub: string): Promise<void> {
 }
 
 /** `queue`: no entró por el CI (corriendo, o recién lanzado al poner la rama al día); puede quedar en cola. */
-export async function mergeRun(run: Run, sub: string): Promise<{ ok: true } | { ok: false; error: string; queue?: boolean }> {
+export async function mergeRun(
+  run: Run,
+  sub: string,
+  /** `skipPreview`: «Mezclar sin preview», la salida explícita de una persona (queda en la bitácora). */
+  opts: { skipPreview?: boolean } = {},
+): Promise<{ ok: true } | { ok: false; error: string; queue?: boolean }> {
   const pr = run.prUrl ? parsePrUrl(run.prUrl) : null;
   if (!pr) return { ok: false, error: "el pedido no tiene PR" };
   try {
@@ -1982,6 +2054,22 @@ export async function mergeRun(run: Run, sub: string): Promise<{ ok: true } | { 
     if (ci?.state === "failure")
       return { ok: false, error: `El CI del PR está en rojo (${ci.failed.join(", ") || "ver checks"}): pídele el arreglo a @build antes del merge.` };
     if (ci?.state === "pending") return { ok: false, queue: true, error: "El CI del PR sigue corriendo: espera a que termine." };
+    // Preview exigida y no lista en la cabeza: no se mezcla, como un required deployment de GitHub
+    // (el #96 entró con la preview en `needs_env` y tumbó la reserva de Deník 18 h, 16-oct). Cubre
+    // la tarjeta, el «mézclalo» del hilo y la cola. Construyéndose: queda en cola y entra al estar.
+    if (opts.skipPreview) await logEvent(run.id, "merge_without_preview", sub);
+    else {
+      const gate = await previewGate(run, head ?? null);
+      if (gate)
+        return gate.waits
+          ? { ok: false, queue: true, error: `La preview del PR ${gate.reason}: el merge entra en cuanto esté lista.` }
+          : { ok: false, error: `Falta la preview que exige este pedido (${gate.reason}). Arréglala o usa «Mezclar sin preview»` };
+      // La preview de ESTA cabeza rechazó el POST del smoke: es lo que se iba a romper en prod.
+      const [sf] = await dbq("SELECT data_json FROM gt_factory_events WHERE run_id = ? AND type = 'smoke_fail' ORDER BY id DESC LIMIT 1", [run.id]).catch(() => []);
+      const failed = sf?.data_json ? (JSON.parse(String(sf.data_json)) as { sha?: string; fails?: string }) : null;
+      if (failed && head && failed.sha === head)
+        return { ok: false, error: `La preview de este commit rechaza envíos (${String(failed.fails ?? "").split("\n")[0]}). Pídele el arreglo a @build o usa «Mezclar sin preview»` };
+    }
     const tool = allTools().find((t) => t.name === "github_merge_pr");
     const r = (await tool?.handler(sub, { repo: pr.repo, number: pr.number })) as any;
     if (!r || r.error) return { ok: false, error: String(r?.error ?? "GitHub no contestó") };

@@ -248,6 +248,17 @@ export const ChatCtxDefaults: ChatCtxValue = {
 export const ChatCtx = createContext<ChatCtxValue>(ChatCtxDefaults);
 
 /**
+ * Color oficial del robot de un rol de la fábrica: el de la flamita viva del agente en el
+ * directorio (`agent:<handle>`), el mismo que pinta la cabecera del mensaje. @check usa la
+ * cara de @plan (los dos son Arqui). Sin flamita, undefined y `AgentBot` cae en `lookFor`.
+ */
+export function useAgentBotColor(handle: string | null | undefined): string | undefined {
+  const { users } = useContext(ChatCtx);
+  if (!handle) return undefined;
+  return parseFactoryAvatar(users.get(`agent:${personaHandle(handle)}`)?.avatar)?.color;
+}
+
+/**
  * Color estable de un nombre, al estilo Twitch: ayuda a seguir a UNA persona entre cien
  * mensajes sin llegar a leer el nombre completo.
  *

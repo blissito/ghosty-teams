@@ -387,14 +387,38 @@ export function ReviewPanel({ runId, channelId }: { runId: number; channelId: nu
               {t("Pedir arreglo a @build")}
             </button>
           ) : (
-            <button type="button" disabled={busy} onClick={() => run(() => factoryMergeFn({ data: { runId } }))} className="rounded-lg bg-emerald-600 px-3.5 py-2 text-[13px] font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">
-              {busy ? t("Haciendo merge…") : ci?.state === "pending" ? t("Merge cuando pase el CI") : t("Merge")}
+            <button type="button" disabled={busy || (!!st.previewGate && !st.previewGate.waits)} onClick={() => run(() => factoryMergeFn({ data: { runId } }))} className="rounded-lg bg-emerald-600 px-3.5 py-2 text-[13px] font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">
+              {busy ? t("Haciendo merge…") : st.previewGate && !st.previewGate.waits ? t("Falta la preview") : ci?.state === "pending" ? t("Merge cuando pase el CI") : st.previewGate?.waits ? t("Merge cuando esté la preview") : t("Merge")}
             </button>
           )}
         </div>
+        {st.previewGate && (
+          <p className="text-[12.5px] text-muted">
+            <b className={st.previewGate.waits ? "text-ink" : "text-red-600 dark:text-red-400"}>{t("Este pedido exige la preview")}:</b> {t("la preview")} {st.previewGate.reason}.{" "}
+            {!st.previewGate.waits && !st.mergeQueued && <SkipPreviewMerge busy={busy} onMerge={() => run(() => factoryMergeFn({ data: { runId, skipPreview: true } }))} />}
+          </p>
+        )}
         {err && <p className="text-xs text-red-600 dark:text-red-400">{err}</p>}
       </footer>
     </div>
+  );
+}
+
+/**
+ * La salida explícita cuando la preview exigida no llega (como el bypass de admin de GitHub):
+ * un segundo clic confirma y queda en la bitácora del pedido (`merge_without_preview`).
+ */
+function SkipPreviewMerge({ busy, onMerge }: { busy: boolean; onMerge: () => void }) {
+  const t = useT();
+  const [sure, setSure] = useState(false);
+  return sure ? (
+    <button type="button" disabled={busy} onClick={onMerge} className="text-xs font-semibold text-red-600 underline-offset-2 hover:underline disabled:opacity-50 dark:text-red-400">
+      {t("Confirmar: mezclar sin probarlo en la preview")}
+    </button>
+  ) : (
+    <button type="button" disabled={busy} onClick={() => setSure(true)} className="text-xs text-muted underline-offset-2 hover:text-ink hover:underline disabled:opacity-50">
+      {t("Mezclar sin preview")}
+    </button>
   );
 }
 
@@ -403,9 +427,10 @@ export function ReviewPanel({ runId, channelId }: { runId: number; channelId: nu
  * la de GitHub): quién aprobó, los checks con su avance, si choca con la base y el botón. Se
  * queda abierta mientras el merge espera al CI y se pliega sola al entrar.
  */
-export function MergeBox({ st, busy, onMerge, onClose }: { st: VerdictState; busy: boolean; onMerge: () => void; onClose: () => void }) {
+export function MergeBox({ st, busy, onMerge, onClose }: { st: VerdictState; busy: boolean; onMerge: (skipPreview?: boolean) => void; onClose: () => void }) {
   const t = useT();
   if (!st?.verdict) return null;
+  const gate = st.previewGate;
   const checks = st.ci?.checks ?? [];
   const running = checks.filter((c) => c.state === "pending");
   const failed = checks.filter((c) => c.state === "failure");
@@ -489,15 +514,25 @@ export function MergeBox({ st, busy, onMerge, onClose }: { st: VerdictState; bus
           <p className="text-xs text-muted">{st.mergeable?.clean === false ? t("Al picar Merge se lo regreso a @build para resolverlo.") : t("Se puede mezclar automáticamente.")}</p>
         </div>
       </div>
+      {gate && (
+        <div className={`${row} border-t border-border`}>
+          {gate.waits ? dot("bg-amber-500", "…") : dot("bg-red-500", "✗")}
+          <div className="min-w-0 flex-1">
+            <p className="text-[13.5px] font-semibold text-ink">{t("Falta la preview que exige este pedido")}</p>
+            <p className="text-xs text-muted">{t("La preview")} {gate.reason}. {gate.waits ? t("El merge entra en cuanto esté lista.") : t("Sin ella no se mezcla: el CI no prueba la app corriendo.")}</p>
+          </div>
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-3 border-t border-border bg-surface px-3.5 py-2.5">
         {st.mergeQueued ? (
           <MergeQueued st={st} />
         ) : (
-          <button type="button" disabled={busy || ci === "failure"} onClick={onMerge} className="rounded-lg bg-emerald-600 px-3.5 py-1.5 text-[13px] font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">
-            {busy ? t("Haciendo merge…") : ci === "pending" ? t("Merge cuando pase el CI") : t("Merge")}
+          <button type="button" disabled={busy || ci === "failure" || (!!gate && !gate.waits)} onClick={() => onMerge()} className="rounded-lg bg-emerald-600 px-3.5 py-1.5 text-[13px] font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">
+            {busy ? t("Haciendo merge…") : gate && !gate.waits ? t("Falta la preview") : ci === "pending" ? t("Merge cuando pase el CI") : gate?.waits ? t("Merge cuando esté la preview") : t("Merge")}
           </button>
         )}
         <span className="text-xs text-muted">{ci === "pending" ? t("Entra solo al pasar; si sale en rojo, te avisa.") : ci === "failure" ? t("Con el CI en rojo no entra: pídele el arreglo a @build en el panel.") : ""}</span>
+        {gate && !gate.waits && !st.mergeQueued && <SkipPreviewMerge busy={busy} onMerge={() => onMerge(true)} />}
       </div>
     </div>
   );

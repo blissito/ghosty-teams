@@ -79,7 +79,12 @@ export async function adoptDependabotPr(ev: PrOpened, opts: { room?: number } = 
       `Revisa el PR de Dependabot ${ev.url} («${ev.title}»). No hay plan: el cambio es subir dependencias. Salto: ${level}.\n` +
         `1. Lee el diff (github_pr_files) y el CI (github_pr_checks). Si el CI sigue corriendo, github_watch_pr y espera el aviso.\n` +
         `2. Lee las notas de la versión o el changelog que Dependabot pega en la descripción del PR. Busca cambios que rompen (breaking changes, APIs quitadas, versión mínima de Node) y dónde los usa el repo (github_search / github_read_file).\n` +
-        `3. Con el CI en verde, el CI es tu evidencia: cita en proof los checks que pasaron, sin levantar caja. Sólo si el CI está rojo o el repo no tiene CI, corre en tu caja lo que te dé evidencia (install, typecheck, pruebas).\n` +
+        (level === "patch" || level === "minor"
+          ? `3. Con el CI en verde, el CI es tu evidencia: cita en proof los checks que pasaron, sin levantar caja. Sólo si el CI está rojo o el repo no tiene CI, corre en tu caja lo que te dé evidencia (install, typecheck, pruebas).\n`
+          : // Un major rompe en EJECUCIÓN lo que el CI no ve: React Router 8 pasó lint, typecheck,
+            // tests y build y tumbó toda acción en prod (#96 de Deník, 16-oct).
+            `3. Es un salto ${level === "major" ? "mayor" : "sin versión clara"}: el CI no basta. Pide la preview con factory_preview (runId ${run.id}) y prueba AHÍ la acción principal de la app (un formulario que envíe datos, no sólo abrir páginas). ` +
+            `Para cada cambio que rompe de las notas de la versión di cómo lo descartaste; los de red o seguridad (CSRF, CORS, cookies, proxy, TLS) sólo se descartan en la preview. Sin preview lista no puedes aprobar: si falta algo para levantarla, pass=false y blocked=true.\n`) +
         `Cierra con factory_check_verdict (runId ${run.id}):\n` +
         `- pass=true si se puede mergear: summary = qué cambia para el producto en 1 frase («nada visible: sólo parches de seguridad de X»); ` +
         (level === "patch" || level === "minor"

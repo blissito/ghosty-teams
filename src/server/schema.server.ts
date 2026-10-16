@@ -1106,6 +1106,9 @@ async function migrate(): Promise<void> {
   await addColumn("gt_factory_plans", "critique_notes", "TEXT");
   await addColumn("gt_factory_plans", "auto_approve_by", "TEXT");
   await addColumn("gt_factory_plans", "auto_approve_who", "TEXT");
+  // ¿El plan exige probar en la preview? Lo declara @plan (16-oct, #96). NULL = plan viejo: se
+  // deduce de sus criterios (`planAsksPreview`).
+  await addColumn("gt_factory_plans", "requires_preview", "INTEGER");
   // Previews sueltas (PRs sin pedido) que no cupieron o que se soltaron (7-oct): gs reparte los
   // lugares del tier entre cajas de pedido y previews sueltas. `waiting` = 409 no_slot, el tick
   // la reintenta sola; `evicted` = un pedido u otra preview la desplazó. `busy` = JSON de runIds.

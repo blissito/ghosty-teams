@@ -1066,6 +1066,8 @@ export const factoryVerdictFn = createServerFn({ method: "POST" })
       proof?: { cmd: string; ok: boolean; result: string; output: string | null }[];
       shots?: import("./factory-shots.server").Shot[];
       shotPath?: string | null;
+      // Desde el 16-oct: con qué preview aprobó @check (null = el pedido no la exigía).
+      preview?: { state: string; url: string | null; sha: string | null } | null;
     } | null = null;
     try {
       verdict = rows[0]?.verdict_json ? JSON.parse(String(rows[0].verdict_json)) : null;
@@ -1100,9 +1102,12 @@ export const factoryVerdictFn = createServerFn({ method: "POST" })
     const evs = await q("SELECT at, type FROM gt_factory_events WHERE run_id = ? ORDER BY id", [run.id]).catch(() => []);
     const relay = relaySegments(evs.map((e) => ({ at: Number(e.at), type: String(e.type) })), Math.floor(Date.now() / 1000));
     const approved = [...evs].reverse().find((e) => String(e.type) === "approve");
+    // La preview que exige el pedido y no está lista en la cabeza: el merge se bloquea (como un
+    // required deployment de GitHub) y la caja de merge lo dice (#96, 16-oct). `waits` = se construye.
+    const previewGate = run.status === "pr_review" ? await R.previewGate(run, null).catch(() => null) : null;
     return {
       runId: run.id, title: run.title, status: run.status, repo: run.repo, prUrl: run.prUrl, verdict, shots, preview: await R.runPreview(run.id), ci, mergeQueued, mergeAuto,
-      mergeable, effort, relay, approvedAt: approved ? Number(approved.at) : null, branch: run.branch, events: evs.length,
+      mergeable, effort, relay, approvedAt: approved ? Number(approved.at) : null, branch: run.branch, events: evs.length, previewGate,
     };
   });
 
@@ -1160,9 +1165,9 @@ export const factoryFixCiFn = createServerFn({ method: "POST" })
     return { ok: true as const };
   });
 
-/** «Mezclar» desde la tarjeta del veredicto: con el GitHub de quien pica. */
+/** «Mezclar» desde la tarjeta del veredicto: con el GitHub de quien pica. `skipPreview` = «Mezclar sin preview». */
 export const factoryMergeFn = createServerFn({ method: "POST" })
-  .validator((d: { runId: number }) => d)
+  .validator((d: { runId: number; skipPreview?: boolean }) => d)
   .handler(async ({ data }) => {
     const me = await sessionUser();
     if (!me) throw new Error("no autenticado");
@@ -1172,7 +1177,7 @@ export const factoryMergeFn = createServerFn({ method: "POST" })
     const db = await import("../../db.server");
     if (!(await db.listChannels(me.sub, me.isOwner)).some((c) => c.id === run.channelId)) throw new Error("no ves ese room");
     if (run.status !== "pr_review") throw new Error("el pedido no está esperando revisión");
-    const r = await R.mergeRun(run, me.sub);
+    const r = await R.mergeRun(run, me.sub, { skipPreview: data.skipPreview === true });
     // El CI del PR cambió (o se acaba de lanzar): la tarjeta lo vuelve a preguntar ya.
     if (run.prUrl) {
       ciCache.delete(run.prUrl);

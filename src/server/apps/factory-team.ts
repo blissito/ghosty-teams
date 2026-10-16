@@ -60,6 +60,8 @@ export type RepoSetup = {
 export type TeamFile = {
   roles: Partial<Record<FactoryHandle, RoleSpec>>;
   setup?: RepoSetup;
+  /** `smoke: [/reservar, /login]`: rutas con acción (POST) que se prueban en la preview de cada PR. */
+  smoke?: string[];
   notes: string;
   /** Lo que va bajo `## @plan`, `## @build` o `## @check` en el cuerpo: sólo para ese rol. */
   roleNotes: Partial<Record<FactoryHandle, string>>;
@@ -85,6 +87,7 @@ export function parseTeamFile(raw: string): TeamFile {
   // `setup:` es otro bloque (con lista y un mapa anidado): sus renglones se juntan aparte.
   let inSetup = false;
   const setupLines: string[] = [];
+  let smoke: string[] | undefined;
   for (const line of m[1].split(/\r?\n/)) {
     if (!line.trim() || line.trim().startsWith("#")) continue;
     if (inSetup && /^\s/.test(line)) {
@@ -95,6 +98,11 @@ export function parseTeamFile(raw: string): TeamFile {
     const top = line.match(/^([a-z]+)\s*:\s*(.*)$/i);
     if (top && !/^\s/.test(line) && top[1].toLowerCase() === "setup") {
       inSetup = true;
+      current = null;
+      continue;
+    }
+    if (top && !/^\s/.test(line) && top[1].toLowerCase() === "smoke") {
+      smoke = parseSmoke(top[2]);
       current = null;
       continue;
     }
@@ -117,7 +125,23 @@ export function parseTeamFile(raw: string): TeamFile {
     if (nested && current) assign((roles[current] ??= {}), nested[1], nested[2]);
   }
   const setup = setupLines.length ? parseSetup(setupLines) : undefined;
-  return { roles, ...(setup ? { setup } : {}), ...splitRoleNotes(m[2]) };
+  return { roles, ...(setup ? { setup } : {}), ...(smoke?.length ? { smoke } : {}), ...splitRoleNotes(m[2]) };
+}
+
+const SAFE_PATH = /^\/[\w\-./~%$@:]{0,200}$/;
+
+/** `smoke: [/reservar, /login]` (o separadas por comas): rutas absolutas, máx. 5; lo demás se ignora. */
+export function parseSmoke(raw: string): string[] {
+  return [
+    ...new Set(
+      raw
+        .replace(/\s+#.*$/, "")
+        .replace(/^\[|\]$/g, "")
+        .split(",")
+        .map((s) => unquote(s))
+        .filter((p) => SAFE_PATH.test(p) && !p.includes("..")),
+    ),
+  ].slice(0, 5);
 }
 
 const SAFE_DB = /^[a-z_][a-z0-9_]{0,40}$/i;
@@ -374,6 +398,7 @@ export function teamFileTemplate(team: Partial<Record<FactoryHandle, { name: str
     `---\n${lines.join("\n")}\n` +
     "# setup:                          # entorno de pruebas de la caja de trabajo (ver /docs/fabrica/equipo-por-repo)\n" +
     "#   services: [postgres, redis]\n#   db: app\n#   env:\n#     JWT_SECRET: test-secret\n" +
+    "# smoke: [/reservar]               # rutas con formulario (POST) que se prueban en la preview de cada PR\n" +
     "---\n" +
     "Convenciones de este repo que deben saber @plan, @build y @check:\n" +
     "- Cómo se corren las pruebas:\n- Qué no se toca:\n"

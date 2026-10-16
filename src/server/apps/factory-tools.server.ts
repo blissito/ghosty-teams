@@ -205,8 +205,14 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           repo: { type: "string", description: 'Repo "dueño/repo" (si el room tiene varios)' },
           runId: { type: "number", description: "Pedido existente (si no, se toma el del hilo)" },
           issue: { type: "number", description: "Número del issue de GitHub que resuelve el pedido (si viene de uno). La plataforma pone `Closes #N` en el PR: no lo escribas tú." },
+          requires_preview: {
+            type: "boolean",
+            description:
+              "true si algún criterio sólo se comprueba con la app corriendo (pantallas, formularios, sesión, pagos, una subida mayor de framework). " +
+              "Entonces @check no puede aprobar ni se puede mezclar sin la preview lista. false si basta el CI (CLI, librería, docs).",
+          },
         },
-        required: ["plan_md"],
+        required: ["plan_md", "requires_preview"],
       },
       handler: async (sub, a) => {
         if (dest?.handle && dest.handle !== "plan") return { ok: false, error: "sólo @plan entrega planes" };
@@ -283,7 +289,9 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         // Va en el mismo UPDATE que la transición: si el estado no admite plan, el título no cambia.
         const retitle = !firstPlan && title && title !== run.title ? { title } : {};
         run = await R.applyEvent(run, "plan_submitted", { plan_version: version, ...retitle }, { actor: "plan", data: { version } });
-        await dbq("INSERT INTO gt_factory_plans (run_id, version, plan_md) VALUES (?, ?, ?)", [run.id, version, planMd]);
+        // Sin `requires_preview` (modelo que no la manda) queda NULL y se deduce de los criterios.
+        const requiresPreview = typeof a.requires_preview === "boolean" ? (a.requires_preview ? 1 : 0) : null;
+        await dbq("INSERT INTO gt_factory_plans (run_id, version, plan_md, requires_preview) VALUES (?, ?, ?, ?)", [run.id, version, planMd, requiresPreview]);
         const msgId = await R.postInThread(run, "plan", R.planCardFence(run.id, version));
         if (msgId) await dbq("UPDATE gt_factory_plans SET msg_id = ? WHERE run_id = ? AND version = ?", [msgId, run.id, version]);
         // La tarjeta viva en el room (la primera vez) y el aviso de que hay plan nuevo.
@@ -495,8 +503,12 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
                   ? ` (excepción: en una subida de Dependabot se pide agregar un grupo de paquetes hermanos a .github/dependabot.yml; sólo eso, nada de workflows ni CODEOWNERS). `
                   : `. `)
               : "") +
-            `Si el repo publica previews, pide la URL con factory_preview (runId ${run.id}): comprueba AHÍ los criterios de ` +
-            `aceptación que se ven en pantalla y cita la URL en tu veredicto; si está en camino, espera a que esté lista. ` +
+            ((await R.previewRequired(next))
+              ? `Este pedido EXIGE la preview: pide la URL con factory_preview (runId ${run.id}), comprueba AHÍ los criterios de aceptación ` +
+                `(incluida una acción que envíe datos, no sólo abrir páginas) y cita la URL en tu veredicto. Sin ella lista no puedes aprobar; ` +
+                `probar en tu caja no la sustituye. `
+              : `Si el repo publica previews, pide la URL con factory_preview (runId ${run.id}): comprueba AHÍ los criterios de ` +
+                `aceptación que se ven en pantalla y cita la URL en tu veredicto; si está en camino, espera a que esté lista. `) +
             `Lee el diff con github_pr_files y el CI con github_pr_checks. Si el CI sigue corriendo, usa ` +
             `github_watch_pr y espera el aviso antes de dar tu veredicto (no apruebes con CI pendiente). ` +
             `NO edites ni empujes nada. ` +
@@ -635,6 +647,31 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
             return { ok: false, error: `el CI está en rojo (${ci.failed.join(", ") || "ver checks"}): no puede pasar. Repórtalo con pass=false.` };
           // `none` (sin CI) pasa, pero la tarjeta lo dice.
         }
+        // Preview exigida (por el plan o por ser un major): sin ella lista en la cabeza no hay pass.
+        // «Probado en mi caja» no la sustituye: por http local el CSRF de React Router 8 nunca
+        // disparaba y en prod daba 400 a toda acción (#96 de Deník, 16-oct). Como Devin: si no
+        // llega a la app, pide ayuda en vez de aprobar.
+        const gate = a.pass === true ? await R.previewGate(run, head?.sha ?? null) : null;
+        if (gate)
+          return {
+            ok: false,
+            error: gate.waits
+              ? `este pedido exige la preview y ${gate.reason}: espera a que esté lista (factory_preview) y pruébala ahí antes de aprobar.`
+              : `este pedido exige la preview y ${gate.reason}: no puede pasar. Si es el código del PR, pass=false con el hallazgo; ` +
+                `si falta algo que @build no puede dar (variables, un servicio), pass=false y blocked=true diciendo qué falta. Probar en tu caja no la sustituye.`,
+          };
+        // Con la preview lista, un POST con el Origin real (smoke de acción): lo que el CI y el
+        // localhost no ven. Si la rechaza o truena, no hay pass (#96, 16-oct).
+        const livePreview = a.pass === true ? await R.runPreview(run.id, { fresh: true }) : null;
+        const S = await import("./factory-smoke.server");
+        const smoke = livePreview?.state === "ready" && livePreview.url ? await S.runActionSmoke(livePreview.url, run.repo, sub) : null;
+        if (S.smokeFailures(smoke))
+          return {
+            ok: false,
+            error:
+              `el smoke de la plataforma sobre la preview falló:\n${S.smokeFailures(smoke)}\n` +
+              `Es un hallazgo (pass=false): un envío real a la preview (https, con Origin) no pasa. Revisa cambios de CSRF/origen, cookies o proxy en lo que subió.`,
+          };
         if (a.pass === true) {
           const next = await R.applyEvent(run, "check_pass", checked, { actor: "check" });
           // Sacarlo de borrador lo hace la plataforma, no el prompt: antes dependía de que
@@ -676,6 +713,10 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
               : [],
             // La ruta que pidió @check: si las capturas se rehacen con una preview nueva, salen de ahí.
             evidencePath: a.evidencePath ? String(a.evidencePath) : null,
+            // Con qué preview se aprobó (null = no la exigía): la tarjeta lo dice.
+            preview: (await R.previewRequired(run)) ? livePreview : null,
+            // El POST de la plataforma a la preview (null = no hubo preview o nada que probar).
+            smoke,
           };
           const { dbq } = await import("../../dbq.server");
           await dbq("UPDATE gt_factory_runs SET verdict_json = ?, pr_ready_at = unixepoch() WHERE id = ?", [JSON.stringify(verdict), run.id]);
@@ -1092,6 +1133,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         const R = await import("./factory-runs.server");
         // `fresh`: tras un push la fila sigue «lista» con la caja vieja; @check revisaba la anterior.
         const p = await R.runPreview(run.id, { fresh: true });
+        const required = await R.previewRequired(run);
         const note =
           p.state === "ready"
             ? "Ábrela y prueba ahí los criterios de aceptación visibles."
@@ -1099,12 +1141,17 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
               ? "Se está publicando: vuelve a preguntar en un minuto."
               : p.state === "off"
                 ? "El dueño apagó la preview de este repo: revisa con el diff y las pruebas, sin mencionarla."
+              : required && (p.state === "needs_env" || p.state === "failed")
+                ? `Este pedido EXIGE la preview y ${p.state === "needs_env" ? "espera las variables del repo" : "no arrancó (el motivo va en error)"}: no puedes aprobar. ` +
+                  "Si es el código del PR, pass=false con el hallazgo; si falta algo que @build no puede dar, pass=false y blocked=true diciendo qué falta. Probar en tu caja no la sustituye."
               : p.state === "needs_env"
                 ? "La preview espera que el dueño guarde sus variables: revisa con el diff y las pruebas."
                 : p.state === "failed"
                 ? "La preview no arrancó (el motivo va en error). Si es el código del PR, es un hallazgo; si faltan variables de entorno, dilo y sigue con el diff y las pruebas."
-                : "Todavía no hay preview de este PR: vuelve a preguntar en un minuto o revisa con el diff y las pruebas.";
-        return { ok: true, ...p, note };
+                : required
+                  ? "Todavía no hay preview de este PR y el pedido la exige: vuelve a preguntar en un minuto; no apruebes sin ella."
+                  : "Todavía no hay preview de este PR: vuelve a preguntar en un minuto o revisa con el diff y las pruebas.";
+        return { ok: true, ...p, required, note };
       },
     },
     {
@@ -1333,6 +1380,26 @@ export function findingsText(raw: unknown): string {
 
 /** ¿Este turno de @check es el del crítico del plan? Pedido del hilo en `plan_review` con su
  *  versión vigente pendiente de crítica. */
+/** La viabilidad de la preview del repo para el turno de @plan (con el GitHub de quien conectó el repo). */
+async function planPreviewLine(dest: ToolDest | null, repo: string): Promise<string | null> {
+  if (!dest?.channelId) return null;
+  const db = await import("../../db.server");
+  const row = (await db.listRoomRepos(dest.channelId)).find((r) => r.repo.toLowerCase() === repo.toLowerCase());
+  if (!row?.connectedBy) return null;
+  const { repoReadiness } = await import("./readiness.server");
+  const r = await repoReadiness(row.connectedBy, repo);
+  if ("error" in r) return null;
+  const R = await import("./factory-runs.server");
+  const { previewViabilityLine } = await import("./factory-preview-gate");
+  return previewViabilityLine(repo, {
+    off: await R.repoPreviewOff(repo),
+    hosting: r.facts.previewHosting,
+    runnable: r.facts.previewRunnable,
+    envExampleKeys: r.facts.envExampleKeys,
+    envSavedKeys: r.facts.envSavedKeys,
+  });
+}
+
 export async function isCriticTurn(dest: ToolDest | null): Promise<boolean> {
   const root = threadRoot(dest);
   if (!dest?.channelId || !root) return false;
@@ -1394,7 +1461,12 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
           );
       }
       if (ft.setup && (h === "build" || h === "check")) parts.push(setupLine(ft.repo, ft.setup));
-      else if (!ft.setup && h === "plan")
+      if (h === "plan") {
+        // Si la preview es viable se sabe al planear, no tras el build (#96, 16-oct).
+        const line = await planPreviewLine(dest, ft.repo).catch(() => null);
+        if (line) parts.push(line);
+      }
+      if (!ft.setup && h === "plan")
         parts.push(`${ft.repo} no declara su entorno de pruebas (setup: en .ghosty/factory.md). Si el pedido toca pruebas que piden base de datos, Redis o variables de prueba, mira los services: y env: de .github/workflows/*.yml (o docker-compose) y agrega al plan un paso que proponga el bloque setup: en el mismo PR.`);
     }
     if (ft?.repo && !ft.refusal) {
