@@ -29,6 +29,29 @@ export const PERSONA_OF: Record<FactoryHandle, FactoryPersona> = { plan: "arqui"
 export const PERSONA_ALIASES: Record<FactoryPersona, FactoryHandle> = { arqui: "plan", worker: "build" };
 
 /**
+ * Arqui son DOS handles (@plan y @check) y una persona: una sola mención suya despierta a UNO.
+ * El 16-oct, en #denik, «@arqui pedido de prueba… que @check no pueda aprobar» arrancó a @plan
+ * y a @check a la vez: @check intentó entregar el plan, se lo rechazaron y dejó una tarjeta
+ * «Pedir» duplicada (doble costo y ruido). Ahora, si el mensaje nombra a los dos, o a Arqui por
+ * su nombre, va al rol de la etapa: en el hilo de un pedido en revisión, @check; en cualquier
+ * otro caso (mensaje nuevo, hilo sin pedido, planeando…), @plan. Un @plan o @check escrito a
+ * solas se respeta. Worker es un solo handle (@build): no necesita esto.
+ */
+export function resolvePersonaMentions(
+  mentioned: string[],
+  opts: { arquiOnly: boolean; runStatus: string | null; handles: string[] },
+): string[] {
+  const arqui = mentioned.filter((h) => h === "plan" || h === "check");
+  if (!arqui.length || (arqui.length === 1 && !opts.arquiOnly)) return mentioned;
+  const reviewing = opts.runStatus === "checking" || opts.runStatus === "pr_review";
+  const target = reviewing && opts.handles.includes("check") ? "check" : opts.handles.includes("plan") ? "plan" : arqui[0];
+  const i = mentioned.findIndex((h) => h === "plan" || h === "check");
+  const out = mentioned.filter((h, j) => j === i || (h !== "plan" && h !== "check"));
+  out[out.indexOf(mentioned[i])] = target;
+  return out;
+}
+
+/**
  * @eval: el JUEZ de los evals. Opcional y fuera de `FACTORY_HANDLES` a propósito: no es parte
  * de la cadena plan → build → check, no lo toca `.ghosty/factory.md` ni «@build con opus». Si no
  * está, juzga @check. Ver apps/factory-evals.server.ts.

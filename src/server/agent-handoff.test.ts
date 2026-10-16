@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { droppedRoleMentions, pickRespondents, relayTargets } from "./agent-handoff.server";
+import { resolvePersonaMentions } from "./apps/factory-roles";
 
 describe("pickRespondents", () => {
   it("un pedido de coordinación arranca sólo al primero (el caso real de #divi, con su errata)", () => {
@@ -36,5 +37,32 @@ describe("droppedRoleMentions", () => {
     expect(droppedRoleMentions(["plan", "fixtergeek"], "check")).toEqual(["plan"]);
     expect(droppedRoleMentions(["check"], "check")).toEqual([]);
     expect(droppedRoleMentions(["plan"], "ghosty")).toEqual([]);
+  });
+});
+
+describe("resolvePersonaMentions (Arqui = @plan + @check)", () => {
+  const handles = ["plan", "build", "check", "ghosty"];
+  // El caso real de #denik (16-oct): mensaje nuevo con @arqui que además nombra a @check.
+  it("un mensaje nuevo «@arqui … @check …» despierta sólo a @plan", () => {
+    expect(resolvePersonaMentions(["plan", "check"], { arquiOnly: false, runStatus: null, handles })).toEqual(["plan"]);
+    expect(resolvePersonaMentions(["plan"], { arquiOnly: true, runStatus: null, handles })).toEqual(["plan"]);
+  });
+  it("en el hilo de un pedido en revisión, @arqui va a @check (uno solo)", () => {
+    expect(resolvePersonaMentions(["plan"], { arquiOnly: true, runStatus: "checking", handles })).toEqual(["check"]);
+    expect(resolvePersonaMentions(["plan", "check"], { arquiOnly: false, runStatus: "checking", handles })).toEqual(["check"]);
+    expect(resolvePersonaMentions(["plan"], { arquiOnly: true, runStatus: "pr_review", handles })).toEqual(["check"]);
+  });
+  it("planeando o construyendo, Arqui es @plan", () => {
+    expect(resolvePersonaMentions(["plan", "check"], { arquiOnly: false, runStatus: "plan_review", handles })).toEqual(["plan"]);
+    expect(resolvePersonaMentions(["check"], { arquiOnly: true, runStatus: "building", handles })).toEqual(["plan"]);
+  });
+  it("un @plan o @check escrito a solas se respeta, y los demás agentes no se tocan", () => {
+    expect(resolvePersonaMentions(["check"], { arquiOnly: false, runStatus: null, handles })).toEqual(["check"]);
+    expect(resolvePersonaMentions(["plan"], { arquiOnly: false, runStatus: "checking", handles })).toEqual(["plan"]);
+    expect(resolvePersonaMentions(["ghosty", "check", "build", "plan"], { arquiOnly: false, runStatus: null, handles })).toEqual(["ghosty", "plan", "build"]);
+    expect(resolvePersonaMentions(["ghosty"], { arquiOnly: false, runStatus: null, handles })).toEqual(["ghosty"]);
+  });
+  it("sin @check en el espacio, la revisión sigue con @plan", () => {
+    expect(resolvePersonaMentions(["plan"], { arquiOnly: true, runStatus: "checking", handles: ["plan", "build"] })).toEqual(["plan"]);
   });
 });

@@ -829,14 +829,17 @@ export const postMessageAs = createServerOnlyFn(async (me: SessionMe | null, dat
   // Los handles de las personas entran para que un `@anabel` exacto no despierte a `ana`.
   const userHandles = agentOff ? [] : (await import("../users.server").then((u) => u.listUsers()).catch(() => [])).map((u) => u.handle);
   const mentionedList = agentOff ? [] : detectMentions(body, handles, userHandles); // TODOS los @tagged, en orden
-  // @arqui en el hilo de un pedido que ya está en revisión le habla a Arqui-revisor (@check),
-  // no a Arqui-planeador: es el mismo personaje y la persona no tiene por qué saber la etapa.
-  if (data.parentId !== null && /(?<![\p{L}\p{N}_@.])@arqui\b/iu.test(body) && !/(?<![\p{L}\p{N}_@.])@plan\b/iu.test(body)) {
-    const i = mentionedList.indexOf("plan");
-    if (i !== -1 && handles.includes("check")) {
-      const run = await import("./apps/factory-runs.server").then((R) => R.runOfThread(channel.id, data.parentId!)).catch(() => null);
-      if (run && (run.status === "checking" || run.status === "pr_review")) mentionedList[i] = "check";
-    }
+  // Arqui (@plan y @check) es una persona: una mención suya despierta a UN rol, el de la etapa
+  // (ver `resolvePersonaMentions`). La persona no tiene por qué saber en qué etapa va el pedido.
+  if (mentionedList.includes("plan") || mentionedList.includes("check")) {
+    const said = (h: string) => new RegExp(`(?<![\\p{L}\\p{N}_@.])@${h}\\b`, "iu").test(body);
+    const arquiOnly = said("arqui") && !said("plan") && !said("check");
+    const run = data.parentId !== null
+      ? await import("./apps/factory-runs.server").then((R) => R.runOfThread(channel.id, data.parentId!)).catch(() => null)
+      : null;
+    const { resolvePersonaMentions } = await import("./apps/factory-roles");
+    const resolved = resolvePersonaMentions(mentionedList, { arquiOnly, runStatus: run?.status ?? null, handles });
+    mentionedList.splice(0, mentionedList.length, ...resolved);
   }
   const mentioned = mentionedList[0] ?? null; // para el flag agent_handle del mensaje
   const name = me?.name || "invitado";

@@ -46,7 +46,9 @@ export function pickRespondents(body: string, mentioned: string[]): string[] {
  */
 export async function coordinationHint(body: string, self: string, agentHandles: string[]): Promise<string> {
   const { detectMentions } = await import("../agents.server");
-  const otros = detectMentions(body, agentHandles).filter((h) => h !== self);
+  // Un rol de la fábrica no le pasa trabajo a otro rol por mención (`relayTargets`): decirle
+  // «@check también está, menciónalo» lo invitaba a una @ que no le llega a nadie.
+  const otros = relayTargets(detectMentions(body, agentHandles), self);
   if (!otros.length) return "";
   const lista = otros.map((h) => `@${h}`).join(", ");
   const dirige = COORDINATION_RE.test(body)
