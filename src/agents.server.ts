@@ -2524,9 +2524,16 @@ export async function callAgentBackendStream(
       ...(salesBoardId ? { boardId: salesBoardId } : {}),
       // Modelo de ESTE turno (fábrica). gs lo valida contra el motor y lo topa por plan.
       ...(native && factoryTurn?.model ? { model: factoryTurn.model } : {}),
-      // Ayudantes nativos síncronos sólo para @build (POC 8-oct); gs lo prende si el espacio tiene
-      // `factoryNativeSubagents`. Va en TODO turno de un rol (true/false) para que la clave no oscile.
-      ...(native && factoryTurn ? { nativeSubagents: agent.handle === "build" } : {}),
+      // Ayudantes nativos síncronos en @build, @plan y @check; gs los prende si el espacio tiene
+      // `factoryNativeSubagents`. Los tres: Arqui es @plan y @check en la MISMA sesión y su lista
+      // de tools se fija al abrirla. En @plan/@check sólo `investigador` (sólo lectura, lo fija el
+      // worker). Van en TODO turno de un rol para que las claves del turno no oscilen.
+      ...(native && factoryTurn
+        ? {
+            nativeSubagents: ["build", "plan", "check"].includes(agent.handle),
+            childProfile: agent.handle === "build" ? "" : "investigador",
+          }
+        : {}),
     });
     const url = `${base}/api/v2/fleet-agents/${fleetAgentId}/message-stream`;
     const doStream = (tok: string) =>
