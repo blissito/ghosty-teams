@@ -65,6 +65,30 @@ export function previewGateBlock(
   return { reason: previewStateText({ state, error: p.error }), waits: state === "pending" };
 }
 
+/** Variable del `.env` de la preview que toca producción (la clasifica gs: sólo viaja el nombre). */
+export type EnvRiskEntry = { key: string; risk: "remote_db" | "live_payment_key" | "real_email" };
+const ENV_RISK_LABEL: Record<EnvRiskEntry["risk"], string> = { remote_db: "base remota", live_payment_key: "llave live", real_email: "correo real" };
+
+/** «DATABASE_URL (base remota), STRIPE_SECRET_KEY (llave live)». */
+export function envRisksText(risks: EnvRiskEntry[], max = 6): string {
+  const shown = risks.slice(0, max).map((r) => `${r.key} (${ENV_RISK_LABEL[r.risk] ?? r.risk})`);
+  return shown.join(", ") + (risks.length > max ? ` y ${risks.length - max} más` : "");
+}
+
+/** El aviso de que la preview usa PRODUCCIÓN (null = no hay nada que avisar). En el #96 la de
+ *  `agenda` escribía en la base de prod y traía llaves live; nadie lo supo hasta revisarlo a mano. */
+export function envRiskLine(repo: string, risks: EnvRiskEntry[] | null | undefined): string | null {
+  if (!risks?.length) return null;
+  const rules = [
+    risks.some((r) => r.risk === "remote_db") ? "con la base remota, nada de pruebas que escriban" : null,
+    risks.some((r) => r.risk === "live_payment_key") ? "con llaves live, no se completan pagos" : null,
+  ].filter(Boolean);
+  return (
+    `⚠ La preview de ${repo} usa recursos de PRODUCCIÓN: ${envRisksText(risks)}. Lo que escriba, cobre o envíe será real. ` +
+    `Pide variables de prueba en «Riesgos» antes de exigir la preview${rules.length ? `; mientras, ${rules.join(" y ")}` : ""}.`
+  );
+}
+
 /**
  * Lo que @plan sabe de la preview del repo ANTES de planear: en el #96 nadie lo supo hasta el
  * final, y la falta de variables apareció como un aviso suelto después del build.
@@ -75,7 +99,16 @@ export function previewViabilityLine(repo: string, f: {
   runnable: boolean;
   envExampleKeys: string[];
   envSavedKeys: string[] | null;
+  /** Lo que gs marcó como producción en las variables guardadas. */
+  envRisks?: EnvRiskEntry[] | null;
 }): string {
+  const line = previewViabilityBase(repo, f);
+  // Con hosting propio o apagada, las variables guardadas no se usan.
+  const risk = f.off || f.hosting || !f.runnable ? null : envRiskLine(repo, f.envRisks);
+  return risk ? `${line} ${risk}` : line;
+}
+
+function previewViabilityBase(repo: string, f: Parameters<typeof previewViabilityLine>[1]): string {
   if (f.off) return `Preview de ${repo}: el dueño la apagó («Sin preview»). No pidas criterios «en la preview».`;
   if (f.hosting) return `Preview de ${repo}: la publica su hosting en cada PR.`;
   if (!f.runnable) return `Preview de ${repo}: no se puede levantar (sin script start/preview/dev ni index.html). Si un criterio la necesita, el plan dice cómo se va a probar o propone habilitarla.`;

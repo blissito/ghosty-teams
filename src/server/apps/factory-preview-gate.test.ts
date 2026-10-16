@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { acceptanceSection, planAsksPreview, previewRequiredFrom, previewGateBlock } from "./factory-preview-gate";
+import { acceptanceSection, envRiskLine, planAsksPreview, previewRequiredFrom, previewGateBlock, previewViabilityLine } from "./factory-preview-gate";
 
 // El plan v2 del #96 (resumido): el criterio decía «en la preview del PR».
 const PLAN_96 = `# Subir React Router a 8
@@ -57,5 +57,33 @@ describe("previewGateBlock", () => {
     expect(previewGateBlock({ state: "needs_env", sha: null }, "abc")).toEqual({ reason: "espera las variables del repo", waits: false });
     expect(previewGateBlock({ state: "failed", sha: null, error: "Mongo no arrancó" }, "abc")?.reason).toBe("falló: Mongo no arrancó");
     expect(previewGateBlock({ state: "none", sha: null }, "abc")?.waits).toBe(false);
+  });
+});
+
+describe("previewViabilityLine: variables de producción (#96)", () => {
+  const base = { off: false, hosting: false, runnable: true, envExampleKeys: ["DATABASE_URL"], envSavedKeys: ["DATABASE_URL", "STRIPE_SECRET_KEY"] };
+  it("avisa con nombre y motivo, y lo que no se hace mientras", () => {
+    const line = previewViabilityLine("o/agenda", {
+      ...base,
+      envRisks: [{ key: "DATABASE_URL", risk: "remote_db" }, { key: "STRIPE_SECRET_KEY", risk: "live_payment_key" }],
+    });
+    expect(line).toContain("la caja de gs la levanta");
+    expect(line).toContain("⚠ La preview de o/agenda usa recursos de PRODUCCIÓN: DATABASE_URL (base remota), STRIPE_SECRET_KEY (llave live)");
+    expect(line).toContain("Lo que escriba, cobre o envíe será real");
+    expect(line).toContain("nada de pruebas que escriban");
+    expect(line).toContain("no se completan pagos");
+  });
+  it("sin riesgos, o con la preview del hosting o apagada, no avisa", () => {
+    expect(previewViabilityLine("o/r", { ...base, envRisks: [] })).not.toContain("PRODUCCIÓN");
+    expect(previewViabilityLine("o/r", { ...base })).not.toContain("PRODUCCIÓN");
+    const risks = [{ key: "DATABASE_URL", risk: "remote_db" as const }];
+    expect(previewViabilityLine("o/r", { ...base, hosting: true, envRisks: risks })).not.toContain("PRODUCCIÓN");
+    expect(previewViabilityLine("o/r", { ...base, off: true, envRisks: risks })).not.toContain("PRODUCCIÓN");
+  });
+  it("envRiskLine con sólo correo no promete reglas de base ni pagos", () => {
+    const line = envRiskLine("o/r", [{ key: "SES_KEY", risk: "real_email" }])!;
+    expect(line).toContain("SES_KEY (correo real)");
+    expect(line).not.toContain("mientras");
+    expect(envRiskLine("o/r", null)).toBeNull();
   });
 });

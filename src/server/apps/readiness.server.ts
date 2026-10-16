@@ -15,6 +15,7 @@
 // cualquier miembro, aunque no tenga GitHub conectado). Se cachea 10 min por repo; cerrar un
 // pedido de ese repo o proteger main lo invalida.
 import { githubApi } from "../connectors/github.server";
+import type { EnvRiskEntry } from "./factory-preview-gate";
 
 export type ReadinessKey =
   | "readme"
@@ -61,6 +62,8 @@ export type RepoFacts = {
   envExampleKeys: string[];
   /** Nombres de las variables guardadas para la preview (null = ninguna). */
   envSavedKeys: string[] | null;
+  /** Cuáles de ésas tocan producción (las clasifica gs; null = gs no lo dijo). */
+  envRisks?: EnvRiskEntry[] | null;
   /** Repo privado en cuenta gratis: GitHub no deja proteger la rama sin Pro/Team. */
   protectionPlanRequired: boolean;
   /** Workflow que despliega a producción en cada push (null = el repo no despliega por Actions). */
@@ -185,13 +188,19 @@ export async function repoReadiness(sub: string, repo: string, opts: { fresh?: b
   // Un fallo al PREGUNTAR (gs desplegándose, red) no es «no hay variables»: se reintenta
   // una vez y, si sigue fallando, este resultado no se cachea (se veían como perdidas).
   let envLookupFailed = false;
-  const envKeysOnce = () => P.gsPreview("env-keys", { repo }).then((r) => (Array.isArray(r?.keys) ? (r.keys as string[]) : null));
-  const envSavedKeys: string[] | null = await envKeysOnce()
+  const envKeysOnce = () =>
+    P.gsPreview("env-keys", { repo }).then((r) => ({
+      keys: Array.isArray(r?.keys) ? (r.keys as string[]) : null,
+      risks: Array.isArray(r?.risks) ? (r.risks as EnvRiskEntry[]) : null,
+    }));
+  const env = await envKeysOnce()
     .catch(() => new Promise((ok) => setTimeout(ok, 800)).then(envKeysOnce))
     .catch(() => {
       envLookupFailed = true;
-      return hit?.facts.envSavedKeys ?? null;
+      return { keys: hit?.facts.envSavedKeys ?? null, risks: hit?.facts.envRisks ?? null };
     });
+  const envSavedKeys: string[] | null = env.keys;
+  const envRisks = env.risks;
   const previews = previewHosting || (previewRunnable && (envExampleKeys.length === 0 || !!envSavedKeys));
   // «Sin preview» en la tarjeta: el dueño decidió no tenerla; no cuenta como pendiente.
   const previewOff = await import("./factory-runs.server").then((R) => R.repoPreviewOff(repo)).catch(() => false);
@@ -229,6 +238,7 @@ export async function repoReadiness(sub: string, repo: string, opts: { fresh?: b
       previewRunnable,
       envExampleKeys,
       envSavedKeys,
+      envRisks,
       protectionPlanRequired: protection === "plan_required",
       deployWorkflow: deploy?.path ?? null,
       ciPath: ci.path,

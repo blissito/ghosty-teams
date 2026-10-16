@@ -133,28 +133,81 @@ export async function applyEvent(
   return updated;
 }
 
+/** El análisis de gs (`ghosty factory runs why`) tal como lo devuelve con `full`. */
+export type RunWhy = {
+  healthy: boolean;
+  category: string;
+  incomplete: string[] | null;
+  note: string | null;
+  why?: {
+    reasons: string[];
+    acceptance?: { criterion: string; [k: string]: unknown }[];
+    category: string;
+    impact: "high" | "medium" | "low";
+    summary: string;
+    criticalStep: { role: string | null; at: string | null; command: string | null; evidence: string } | null;
+    actions: { type: string; text: string }[];
+    source: string;
+    createdAt?: string;
+  };
+};
+
 /**
- * Le pide a gs el análisis del pedido (`/api/v2/factory/why`, firma de partner) y, si no fue sano
- * (atascos, @build de más de 30 min, vueltas, CI rojo, escalado), deja sus 3 líneas en el hilo:
- * qué pasó, el paso crítico y qué cambiar para la próxima. Patrón de Devin Session Insights, que
- * sólo analiza las sesiones «unhealthy». Nunca lanza.
+ * El análisis del pedido en gs (`/api/v2/factory/why`, firma de partner con el workspace). `full`
+ * trae el análisis entero (lo lee Arqui con `factory_run_review`); `refresh` lo rehace. null si gs
+ * no contesta. Nunca lanza.
  */
-export async function postWhyIfUnhealthy(run: Run): Promise<void> {
+export async function fetchRunWhy(runId: number, opts: { full?: boolean; refresh?: boolean } = {}): Promise<RunWhy | null> {
   try {
     const { nativeRuntimeBase, partnerHeaders } = await import("../ghosty-runtime.server");
     const { currentNamespace } = await import("../tenant.server");
     const base = await nativeRuntimeBase();
     const ns = await currentNamespace();
-    if (!base || !ns) return;
-    const body = JSON.stringify({ runId: run.id });
+    if (!base || !ns) return null;
+    const body = JSON.stringify({ runId, ...(opts.full ? { full: true } : {}), ...(opts.refresh ? { refresh: true } : {}) });
     const res = await fetch(`${base}/api/v2/factory/why`, { method: "POST", headers: partnerHeaders(body, ns), body, signal: AbortSignal.timeout(60_000) });
-    if (!res.ok) return;
-    const j = (await res.json()) as { healthy?: boolean; note?: string | null };
-    if (j.healthy || !j.note) return;
+    if (!res.ok) return null;
+    return (await res.json()) as RunWhy;
+  } catch (e) {
+    console.error("[factory] por qué", e);
+    return null;
+  }
+}
+
+/**
+ * Le pide a gs el análisis del pedido y, si no fue sano (atascos, @build de más de 30 min,
+ * vueltas, CI rojo, escalado), deja sus 3 líneas en el hilo: qué pasó, el paso crítico y qué
+ * cambiar para la próxima. Patrón de Devin Session Insights, que sólo analiza las sesiones
+ * «unhealthy». Si se aprobó sin cumplir un criterio del plan, además despierta a @plan con un
+ * postmortem (una vez por pedido). Nunca lanza.
+ */
+export async function postWhyIfUnhealthy(run: Run): Promise<void> {
+  try {
+    const j = await fetchRunWhy(run.id);
+    if (!j || j.healthy || !j.note) return;
     await postInThread(run, "check", j.note);
+    if (j.category === "approved_unmet_criterion") await requestPostmortem(run);
   } catch (e) {
     console.error("[factory] por qué", e);
   }
+}
+
+/**
+ * Se aprobó (o mezcló) sin cumplir un criterio del plan: @plan revisa el pedido con
+ * `factory_run_review` y propone barandales con `factory_suggest`. Una vez por pedido
+ * (`postmortem_requested`). true si lo encargó.
+ */
+export async function requestPostmortem(run: Run): Promise<boolean> {
+  const [seen] = await dbq("SELECT 1 FROM gt_factory_events WHERE run_id = ? AND type = 'postmortem_requested' LIMIT 1", [run.id]).catch(() => []);
+  if (seen) return false;
+  await logEvent(run.id, "postmortem_requested", "plataforma");
+  const [w] = await dbq("SELECT origin FROM gt_agent_wakeups WHERE key LIKE ? AND origin IS NOT NULL AND origin != '' ORDER BY rowid DESC LIMIT 1", [`factory:${run.id}:%`]).catch(() => []);
+  const text = [
+    `Postmortem del pedido #${run.id}: se aprobó sin cumplir un criterio del plan.`,
+    `Lee el análisis con factory_run_review {runId: ${run.id}}, di en 2-3 líneas qué criterio faltó y por qué pasó, y propón con factory_suggest los barandales que lo habrían frenado (setup del repo, reglas de @check, CI o una ficha en docs/agents/).`,
+    "Habla del proceso, nunca culpes a personas. No reabras el pedido ni le encargues trabajo a @build.",
+  ].join("\n");
+  return handoff(run, "plan", run.approvedBy ?? run.requestedBy, "postmortem", text, String(w?.origin ?? ""), "", { keySuffix: ":postmortem", skills: false });
 }
 
 // ── La tarjeta de Tasks sigue al pedido ──────────────────────────────────────
@@ -1600,6 +1653,8 @@ export async function onDeployFailed(
     const prevs = await dbq("SELECT data_json FROM gt_factory_events WHERE run_id = ? AND type = 'deploy_failed'", [run.id]).catch(() => []);
     if (prevs.some((e) => e?.data_json && JSON.parse(String(e.data_json)).sha === failure.sha)) continue;
     await logEvent(run.id, "deploy_failed", null, failure);
+    // El análisis guardado era el de antes del deploy: se rehace para que Arqui no lea el viejo.
+    void fetchRunWhy(run.id, { refresh: true });
   }
 }
 
@@ -1791,8 +1846,13 @@ export async function announcePreviews(): Promise<void> {
             .then((G) => G.publishPreviewDeployment(sub, pr.repo, head.sha, next.url!))
             .then((r) => { if ("error" in r) console.warn(`[factory] preview #${run.id} en el PR: ${r.error}`); })
             .catch(() => {});
-        if (run.status !== "building")
-          await postInThread(run, "build", `🔎 **Preview ${row.preview_sha && !sameSha ? "actualizada" : "lista"}**${next.provider ? ` (${next.provider})` : ""} · [Abrir](${next.url})`);
+        if (run.status !== "building") {
+          // Con variables de producción se dice en el mismo aviso: probarla escribe en lo real (#96).
+          const risks = next.provider ? [] : await P.gsPreview("env-keys", { repo: pr.repo }).then((r) => (Array.isArray(r?.risks) ? r.risks : [])).catch(() => []);
+          const { envRisksText } = await import("./factory-preview-gate");
+          const prod = risks.length ? ` · ⚠ usa prod: ${envRisksText(risks, 3)}` : "";
+          await postInThread(run, "build", `🔎 **Preview ${row.preview_sha && !sameSha ? "actualizada" : "lista"}**${next.provider ? ` (${next.provider})` : ""} · [Abrir](${next.url})${prod}`);
+        }
         // Smoke de acción en cada preview nueva (también tras un push con el PR ya aprobado): un
         // POST con el Origin real. Sólo se avisa si falla (#96, 16-oct).
         if (next.url) {

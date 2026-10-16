@@ -5,11 +5,14 @@
 // de resultados («las pruebas corren solas»), no de GitHub; el detalle técnico y la fuente
 // de cada criterio (OpenSSF Scorecard, agents.md) van en el tooltip.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, Circle, ExternalLink, KeyRound, Loader2, RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
+import { AlertTriangle, Check, Circle, ExternalLink, KeyRound, Loader2, RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
 import { useT } from "../i18n";
 import { prepareRepoFn, repoReadinessFn, savePreviewEnvFn, type ReadinessView } from "../server/apps/readiness";
 import { protectMainFn } from "../server/apps/factory";
 import type { ReadinessKey } from "../server/apps/readiness.server";
+import type { EnvRiskEntry } from "../server/apps/factory-preview-gate";
+
+const ENV_RISK_TEXT: Record<EnvRiskEntry["risk"], string> = { remote_db: "base remota", live_payment_key: "llave live", real_email: "correo real" };
 
 const LEVEL_NAMES: Record<0 | 1 | 2 | 3, string> = {
   0: "Por empezar",
@@ -48,6 +51,8 @@ export function RepoReadiness({ channelId, repo, compact = false, onLevel, autoO
   const [done, setDone] = useState<{ threadUrl: string | null } | null>(null);
   const [envOpen, setEnvOpen] = useState(false);
   const [envText, setEnvText] = useState("");
+  // Lo que gs marcó como producción al guardar: se avisa en seguida, sin esperar la recarga.
+  const [savedRisks, setSavedRisks] = useState<EnvRiskEntry[] | null>(null);
 
   // En un ref: el padre suele pasar una flecha nueva en cada render y, como dependencia,
   // recargaría la revisión en bucle.
@@ -123,6 +128,8 @@ export function RepoReadiness({ channelId, repo, compact = false, onLevel, autoO
     }
   };
 
+  const envRisks = savedRisks ?? r.facts.envRisks ?? [];
+
   const openEnv = () => {
     // Las claves del .env.example ya puestas: el dueño sólo llena valores.
     setEnvText(r.facts.envExampleKeys.map((k) => `${k}=`).join("\n"));
@@ -133,7 +140,8 @@ export function RepoReadiness({ channelId, repo, compact = false, onLevel, autoO
     setBusy("env");
     setError(null);
     try {
-      await savePreviewEnvFn({ data: { channelId, repo, dotenv: envText } });
+      const out = await savePreviewEnvFn({ data: { channelId, repo, dotenv: envText } });
+      setSavedRisks(out.risks);
       setEnvOpen(false);
       setEnvText("");
       await load(true);
@@ -240,9 +248,9 @@ export function RepoReadiness({ channelId, repo, compact = false, onLevel, autoO
                         onClick={() => (envOpen ? setEnvOpen(false) : openEnv())}
                         disabled={!!busy}
                         title={r.facts.envSavedKeys ? `${t("Guardadas")}: ${r.facts.envSavedKeys.join(", ")}` : undefined}
-                        className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border px-2 py-0.5 text-[11px] font-semibold text-ink hover:bg-surface-3 disabled:opacity-50"
+                        className={`inline-flex shrink-0 items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-semibold hover:bg-surface-3 disabled:opacity-50 ${envRisks.length ? "border-red-500/60 text-red-600 dark:text-red-400" : "border-border text-ink"}`}
                       >
-                        <KeyRound size={11} />
+                        {envRisks.length ? <AlertTriangle size={11} /> : <KeyRound size={11} />}
                         {r.facts.envSavedKeys ? t("Reemplazar") : t("Variables")}
                       </button>
                     )}
@@ -259,6 +267,17 @@ export function RepoReadiness({ channelId, repo, compact = false, onLevel, autoO
           );
         })}
       </div>
+
+      {envRisks.length > 0 && !r.facts.previewHosting && (
+        <div className="mt-2 flex gap-1.5 rounded-lg border border-red-500/40 bg-red-500/10 px-2.5 py-2 text-[11px] text-red-700 dark:text-red-300">
+          <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+          <p>
+            <span className="font-semibold">{t("La preview usa recursos de PRODUCCIÓN:")}</span>{" "}
+            {envRisks.map((x) => `${x.key} (${t(ENV_RISK_TEXT[x.risk] ?? x.risk)})`).join(", ")}.{" "}
+            {t("Lo que escriba, cobre o envíe será real. Reemplázalas por variables de prueba.")}
+          </p>
+        </div>
+      )}
 
       {envOpen && (
         <div className="mt-2 rounded-lg border border-border p-2">

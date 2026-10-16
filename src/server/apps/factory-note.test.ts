@@ -29,6 +29,8 @@ const logged: { type: string; data: Run }[] = [];
 let gate: { reason: string; waits: boolean } | null = null;
 let livePreview: { state: string; url: string | null; sha: string | null; error: string | null } = { state: "none", url: null, sha: null, error: null };
 let smokeResult: import("./factory-smoke.server").SmokeResult[] | null = null;
+const whyCalls: { runId: number; opts: Run }[] = [];
+let whyReply: Run | null = null;
 
 vi.mock("./installed.server", () => ({ isInstalled: async () => true }));
 vi.mock("../hooks/generic-alert.server", () => ({ alertWebhookTools: () => [] }));
@@ -75,6 +77,7 @@ vi.mock("./factory-runs.server", () => ({
   prFiles: async () => [],
   parsePrUrl: () => ({ repo: "o/r", number: 8 }),
   runCardFence: () => "",
+  fetchRunWhy: async (runId: number, opts: Run) => (whyCalls.push({ runId, opts }), whyReply),
 }));
 vi.mock("./factory-smoke.server", async (orig) => ({
   ...(await orig<typeof import("./factory-smoke.server")>()),
@@ -109,6 +112,8 @@ beforeEach(() => {
   gate = null;
   livePreview = { state: "none", url: null, sha: null, error: null };
   smokeResult = null;
+  whyCalls.length = 0;
+  whyReply = null;
   byPr = [];
   applied.length = 0;
   sqlLog.length = 0;
@@ -335,6 +340,51 @@ describe("factory_sprint_submit: no encima de otro activo", () => {
     activeSprint = { id: 3, title: "CLI viejo" };
     const r: any = await (await tool("factory_sprint_submit", dest)).handler("beto", { goal: "El CLI", title: "CLI de MailMask", items, replaces: 3 });
     expect(r.ok).toBe(true);
+  });
+});
+
+describe("factory_run_review: el postmortem de un pedido", () => {
+  const why = {
+    healthy: false, category: "approved_unmet_criterion", incomplete: null, note: "🩺 …",
+    why: {
+      reasons: ["criterio «en la preview» sin preview"], category: "approved_unmet_criterion", impact: "high",
+      summary: "Se aprobó sin la preview que el plan exigía.", criticalStep: { role: "check", at: null, command: null, evidence: "probado en la caja" },
+      actions: [{ type: "role_rules", text: "@check no aprueba sin la preview exigida" }], source: "rules",
+      acceptance: [{ criterion: "La reserva funciona en la preview" }],
+    },
+  };
+  it("@plan lee el análisis completo del pedido del hilo", async () => {
+    current = baseRun({ status: "done" });
+    whyReply = why;
+    const r: any = await (await tool("factory_run_review", { channelId: 3, parentId: 99, handle: "plan" })).handler("beto", {});
+    expect(whyCalls).toEqual([{ runId: 10, opts: { full: true, refresh: false } }]);
+    expect(r).toMatchObject({ ok: true, runId: 10, healthy: false, category: "approved_unmet_criterion", impact: "high", summary: "Se aprobó sin la preview que el plan exigía." });
+    expect(r.acceptance).toHaveLength(1);
+    expect(r.note).toContain("factory_suggest");
+  });
+  it("con refresh lo rehace; @check también puede", async () => {
+    current = baseRun({ status: "done" });
+    whyReply = { ...why, healthy: true, category: "none", note: null };
+    const r: any = await (await tool("factory_run_review", { channelId: 3, parentId: 1, handle: "check" })).handler("beto", { runId: 10, refresh: true });
+    expect(whyCalls[0].opts).toEqual({ full: true, refresh: true });
+    expect(r.healthy).toBe(true);
+  });
+  it("@build no la usa", async () => {
+    current = baseRun({ status: "done" });
+    const r: any = await (await tool("factory_run_review", { channelId: 3, parentId: 99, handle: "build" })).handler("beto", {});
+    expect(r.ok).toBe(false);
+    expect(whyCalls).toHaveLength(0);
+  });
+  it("un pedido de un room que no ve no se analiza", async () => {
+    current = baseRun({ channelId: 5, status: "done" });
+    const r: any = await (await tool("factory_run_review", { channelId: 3, parentId: 1, handle: "plan" })).handler("beto", { runId: 10 });
+    expect(r.ok).toBe(false);
+    expect(whyCalls).toHaveLength(0);
+  });
+  it("si gs no contesta, lo dice", async () => {
+    current = baseRun({ status: "done" });
+    const r: any = await (await tool("factory_run_review", { channelId: 3, parentId: 99, handle: "plan" })).handler("beto", {});
+    expect(r).toMatchObject({ ok: false });
   });
 });
 

@@ -129,6 +129,7 @@ export const TOOL_LABELS: Record<string, { ing: string; done: string }> = {
   factory_note: { ing: "Dejando una nota en el pedido", done: "Dejé una nota en el pedido" },
   factory_context: { ing: "Leyendo el pedido", done: "Leí el pedido" },
   factory_room: { ing: "Revisando lo abierto en el room", done: "Revisé lo abierto en el room" },
+  factory_run_review: { ing: "Revisando qué pasó en el pedido", done: "Revisé qué pasó en el pedido" },
   // Ciclo de un PR (GitHub). Llegan como gs_connector:github_*; con etiqueta propia para
   // que no salgan como "Github: mark ready".
   github_pr_checks: { ing: "Revisando CI del PR", done: "Revisé CI del PR" },

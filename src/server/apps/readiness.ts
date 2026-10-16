@@ -138,5 +138,5 @@ export const savePreviewEnvFn = createServerFn({ method: "POST" })
     // Las previews de ese repo que fallaron se vuelven a intentar con las variables nuevas.
     const { retryPreviews } = await import("./factory-runs.server");
     await retryPreviews({ repo: data.repo });
-    return { keys: (out?.keys ?? []) as string[] };
+    return { keys: (out?.keys ?? []) as string[], risks: (Array.isArray(out?.risks) ? out.risks : []) as import("./factory-preview-gate").EnvRiskEntry[] };
   });

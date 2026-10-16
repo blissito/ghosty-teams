@@ -8,6 +8,7 @@ import { notaNombres, type ConnectorTool, type ToolChannel } from "../connectors
 import type { ToolDest } from "../connectors/tool-token.server";
 import { isInstalled } from "./installed.server";
 import { countsLoop, stageLabel } from "./factory-flow";
+import type { EnvRiskEntry } from "./factory-preview-gate";
 
 export async function factoryTools(_sub: string, dest: ToolDest | null): Promise<ConnectorTool[]> {
   if (!(await isInstalled("factory").catch(() => false))) return [];
@@ -1151,7 +1152,16 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
                 : required
                   ? "Todavía no hay preview de este PR y el pedido la exige: vuelve a preguntar en un minuto; no apruebes sin ella."
                   : "Todavía no hay preview de este PR: vuelve a preguntar en un minuto o revisa con el diff y las pruebas.";
-        return { ok: true, ...p, required, note };
+        // Variables de producción en la preview: lo que @check escriba o cobre ahí será real.
+        const prodRisks = run.repo && p.state !== "off" ? await previewEnvRisks(run.repo).catch(() => []) : [];
+        const { envRisksText } = await import("./factory-preview-gate");
+        const prodNote = prodRisks.length
+          ? ` ⚠ Esta preview usa PRODUCCIÓN (${envRisksText(prodRisks)}).` +
+            (prodRisks.some((x) => x.risk === "remote_db") ? " No hagas pruebas que escriban (crear, editar, borrar): pruébalo leyendo y decláralo como riesgo." : "") +
+            (prodRisks.some((x) => x.risk === "live_payment_key") ? " No completes pagos." : "") +
+            (prodRisks.some((x) => x.risk === "real_email") ? " No dispares envíos de correo a direcciones reales." : "")
+          : "";
+        return { ok: true, ...p, required, ...(prodRisks.length ? { prodRisks } : {}), note: note + prodNote };
       },
     },
     {
@@ -1345,6 +1355,50 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
       },
     },
     {
+      name: "factory_run_review",
+      description:
+        "Sólo @plan y @check. Lectura. El POSTMORTEM de un pedido (el mismo análisis de `ghosty factory runs why`): si fue sano, " +
+        "categoría (p. ej. approved_unmet_criterion = se aprobó sin cumplir un criterio del plan), criterios incumplidos, el paso crítico con " +
+        "evidencia, señales (atascos, vueltas, CI rojo) y acciones sugeridas. Úsala ante «¿qué pasó con el #N?», un pedido que salió mal o una alerta. " +
+        "Sin argumentos: el pedido de este hilo. `refresh: true` lo rehace (tras un deploy o algo nuevo en la bitácora).",
+      inputSchema: {
+        type: "object",
+        properties: {
+          runId: { type: "number", description: "Id del PEDIDO, no el número del PR" },
+          pr: { type: "string", description: "Número o URL del PR de GitHub" },
+          refresh: { type: "boolean", description: "Rehacer el análisis en vez de leer el guardado" },
+        },
+      },
+      handler: async (sub, a) => {
+        const role = dest?.handle ?? "";
+        if (role !== "plan" && role !== "check") return { ok: false, error: "sólo @plan y @check revisan pedidos pasados" };
+        const run =
+          a.pr != null && a.pr !== ""
+            ? await runOfPr(dest, sub, a.pr)
+            : a.runId != null
+              ? await resolveNoteRun(dest, sub, a.runId)
+              : ((await runOf(dest, undefined)) ?? (await runsMentionedInThread(dest, sub))[0] ?? null);
+        if (!run) return { ok: false, error: "no encuentro ese pedido en los rooms que ves. Pasa `runId` (el #N del pedido) o `pr`, o usa factory_room para listarlos." };
+        const R = await import("./factory-runs.server");
+        const j = await R.fetchRunWhy(run.id, { full: true, refresh: a.refresh === true });
+        if (!j) return { ok: false, error: "el análisis no está disponible ahora (gs no contestó); vuelve a intentarlo en un minuto" };
+        const { stageLabel } = await import("./factory-flow");
+        return {
+          ok: true,
+          runId: run.id,
+          title: run.title,
+          stage: stageLabel(run.status),
+          healthy: j.healthy,
+          category: j.category,
+          ...(j.incomplete?.length ? { incomplete: j.incomplete, warning: "faltan turnos de esos roles: el análisis no es confiable" } : {}),
+          ...(j.why ?? {}),
+          note: j.healthy
+            ? "Pedido sano: no hay barandal que proponer."
+            : "Di en 2-3 líneas qué pasó y propón con factory_suggest los barandales que lo habrían frenado (setup del repo, reglas de @check, CI, ficha en docs/agents/). Habla del proceso, nunca de personas.",
+        };
+      },
+    },
+    {
       name: "factory_room",
       description:
         "Lectura. Todo lo de la fábrica en este room: pedidos abiertos y los cerrados de los últimos 7 días (etapa, PR, última actividad) " +
@@ -1380,6 +1434,21 @@ export function findingsText(raw: unknown): string {
 
 /** ¿Este turno de @check es el del crítico del plan? Pedido del hilo en `plan_review` con su
  *  versión vigente pendiente de crítica. */
+/** Las variables de la preview que gs marcó como producción (nombre + etiqueta, nunca el valor). */
+async function previewEnvRisks(repo: string): Promise<EnvRiskEntry[]> {
+  const P = await import("./preview.server");
+  const r = await P.gsPreview("env-keys", { repo }).catch(() => null);
+  return Array.isArray(r?.risks) ? (r.risks as EnvRiskEntry[]) : [];
+}
+
+/** El aviso de producción para @check (crítico y revisor). null = nada que avisar. */
+async function previewRiskLine(repo: string): Promise<string | null> {
+  const R = await import("./factory-runs.server");
+  if (await R.repoPreviewOff(repo)) return null;
+  const { envRiskLine } = await import("./factory-preview-gate");
+  return envRiskLine(repo, await previewEnvRisks(repo));
+}
+
 /** La viabilidad de la preview del repo para el turno de @plan (con el GitHub de quien conectó el repo). */
 async function planPreviewLine(dest: ToolDest | null, repo: string): Promise<string | null> {
   if (!dest?.channelId) return null;
@@ -1397,6 +1466,7 @@ async function planPreviewLine(dest: ToolDest | null, repo: string): Promise<str
     runnable: r.facts.previewRunnable,
     envExampleKeys: r.facts.envExampleKeys,
     envSavedKeys: r.facts.envSavedKeys,
+    envRisks: r.facts.envRisks,
   });
 }
 
@@ -1464,6 +1534,11 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
       if (h === "plan") {
         // Si la preview es viable se sabe al planear, no tras el build (#96, 16-oct).
         const line = await planPreviewLine(dest, ft.repo).catch(() => null);
+        if (line) parts.push(line);
+      }
+      if (h === "check") {
+        // El crítico y el revisor: si la preview toca producción, no se prueba escribiendo en ella.
+        const line = await previewRiskLine(ft.repo).catch(() => null);
         if (line) parts.push(line);
       }
       if (!ft.setup && h === "plan")
@@ -1549,7 +1624,7 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
   }
   // Misma frase que Tasks: tenerlas y no llamarlas es el otro modo de falla.
   parts.push(
-    "Tus tools de la fábrica (factory_plan_submit, factory_plan_critique, factory_build_done, factory_check_verdict, factory_status, factory_close, factory_ci_starter, factory_repo_prep, factory_preview, factory_sprint_submit, factory_note, factory_message, factory_context, factory_room) " +
+    "Tus tools de la fábrica (factory_plan_submit, factory_plan_critique, factory_build_done, factory_check_verdict, factory_status, factory_close, factory_ci_starter, factory_repo_prep, factory_preview, factory_sprint_submit, factory_note, factory_message, factory_context, factory_room, factory_run_review) " +
       "ya están disponibles en este turno: LLÁMALAS para cerrar tu paso; sin ellas la estafeta no avanza." +
       notaNombres(toolChannel),
   );
