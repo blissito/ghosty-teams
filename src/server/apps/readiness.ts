@@ -135,8 +135,8 @@ export const savePreviewEnvFn = createServerFn({ method: "POST" })
     const out = await gsPreview("env-set", { repo: data.repo, dotenv });
     const { invalidateReadiness } = await import("./readiness.server");
     invalidateReadiness(data.repo);
-    // Las previews de ese repo que fallaron se vuelven a intentar con las variables nuevas.
+    // Las previews de ese repo (fallidas y vivas) se reconstruyen con las variables nuevas.
     const { retryPreviews } = await import("./factory-runs.server");
-    await retryPreviews({ repo: data.repo });
+    await retryPreviews({ repo: data.repo, envChanged: true });
     return { keys: (out?.keys ?? []) as string[], risks: (Array.isArray(out?.risks) ? out.risks : []) as import("./factory-preview-gate").EnvRiskEntry[] };
   });

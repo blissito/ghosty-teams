@@ -15,6 +15,8 @@ vi.mock("../../dbq.server", () => ({
     if (sql.includes("type = 'postmortem_requested'")) return postmortemDone ? [{ 1: 1 }] : [];
     if (sql.startsWith("INSERT INTO gt_factory_events") && args[2] === "postmortem_requested") postmortemDone = true;
     if (sql.includes("FROM gt_agent_wakeups")) return [{ origin: "https://denik.teams.ghosty.studio" }];
+    if (sql.startsWith("UPDATE gt_factory_runs SET preview_state = 'pending'"))
+      return [{ id: 106, channel_id: 14, root_msg_id: 5000, topic: "general", title: "Login", status: "checking", plan_version: 1, loops: 0, requested_by: "ana", pr_url: "https://github.com/o/r/pull/9" }];
     return [];
   },
 }));
@@ -39,7 +41,7 @@ vi.mock("../wakeups.server", () => ({
   armWakeups: () => {},
 }));
 
-import { fetchRunWhy, postWhyIfUnhealthy, type Run } from "./factory-runs.server";
+import { fetchRunWhy, postWhyIfUnhealthy, retryPreviews, type Run } from "./factory-runs.server";
 
 const run: Run = {
   id: 96, channelId: 14, rootMsgId: 3970, topic: "general", title: "React Router 8", status: "done", planVersion: 1, loops: 0,
@@ -83,5 +85,24 @@ describe("postmortem automático", () => {
     expect(j?.why?.summary).toBe("sano");
     await fetchRunWhy(96);
     expect(fetches[1].body).toEqual({ runId: 96 });
+  });
+});
+
+describe("variables nuevas: las previews vivas se reconstruyen (#106)", () => {
+  it("con envChanged entran lista y construyéndose de pedidos abiertos, y se avisa en el hilo", async () => {
+    expect(await retryPreviews({ repo: "o/r", envChanged: true })).toBe(1);
+    const sql = sqls.find((q) => q.sql.startsWith("UPDATE gt_factory_runs SET preview_state = 'pending'"))!.sql;
+    expect(sql).toContain("'ready','pending'");
+    expect(sql).toContain("status NOT IN ('done','cancelled')");
+    expect(sql).toContain("preview_sha = NULL");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(posts.some((p) => p.includes("🔁") && p.includes("variables nuevas"))).toBe(true);
+  });
+  it("«Reintentar» sigue tocando sólo las fallidas, sin aviso", async () => {
+    await retryPreviews({ runId: 106 });
+    const sql = sqls.find((q) => q.sql.startsWith("UPDATE gt_factory_runs SET preview_state = 'pending'"))!.sql;
+    expect(sql).not.toContain("'ready'");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(posts).toHaveLength(0);
   });
 });
