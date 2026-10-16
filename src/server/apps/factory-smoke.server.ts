@@ -33,23 +33,39 @@ function previewAuth(previewUrl: string): { origin: string; cookie: string | nul
   return { origin: u.origin, cookie: k ? `gs_preview=${k}` : null };
 }
 
-async function hit(url: string, init: RequestInit): Promise<{ status: number | null; body: string }> {
+/** Cómo sale cada petición. `url` = a dónde llegó tras redirecciones (el GET de prod las sigue). */
+export type SmokeHit = (
+  url: string,
+  init: { method?: string; headers?: Record<string, string>; body?: string },
+) => Promise<{ status: number | null; body: string; url?: string }>;
+
+/** La preview es nuestra (`*.preview.ghosty.page`): fetch directo, sin seguir saltos. */
+const directHit: SmokeHit = async (url, init) => {
   const res = await fetch(url, { ...init, redirect: "manual", signal: AbortSignal.timeout(20_000) }).catch(() => null);
   if (!res) return { status: null, body: "" };
   return { status: res.status, body: await res.text().catch(() => "") };
-}
+};
+
+/** Producción es una URL del dueño: pasa por el guard anti-SSRF de los monitores. */
+export const guardedHit: SmokeHit = async (url, init) => {
+  const { guardedRequest } = await import("../connectors/net-guard.server");
+  return guardedRequest(url, { ...init, timeoutMs: 20_000 }).catch(() => ({ status: null, body: "" }));
+};
 
 /**
- * Un POST por ruta contra la preview. `paths` = las de `smoke:` en `.ghosty/factory.md`; sin
+ * Un POST por ruta contra la preview (o contra producción, con `guardedHit` y sin `?k=`). `paths` = las de `smoke:` en `.ghosty/factory.md`; sin
  * declarar, `/`. Sólo apps de React Router (la página trae su contexto) o rutas declaradas: a una
  * app desconocida no se le manda un POST a ciegas. null = no hubo nada que probar.
  */
-export async function actionSmoke(previewUrl: string, paths: string[]): Promise<SmokeResult[] | null> {
-  const { origin, cookie } = previewAuth(previewUrl);
+export async function actionSmoke(previewUrl: string, paths: string[], hit: SmokeHit = directHit): Promise<SmokeResult[] | null> {
+  const auth = previewAuth(previewUrl);
+  const cookie = auth.cookie;
   const declared = paths.length > 0;
   const out: SmokeResult[] = [];
   for (const path of declared ? paths : ["/"]) {
-    const page = await hit(origin + path, { headers: cookie ? { cookie } : {} });
+    const page = await hit(auth.origin + path, { headers: cookie ? { cookie } : {} });
+    // `denik.me` → `https://www.denik.me/`: el envío va al origen donde de verdad vive la app.
+    const origin = page.url ? new URL(page.url).origin : auth.origin;
     const reactRouter = /__reactRouterContext|__remixContext/.test(page.body);
     if (!reactRouter && !declared) continue;
     const target = reactRouter ? reactRouterDataPath(path) : path;
@@ -64,14 +80,14 @@ export async function actionSmoke(previewUrl: string, paths: string[]): Promise<
 }
 
 /** El smoke del pedido con las rutas que declara el repo. Nunca lanza: null si no se pudo correr. */
-export async function runActionSmoke(previewUrl: string, repo: string | null, sub: string): Promise<SmokeResult[] | null> {
+export async function runActionSmoke(previewUrl: string, repo: string | null, sub: string, hit?: SmokeHit): Promise<SmokeResult[] | null> {
   try {
     let paths: string[] = [];
     if (repo) {
       const { repoTeamFile } = await import("./factory-team.server");
       paths = (await repoTeamFile(repo, sub).catch(() => null))?.smoke ?? [];
     }
-    return await actionSmoke(previewUrl, paths);
+    return await actionSmoke(previewUrl, paths, hit);
   } catch (e) {
     console.warn(`[factory] smoke ${previewUrl}: ${(e as Error).message}`);
     return null;

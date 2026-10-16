@@ -9,7 +9,9 @@
 //      se espera (tope 30 min). Uno en failure/cancelled → aviso en el hilo con la liga al log y
 //      un `deploy_failed` en la bitácora del pedido (`onDeployFailed`).
 //   3. Todo verde → smoke: GET al `homepage` del repo y a las URLs de uptime del room (15 s).
-//      Falla un 5xx, un timeout o un 404 en `/`.
+//      Falla un 5xx, un timeout o un 404 en `/`. Luego el smoke de ACCIÓN de la preview
+//      (`factory-smoke.server.ts`) contra el `homepage`: un POST con `Origin` a la ruta de datos.
+//      En el #96 de Deník los GET daban 200 y todo envío 400; prod quedó 18 h roto sin aviso.
 //   4. Sin workflows en ese sha (repo sin deploy por Actions): sólo la smoke, a los 3 min.
 import { dbq } from "../../dbq.server";
 
@@ -57,6 +59,17 @@ export function smokeVerdict(url: string, outcome: SmokeOutcome): string | null 
   }
   if (outcome.status === 404 && root) return "HTTP 404";
   return null;
+}
+
+/**
+ * El smoke de acción contra producción: mismas rutas (`smoke:` del repo) y veredicto que en la
+ * preview, por el guard de red. null = pasó o no había qué probar (sin `homepage`, o una app que
+ * no es de React Router y no declaró rutas); si no, una línea por envío rechazado.
+ */
+export async function prodActionSmoke(homepage: string | null, repo: string, sub: string): Promise<string | null> {
+  if (!homepage) return null;
+  const S = await import("./factory-smoke.server");
+  return S.smokeFailures(await S.runActionSmoke(homepage, repo, sub, S.guardedHit)) || null;
 }
 
 /** De quién son las credenciales de GitHub del repo en ese room. */
@@ -229,10 +242,20 @@ async function step(row: Row): Promise<void> {
       if (why) fails.push(`${U.urlLabel(url)} (${why})`);
     }),
   );
+  const deploy = verdict.kind === "green" ? "se desplegó" : "entró con merge";
   if (fails.length) {
-    const deploy = verdict.kind === "green" ? "se desplegó" : "entró con merge";
     await postThread(row, `⚠️ #${row.pr} ${deploy}, pero producción no responde bien: ${fails.join(", ")}`);
     return finish(row, "failed", `smoke: ${fails.join(", ")}`);
+  }
+  // Las páginas cargan; ahora que los envíos también pasen. Sin rollback automático: avisa y sugiere.
+  const actionFails = await prodActionSmoke(homepage, row.repo, row.sub);
+  if (actionFails) {
+    await postThread(
+      row,
+      `⚠️ #${row.pr} ${deploy}, pero los envíos fallan en producción:\n${actionFails}\n` +
+        `Las páginas cargan, pero formularios y acciones no. Si no se arregla en minutos, revierte el PR (botón «Revert» en GitHub).`,
+    );
+    return finish(row, "failed", `smoke: ${actionFails.replace(/\n/g, "; ")}`);
   }
 
   // Todo bien: ✅ en el aviso del merge, renglón en la bitácora del pedido y, si hubo deploy, «🚀 en producción».

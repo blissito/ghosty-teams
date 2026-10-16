@@ -272,17 +272,36 @@ export async function assertMonitorUrl(raw: string): Promise<string> {
  */
 export async function guardedGet(raw: string, opts: { timeoutMs?: number } = {}): Promise<{ status: number; url: string; ms: number }> {
   const t0 = Date.now();
-  const signal = AbortSignal.timeout(opts.timeoutMs ?? 15_000);
+  const r = await guardedRequest(raw, { timeoutMs: opts.timeoutMs ?? 15_000, readBody: false });
+  return { status: r.status, url: r.url, ms: Date.now() - t0 };
+}
+
+/**
+ * Lo mismo que `guardedGet` con método y cuerpo (el smoke de acción en producción manda un POST
+ * con `Origin`). Sólo el GET sigue redirecciones: un 3xx a un POST ya es la respuesta que se
+ * juzga, y seguirlo sería reenviar el envío a otro host. Cuerpo capado a `maxBytes`.
+ */
+export async function guardedRequest(
+  raw: string,
+  opts: { method?: string; headers?: Record<string, string>; body?: string; timeoutMs?: number; maxBytes?: number; readBody?: boolean } = {},
+): Promise<{ status: number; url: string; body: string }> {
+  const { method = "GET", headers = {}, body, timeoutMs = 15_000, maxBytes = 200_000, readBody = true } = opts;
+  const signal = AbortSignal.timeout(timeoutMs);
   let url = await assertMonitorUrl(raw);
   for (let hop = 0; hop <= 5; hop++) {
-    const res = await fetch(url, { redirect: "manual", signal, headers: { "user-agent": "GhostyTeams-Uptime/1.0" } });
-    await res.body?.cancel().catch(() => {});
+    const res = await fetch(url, { method, body, redirect: "manual", signal, headers: { "user-agent": "GhostyTeams-Uptime/1.0", ...headers } });
     const location = res.headers.get("location");
-    if (res.status >= 300 && res.status < 400 && location) {
+    if (method === "GET" && res.status >= 300 && res.status < 400 && location) {
+      await res.body?.cancel().catch(() => {});
       url = await assertMonitorUrl(new URL(location, url).toString());
       continue;
     }
-    return { status: res.status, url, ms: Date.now() - t0 };
+    if (!readBody) {
+      await res.body?.cancel().catch(() => {});
+      return { status: res.status, url, body: "" };
+    }
+    const text = await res.text().catch(() => "");
+    return { status: res.status, url, body: text.slice(0, maxBytes) };
   }
   throw new Error("demasiadas redirecciones");
 }
