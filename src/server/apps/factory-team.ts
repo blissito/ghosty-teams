@@ -37,8 +37,8 @@ export function knowledgeLine(repo: string, files: string[]): string {
 
 export type RoleSpec = { agent?: string; model?: string };
 
-/** Servicios que la caja de trabajo `dev` trae instalados y apagados. */
-export const SETUP_SERVICES = ["postgres", "redis"] as const;
+/** Servicios que la caja de trabajo `dev` trae instalados y apagados (mongo desde el 16-oct, por Deník). */
+export const SETUP_SERVICES = ["postgres", "redis", "mongo"] as const;
 export type SetupService = (typeof SETUP_SERVICES)[number];
 
 /**
@@ -152,7 +152,7 @@ const SAFE_SCRIPT = /^[\w./-]{1,120}$/;
  * El bloque `setup:` (renglones ya indentados):
  *
  *   setup:
- *     services: [postgres, redis]     # o «postgres, redis»
+ *     services: [postgres, redis]     # o «postgres, redis»; también mongo (alias mongodb)
  *     db: fruteria
  *     script: .ghosty/setup.sh
  *     env:
@@ -187,6 +187,7 @@ export function parseSetup(lines: string[]): RepoSetup | undefined {
         .replace(/^\[|\]$/g, "")
         .split(",")
         .map((s) => unquote(s).toLowerCase().replace(/@.*$/, ""))
+        .map((s) => (s === "mongodb" ? "mongo" : s))
         .filter((s): s is SetupService => (SETUP_SERVICES as readonly string[]).includes(s));
       out.services = [...new Set(out.services)];
     } else if (key === "db") {

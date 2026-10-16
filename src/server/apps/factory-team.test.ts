@@ -76,7 +76,7 @@ describe("setup: en .ghosty/factory.md", () => {
   const file = `---
 build: { agent: Constructor }
 setup:
-  services: [postgres, redis, mongo]   # mongo no viene en la caja: se ignora
+  services: [postgres, redis, mysql]   # mysql no viene en la caja: se ignora
   db: fruteria
   script: ./.ghosty/setup.sh
   env:
@@ -99,6 +99,11 @@ Convenciones.
     expect(t.roles.build?.agent).toBe("Constructor");
     expect(t.roles.check?.model).toBe("flash");
     expect(t.notes).toBe("Convenciones.");
+  });
+
+  it("acepta mongo y su alias mongodb (una sola vez)", () => {
+    const t = parseTeamFile("---\nsetup:\n  services: [mongodb, mongo@8]\n  db: agenda\n---\n");
+    expect(t.setup).toEqual({ services: ["mongo"], db: "agenda", env: {} });
   });
 
   it("acepta la lista sin corchetes y descarta nombres peligrosos", () => {
