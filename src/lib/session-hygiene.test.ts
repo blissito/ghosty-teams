@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { turnosDesdeElClear, MARCA_CLEAR, TURNOS_LARGA } from "./session-hygiene";
+import { turnosDesdeElClear, compactacionesDesdeElClear, continuacionTrasFresca, MARCA_CLEAR, MARCA_FRESCA, TURNOS_LARGA } from "./session-hygiene";
 
 const humano = (body = "hola") => ({ agent_handle: null, body });
 const agente = (body = "respuesta") => ({ agent_handle: "ghosty", body });
@@ -39,5 +39,32 @@ describe("turnosDesdeElClear", () => {
     const flujo = (n: number) => Array.from({ length: n }, () => agente());
     expect(turnosDesdeElClear(flujo(44))).toBeGreaterThanOrEqual(TURNOS_LARGA);
     expect(turnosDesdeElClear(flujo(15))).toBeLessThan(TURNOS_LARGA);
+  });
+});
+
+describe("memoria fresca", () => {
+  const p = (body: string) => ({ agent_handle: "ghosty", sender_sub: "u1", body });
+  const a = (body: string) => ({ agent_handle: "ghosty", sender_sub: null, body });
+  const fresca = () => a(MARCA_FRESCA);
+
+  it("cuenta las compactaciones desde el último ancla", () => {
+    const tools = '```gt-tools\n{"tools":[{"label":"Compacté la memoria","status":"done"}]}\n```\nlisto';
+    expect(compactacionesDesdeElClear([a(tools), clear(), a(tools), a("x"), a(tools)])).toBe(2);
+    expect(compactacionesDesdeElClear([a(tools), fresca(), a("x")])).toBe(0);
+  });
+
+  it("la burbuja de memoria fresca reinicia el contador de turnos", () => {
+    expect(turnosDesdeElClear([a("1"), a("2"), fresca(), p("hola"), a("3")])).toBe(1);
+  });
+
+  it("lleva la cola de lo hablado sólo en el primer turno después", () => {
+    const flow = [a("viejo"), clear(), p("hazme el contrato"), a("```gt-tools\n{}\n```\nAquí va el contrato"), fresca(), p("ajusta la cláusula 3")];
+    const c = continuacionTrasFresca(flow);
+    expect(c).toContain("Persona: hazme el contrato");
+    expect(c).toContain("Tú: Aquí va el contrato");
+    expect(c).not.toContain("viejo");
+    expect(c).not.toContain("gt-tools");
+    expect(continuacionTrasFresca([...flow, a("listo, ajustada")])).toBe("");
+    expect(continuacionTrasFresca([a("x"), clear(), p("hola")])).toBe("");
   });
 });

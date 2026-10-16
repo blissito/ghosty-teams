@@ -973,6 +973,11 @@ export const postMessageAs = createServerOnlyFn(async (me: SessionMe | null, dat
     const groupId = await agentGroupId(ag ?? { handle: r.handle }, await fleetSuffixFor(r.handle, channel, r.parent, r.fleetThread));
     if (turns.hasOwnInflight(groupId, me?.sub)) {
       r.steered = true;
+      // El steer también lleva su 👀: sin él, lo que la persona escribe a media respuesta
+      // no tenía ninguna señal y lo repetía (descti, 5-oct: «¿ya tienes el cuadro?» ×3).
+      // El ✅ lo pone `onSteerAnswered` / el `ackEnd` del cierre del turno anfitrión.
+      const { ackStart } = await import("./agent-ack.server");
+      await ackStart(ns, id, r.handle);
       continue;
     }
     const { id: shellId } = await db.postAgent(channel.id, r.parent, "", "msg", r.handle, ag?.name ?? "Ghosty", topic, ag?.avatar ?? "");
@@ -1923,8 +1928,13 @@ export const askAgentAs = createServerOnlyFn(async (me: SessionMe | null, data: 
     // ⚠️ ANTES del aviso de fin de turno: la barra resume lo que se entregó, y con el
     // hueco ya escrito la burbuja y el resumen cuentan lo mismo.
     const { warnIfNothingDelivered } = await import("./delivery-gap");
-    await warnIfNothingDelivered(id, (body) =>
-      bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body }),
+    await warnIfNothingDelivered(
+      id,
+      (body) => bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body }),
+      // Detenido por la persona: no se reabre nada.
+      !controller.signal.aborted && poster?.sub
+        ? { ns, groupId, sub: poster.sub, dest: destDelTurno, origin: origenDelTurno }
+        : null,
     ).catch(() => {});
     await avisarFinDeTurno({
       ns, messageId: id, channelId: channel.id, channelSlug: channel.slug,

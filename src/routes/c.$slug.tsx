@@ -2,7 +2,7 @@ import { RunBar } from "../components/chat/RunBar";
 import { forwardRef, Fragment, useCallback, useContext, useEffect, useImperativeHandle, useMemo, useReducer, useRef, useState } from "react";
 import { IDLE_MS } from "../lib/presence";
 import { shouldChime } from "../lib/chime";
-import { turnosDesdeElClear, TURNOS_LARGA } from "../lib/session-hygiene";
+import { turnosDesdeElClear, compactacionesDesdeElClear, TURNOS_LARGA } from "../lib/session-hygiene";
 import { createPortal } from "react-dom";
 import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
@@ -7969,7 +7969,10 @@ function DmView({
   // turno siguiente, y se leería como un mensaje de plataforma con la cara del agente. Es la
   // misma familia de fallo que el aviso de entrega que el usuario acabó copiando.
   const turnosLargos = isAgentDm ? turnosDesdeElClear(flow) : 0;
-  const sugerirClear = turnosLargos >= TURNOS_LARGA;
+  // Una compactación ya dice que se hizo larga: ese turno y los siguientes van más lentos
+  // (descti, oct-2026: 1 de cada 3 turnos de los DMs largos compactaba).
+  const compactaciones = isAgentDm ? compactacionesDesdeElClear(flow) : 0;
+  const sugerirClear = turnosLargos >= TURNOS_LARGA || compactaciones >= 1;
   // ⚠️ Depende del LARGO del flujo, no sólo del dmId. Pidiéndolo una vez al abrir, el
   // contador se congelaba: el ícono seguía en ámbar aunque la escalada ya hubiera
   // caducado, y sólo se enteraba al recargar la página. Cada respuesta del agente hace
@@ -8039,8 +8042,8 @@ function DmView({
             onClick={() => setPidiendoClear(true)}
             title={
               sugerirClear
-                ? t("Esta conversación lleva {n} respuestas sin borrar memoria. Cada turno relee todo lo anterior: borrarla abarata los siguientes.", { n: turnosLargos })
-                : t("Borrar memoria de la conversación")
+                ? t("Esta conversación ya es larga: respondo más lento. Puedo seguir con memoria fresca conservando lo último.")
+                : t("Memoria de la conversación")
             }
             className={`grid h-11 w-11 shrink-0 place-items-center rounded-lg transition md:h-9 md:w-9 ${
               // Ámbar, el mismo lenguaje que ya usa el contador de la escalada. No es un
@@ -8135,13 +8138,19 @@ function DmView({
           todo el contexto de la conversación. Sustituye a `window.confirm`, que no se
           puede estilar y no distingue lo peligroso de lo rutinario. */}
       {pidiendoClear && (
+        // Lo recomendado (Enter) es la memoria fresca: reinicia la sesión pero el siguiente
+        // turno arranca con lo último que hablaron. Borrar todo queda como segunda salida.
         <ConfirmModal
-          title={t("Borrar memoria de la conversación")}
-          body={t("{name} empezará de cero: pierde todo el contexto de esta conversación. Los mensajes que ya están escritos se quedan. No se puede deshacer.", { name: title })}
-          confirmLabel={t("Borrar memoria")}
-          danger
+          title={t("Memoria de la conversación")}
+          body={t("Con memoria fresca, {name} responde más rápido y conserva lo último que hablaron. Borrar todo lo hace empezar de cero. Los mensajes escritos se quedan en los dos casos.", { name: title })}
+          confirmLabel={t("Seguir con memoria fresca")}
           onCancel={() => setPidiendoClear(false)}
-          onConfirm={async () => { await clearDmAgentFn({ data: { id: dmId } }).catch(() => {}); setPidiendoClear(false); }}
+          onConfirm={async () => { await clearDmAgentFn({ data: { id: dmId, keep: true } }).catch(() => {}); setPidiendoClear(false); }}
+          secondary={{
+            label: t("Borrar todo"),
+            danger: true,
+            onClick: async () => { await clearDmAgentFn({ data: { id: dmId } }).catch(() => {}); setPidiendoClear(false); },
+          }}
         />
       )}
     </section>

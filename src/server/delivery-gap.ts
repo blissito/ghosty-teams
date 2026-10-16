@@ -57,9 +57,10 @@ const AMBIGUOS = [0, 4];
  *  ⚠️ «tarjeta» entró el 2026-08-31 y no es un sustantivo cualquiera: es la palabra con la
  *  que el agente afirma en falso. «Ahí va, en la tarjeta de arriba» apunta a la tarjeta de
  *  descarga que la plataforma pinta — o sea, afirma algo COMPROBABLE sobre nuestra propia
- *  UI, y en ese caso la tarjeta no existía. */
+ *  UI, y en ese caso la tarjeta no existía.
+ *  «Excel» y «Word» entraron el 2026-10-15: en descti son lo que más se pide. */
 const ENTREGABLE =
-  /\b(archivo|imagen|im[aá]genes|foto|fotos|captura|gr[aá]fica|gr[aá]fico|diagrama|tabla|tarjeta|hoja|documento|etiqueta|logo|portada|banner|cartel|cat[aá]logo|presentaci[oó]n|cotizaci[oó]n|factura|video|audio|nota de voz|liga|enlace|link|pdf|docx?|xlsx?|pptx?|png|jpe?g|svg|zip|csv)\b/i;
+  /\b(archivo|imagen|im[aá]genes|foto|fotos|captura|gr[aá]fica|gr[aá]fico|diagrama|tabla|tarjeta|hoja|documento|etiqueta|logo|portada|banner|cartel|cat[aá]logo|presentaci[oó]n|cotizaci[oó]n|factura|video|audio|nota de voz|liga|enlace|link|pdf|docx?|xlsx?|pptx?|excel|word|png|jpe?g|svg|zip|csv)\b/i;
 
 /** Un anuncio en FUTURO no es una entrega. «En cuanto termine te la mando en un zip» es
  *  la frase correcta de un encargo asíncrono (montaje de video, audio de YouTube): el
@@ -107,7 +108,7 @@ export const GAP_MARK = "⚠️ Este mensaje anuncia un archivo y no llegó ning
  * puede entregar por tarjeta sin que el texto lleve una sola URL, y avisar ahí sería
  * decirle a la persona que falta algo que tiene delante.
  */
-export function deliveryGapNotice(body: string, tieneAdjunto: boolean): string {
+export function deliveryGapNotice(body: string, tieneAdjunto: boolean, reintento = false): string {
   if (tieneAdjunto) return "";
   const texto = (body ?? "").trim();
   if (!texto) return "";
@@ -125,8 +126,29 @@ export function deliveryGapNotice(body: string, tieneAdjunto: boolean): string {
   //
   // Ahora dice QUÉ pasó y QUÉ hacer, sin una sola ruta ni nada que invite a copiarse. La
   // instrucción técnica vive en `deliveryGapHint`, que sí va dirigida al agente.
-  return `${GAP_MARK} Se lo hice notar al agente: pídeselo de nuevo y debería entregarlo.`;
+  // Con reintento automático no se le pide nada a la persona: la plataforma ya le abrió al
+  // agente un turno para entregarlo (descti, 4-oct: el aviso pedía repetir y nadie lo hizo).
+  return reintento
+    ? `${GAP_MARK} Ya se lo pedí otra vez al agente; en un momento lo entrega aquí.`
+    : `${GAP_MARK} Se lo hice notar al agente: pídeselo de nuevo y debería entregarlo.`;
 }
+
+/** Prefijo de la clave del despertador que reintenta la entrega. Uno por burbuja, nunca encadenado. */
+export const GAP_RETRY_PREFIX = "gap:";
+
+/** Lo que el despertador del reintento le dice al agente (el `HUECO_HINT` llega aparte, solo). */
+export const GAP_RETRY_TEXT =
+  "🔁 La plataforma comprobó que tu respuesta anterior anunció un archivo que no llegó. " +
+  "Entrégalo ahora, sin repetir lo que ya explicaste: una línea y el archivo.";
+
+/** Con qué reabrir el turno del agente para que entregue lo que prometió. */
+export type GapRetry = {
+  ns: string;
+  groupId: string;
+  sub: string;
+  dest: import("./connectors/tool-token.server").ToolDest;
+  origin: string;
+};
 
 /**
  * Lo MISMO, dicho al AGENTE en el turno siguiente.
@@ -204,6 +226,7 @@ export async function deliveryGapHint(
 export async function warnIfNothingDelivered(
   messageId: number,
   publish: (body: string) => void,
+  retry?: GapRetry | null,
 ): Promise<void> {
   const db = await import("../db.server");
   const msg = await db.getMessage(messageId);
@@ -227,8 +250,24 @@ export async function warnIfNothingDelivered(
     `SELECT 1 FROM gc_messages WHERE ${scope.sql} AND id > ? AND body LIKE '%\`\`\`gt-%' LIMIT 1`,
     [scope.arg, messageId],
   ).catch(() => []);
-  const aviso = deliveryGapNotice(msg.body, !!conArtefacto?.artifact || !!conAdjunto?.attachments?.length || tarjetas.length > 0);
-  if (!aviso) return;
+  const entregado = !!conArtefacto?.artifact || !!conAdjunto?.attachments?.length || tarjetas.length > 0;
+  if (!deliveryGapNotice(msg.body, entregado)) return;
+  // Reintento automático: UN turno de seguimiento por burbuja (clave idempotente). Quien lo
+  // corre (`wakeups.fire`) vuelve a llamar aquí SIN `retry`, así que no se encadena.
+  let reintento = false;
+  if (retry) {
+    const { enqueueWakeup, mintWakeRef, kickWakeups } = await import("./wakeups.server");
+    reintento = await enqueueWakeup({
+      key: `${GAP_RETRY_PREFIX}${messageId}`,
+      ref: mintWakeRef({ sub: retry.sub, ns: retry.ns, groupId: retry.groupId, dest: retry.dest }),
+      cause: "entrega pendiente",
+      text: GAP_RETRY_TEXT,
+      origin: retry.origin,
+      dueAt: Math.floor(Date.now() / 1000),
+    }).catch(() => false);
+    if (reintento) kickWakeups(retry.ns);
+  }
+  const aviso = deliveryGapNotice(msg.body, entregado, reintento);
   const body = `${msg.body}\n\n${aviso}`.trim();
   await db.setMessageBody(messageId, body);
   publish(body);

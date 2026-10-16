@@ -17,6 +17,7 @@ export default function ConfirmModal({
   danger,
   onCancel,
   onConfirm,
+  secondary,
 }: {
   title: string;
   body: string;
@@ -24,16 +25,19 @@ export default function ConfirmModal({
   danger?: boolean;
   onCancel: () => void;
   onConfirm: () => void | Promise<void>;
+  /** Una segunda salida, menos recomendada (p. ej. «Borrar todo» junto a «Seguir con memoria
+   *  fresca»). Enter sigue siendo la principal. */
+  secondary?: { label: string; danger?: boolean; onClick: () => void | Promise<void> };
 }) {
   const t = useT();
   const [busy, setBusy] = useState(false);
   // Ejecuta la acción mostrando spinner; si resuelve OK normalmente el componente
   // se desmonta (el ítem borrado desaparece). Si falla, se libera el spinner.
-  const run = async () => {
+  const run = async (action: () => void | Promise<void> = onConfirm) => {
     if (busy) return;
     setBusy(true);
     try {
-      await onConfirm();
+      await action();
     } catch {
       setBusy(false);
     }
@@ -77,7 +81,7 @@ export default function ConfirmModal({
       >
         <h2 className="text-sm font-semibold text-ink">{title}</h2>
         <p className="mt-1 text-xs text-muted">{body}</p>
-        <div className="mt-5 flex justify-end gap-2">
+        <div className="mt-5 flex flex-wrap justify-end gap-2">
           <button
             autoFocus
             onClick={onCancel}
@@ -87,8 +91,19 @@ export default function ConfirmModal({
             {/* Cancelar es el default seguro → foco aquí */}
             {t("Cancelar")}
           </button>
+          {secondary && (
+            <button
+              onClick={() => void run(secondary.onClick)}
+              disabled={busy}
+              className={`rounded-lg border px-3.5 py-1.5 text-sm transition disabled:opacity-50 ${
+                secondary.danger ? "border-red-500/40 text-red-500 hover:bg-red-500/10" : "border-border text-muted hover:text-ink"
+              }`}
+            >
+              {secondary.label}
+            </button>
+          )}
           <button
-            onClick={run}
+            onClick={() => void run()}
             disabled={busy}
             className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-sm font-semibold text-white transition disabled:opacity-70 ${
               danger ? "bg-red-500 hover:bg-red-600" : "bg-brand hover:brightness-110"

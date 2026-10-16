@@ -150,6 +150,11 @@ export const postDmMessageFn = createServerFn({ method: "POST" })
       const groupId = await agentGroupId(ag ?? { handle: mentioned }, `dm-${data.id}`);
       const turns = await import("./turns.server");
       steered = turns.hasOwnInflight(groupId, me.sub);
+      // Acuse 👀 sobre el mensaje, también si va a ser steer: sin él, lo que la persona
+      // escribe a media respuesta no tenía ninguna señal y lo repetía (descti, 5-oct:
+      // «¿ya tienes el cuadro?» ×3). Lo cierra el turno que lo contesta (ver askDmAgentFn).
+      const { ackStart } = await import("./agent-ack.server");
+      await ackStart(ns, id, mentioned);
     }
     if (mentioned && !steered) {
       const ag = agents.find((a) => a.handle === mentioned);
@@ -171,8 +176,10 @@ export const postDmMessageFn = createServerFn({ method: "POST" })
 // Comando /clear en un DM con agente: rota la sesión del agente (arranca sin memoria)
 // y deja una burbuja de confirmación del agente. Idempotente/best-effort. El cliente
 // muestra la ADVERTENCIA antes de invocar esto (acción destructiva: borra el contexto).
+// `keep`: «Seguir con memoria fresca» — mismo reset, pero el siguiente turno arranca con la
+// cola de lo hablado (`continuacionTrasFresca`). Para los DMs largos que compactan cada rato.
 export const clearDmAgentFn = createServerFn({ method: "POST" })
-  .validator((d: { id: number }) => d)
+  .validator((d: { id: number; keep?: boolean }) => d)
   .handler(async ({ data }) => {
     const db = await import("../db.server");
     const bus = await import("./bus.server");
@@ -198,7 +205,7 @@ export const clearDmAgentFn = createServerFn({ method: "POST" })
       // El texto NO se escribe a mano: es el ancla desde la que la UI cuenta los turnos
       // desde el último clear (`turnosDesdeElClear`). Dos literales sueltos = contador que
       // deja de reiniciarse en silencio al retocar el copy.
-      (await import("../lib/session-hygiene")).MARCA_CLEAR,
+      await import("../lib/session-hygiene").then((m) => (data.keep ? m.MARCA_FRESCA : m.MARCA_CLEAR)),
       "msg",
       agent.handle,
       agent.name ?? "Ghosty",
@@ -453,7 +460,18 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     // modelo. Best-effort: si falla, el turno sale sin el bloque y no pasa nada.
     const dicho = await transcripcionesDelTurno(mediaAtts).catch(() => "");
 
-    const text = history + dicho + manifiesto + quoted;
+    // Primer turno tras «Seguir con memoria fresca»: la cola de lo hablado. Sólo se paga la
+    // lectura si la última respuesta del agente es esa burbuja (LIMIT 1 indexado).
+    const { MARCA_FRESCA, continuacionTrasFresca } = await import("../lib/session-hygiene");
+    const fresca = (await db.lastAgentBody(dmScope).catch(() => null))?.includes(MARCA_FRESCA)
+      ? continuacionTrasFresca(
+          redactGoogle(
+            await db.recentContext(dmScope, 80).catch(() => []),
+            await destLimitedUse({ dmId: data.id }, agent).catch(() => false),
+          ),
+        )
+      : "";
+    const text = fresca + history + dicho + manifiesto + quoted;
 
     // Identidad del artefacto del DM → el agente recibe el artefacto ACTUAL (artifactDocHint)
     // para MODIFICARLO (re-emitir la misma versión), no recrearlo desde cero ni duplicar la card.
@@ -525,6 +543,13 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     // y `runAgentTurn` (que lo firma en el tool-token): el MISMO objeto, para que el MCP no
     // pueda resolver un destino distinto del que ve el camino de siempre. Ver chat.ts.
     const destDelTurno = { dmId: data.id, handle: data.handle, name, avatar: agent?.avatar ?? "" };
+    // El mensaje que invocó al turno, validado: de este DM y de quien escribe. Es EL MISMO
+    // array que guarda el turno vivo: el steer le cuelga los suyos y el cierre los acusa todos.
+    const invokerMessageIds = await (async (): Promise<number[]> => {
+      if (data.invokerMessageId == null) return [];
+      const m = await db.getMessage(data.invokerMessageId).catch(() => null);
+      return m && m.dm_id === data.id && m.sender_sub === me.sub ? [data.invokerMessageId] : [];
+    })();
     // Ver chat.ts: el origen se toma dentro del request, para el auto-retomar.
     const { reqOrigin } = await import("../origin.server");
     const origenDelTurno = await reqOrigin().catch(() => "");
@@ -546,6 +571,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
         // Con qué RETOMARLO si muere. Ver chat.ts.
         body: data.body, shellId: data.shellId ?? null, attachments: data.attachments ?? [],
         origin: origenDelTurno,
+        invokerMessageIds,
       });
     };
     // Registrar ANTES del lock: un turno en cola tiene que verse en "Trabajando ahora".
@@ -569,11 +595,11 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
       prefijo: data.adoptar === true && data.shellId != null ? await (await import("./chat")).prefijoDeAdopcion(data.shellId) : undefined,
       inject: steer,
       // STEER: con qué mensaje se inyecta (validado: de este DM y de quien escribe).
-      messageRef: await (async () => {
-        if (data.invokerMessageId == null) return undefined;
-        const m = await db.getMessage(data.invokerMessageId).catch(() => null);
-        return m && m.dm_id === data.id && m.sender_sub === me.sub ? data.invokerMessageId : undefined;
-      })(),
+      messageRef: invokerMessageIds[0],
+      // Un mensaje inyectado ya contestado recibe su ✅ en ese momento (igual que el room).
+      onSteerAnswered: (ids) => {
+        void import("./agent-ack.server").then((m) => m.ackEnd(ns, ids, data.handle, "done"));
+      },
       // La burbuja que el turno deja atrás al partirse por un steer: se cierra autoritativa.
       closeBubble: async (id, body) => {
         await db.setMessageBody(id, body);
@@ -619,6 +645,9 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
       if (registeredId != null) {
         fanout({ t: "turn", id: registeredId, state: "stopped", position: 1, startedAt: Date.now() });
       }
+      // El `finally` de abajo (que cierra los otros desenlaces) no llega: sin esto el 👀
+      // de un turno que revienta se quedaba para siempre. Ver chat.ts.
+      void import("./agent-ack.server").then((m) => m.ackEnd(ns, invokerMessageIds, data.handle, "error"));
       throw e;
     }).finally(async () => {
       if (registeredId != null) {
@@ -670,6 +699,8 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
         await db.deleteMessage(huerfana).catch(() => {});
         fanout({ t: "message:deleted", id: huerfana, channelId: null, parentId: null, dmId: data.id });
       }
+      // Su 👀 ya está puesto: se cuelga del turno que lo contesta para que su cierre lo quite.
+      for (const mid of invokerMessageIds) turns.addInvokerMessage(groupId, me.sub, mid);
       return { ok: true, steered: true };
     }
     // Nunca persistas un body VACÍO (deepseek cierra el turno en blanco a veces) → el
@@ -962,7 +993,11 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
       // El entregable prometido que no viajó. Va aquí y no en cada rama por lo mismo que
       // el cierre de abajo: es el único punto por el que pasan todas.
       const { warnIfNothingDelivered } = await import("./delivery-gap");
-      await warnIfNothingDelivered(id, (body) => fanout({ t: "message:body", id, body })).catch(() => {});
+      await warnIfNothingDelivered(
+        id,
+        (body) => fanout({ t: "message:body", id, body }),
+        controller.signal.aborted ? null : { ns, groupId, sub: me.sub, dest: destDelTurno, origin: origenDelTurno },
+      ).catch(() => {});
       // Cierre del turno, igual que en rooms y por el mismo motivo: es el único punto por el
       // que pasan todas las ramas del bloque de artefactos. Sin esto la fila del DM se
       // quedaba con el cronómetro corriendo hasta el reconcile del minuto.
@@ -973,6 +1008,9 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
           position: 1, startedAt: Date.now(),
         });
       }
+      // Cierra el acuse de todos los mensajes del turno (los del steer incluidos).
+      const { ackEnd } = await import("./agent-ack.server");
+      await ackEnd(ns, invokerMessageIds, data.handle, controller.signal.aborted ? "stopped" : "done").catch(() => {});
     }
     return { ok: true as const };
   });

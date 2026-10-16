@@ -161,6 +161,13 @@ export const en: Record<string, string> = {
   "Esta conversación lleva {n} respuestas sin borrar memoria. Cada turno relee todo lo anterior: borrarla abarata los siguientes.":
     "This conversation has gone {n} replies without clearing memory. Every turn re-reads everything before it: clearing makes the next ones cheaper.",
   "Borrar memoria": "Clear memory",
+  "Memoria de la conversación": "Conversation memory",
+  "Esta conversación ya es larga: respondo más lento. Puedo seguir con memoria fresca conservando lo último.":
+    "This conversation is getting long: I reply slower. I can continue with fresh memory and keep the latest.",
+  "Con memoria fresca, {name} responde más rápido y conserva lo último que hablaron. Borrar todo lo hace empezar de cero. Los mensajes escritos se quedan en los dos casos.":
+    "With fresh memory, {name} replies faster and keeps the latest of what you discussed. Clear all makes it start from scratch. Written messages stay either way.",
+  "Seguir con memoria fresca": "Continue with fresh memory",
+  "Borrar todo": "Clear all",
   "{name} empezará de cero: pierde todo el contexto de esta conversación. Los mensajes que ya están escritos se quedan. No se puede deshacer.":
     "{name} will start fresh: it loses all context from this conversation. Messages already written stay. This can't be undone.",
   "Subir a un modelo más capaz para esta conversación": "Upgrade this conversation to a more capable model",

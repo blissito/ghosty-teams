@@ -137,3 +137,15 @@ describe("el re-aviso AL AGENTE del turno siguiente", () => {
     expect(hayHuecoPrevio(entregado)).toBe(false);
   });
 });
+
+describe("deliveryGapNotice con reintento automático", () => {
+  it("no le pide nada a la persona y conserva la marca para el hint del agente", () => {
+    const aviso = deliveryGapNotice("Aquí está el Excel con el cuadro.", false, true);
+    expect(aviso).toContain(GAP_MARK);
+    expect(aviso).not.toContain("pídeselo");
+    expect(hayHuecoPrevio(aviso)).toBe(true);
+  });
+  it("sin reintento sigue pidiendo que lo repita", () => {
+    expect(deliveryGapNotice("Aquí está el Excel con el cuadro.", false)).toContain("pídeselo");
+  });
+});

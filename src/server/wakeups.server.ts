@@ -266,7 +266,7 @@ export async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
     ? `🔎 Alerta de la plataforma para revisar. ${w.text}`
     : w.key.startsWith("factory:")
       ? `🏭 Encargo de la Software Factory (${w.cause}). ${w.text}`
-      : w.key.startsWith("handoff:")
+      : w.key.startsWith("handoff:") || w.key.startsWith("gap:")
         ? w.text
         // Turno programado desde el CLI (`api/internal/schedule-turn`): el encargo tal cual, como
         // si alguien lo mencionara a esa hora. Sin la cláusula del OK: se programa para que hable.
@@ -449,5 +449,11 @@ export async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
   const body = [delivered?.body ?? finalBody, handoffNotice, gapNotice].filter(Boolean).join("\n\n");
   await db.setMessageBody(id, body);
   publish({ t: "message:body", id, body });
+  // El reintento de una entrega que no llegó se revisa igual, pero SIN otro reintento: si
+  // tampoco entrega, la burbuja dice «pídeselo de nuevo» y ahí para.
+  if (w.key.startsWith("gap:")) {
+    const { warnIfNothingDelivered } = await import("./delivery-gap");
+    await warnIfNothingDelivered(id, (b) => publish({ t: "message:body", id, body: b })).catch(() => {});
+  }
   if (delivered?.attached) publish({ t: "refresh", channelId: dest.channelId ?? null, parentId: dest.parentId ?? null, dmId: dest.dmId ?? null });
 }
