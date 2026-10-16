@@ -4,6 +4,7 @@
 // los `refresh` del room que publica cada transición. Con el PR listo, la tarjeta CRECE con la
 // revisión de @check (qué cambia, riesgo, qué leer) y deja hacer merge aquí: antes eso sólo vivía
 // en el hilo y desde el room se veía «el PR espera tu revisión» sin decir qué revisar.
+import { AgentBot } from "../AgentBot";
 import { ChatCtx } from "./message";
 import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useT } from "../../i18n";
@@ -62,6 +63,8 @@ const WORKING: Record<string, string> = {
   building: "Worker está construyendo…",
   checking: "Arqui está revisando el PR…",
 };
+/** El rol que tiene la estafeta: su robot va junto al «está construyendo…», como en «Trabajando ahora». */
+const WORKING_HANDLE: Record<string, string> = { planning: "plan", building: "build", checking: "check" };
 
 
 const STEPS = [
@@ -334,8 +337,9 @@ function RunCardBody({ card, channelId, inPanel }: { card: RunCardData; channelI
   // La barra: Plan · Firma · Build · CI · Check · PR (+ Prod tras el merge). El CI es un paso del
   // camino con su estado EN VIVO, como antes en las pastillas.
   const TRACK = [
-    { key: "plan", label: "Plan", at: 0 },
-    { key: "sign", label: "Firma", at: 1 },
+    // Dependabot entra directo a Build/revisión: sin Plan ni Firma (pintados en gris parecía que
+    // faltaban, bliss 15-oct).
+    ...(st.kind === "dependabot" ? [] : [{ key: "plan", label: "Plan", at: 0 }, { key: "sign", label: "Firma", at: 1 }]),
     { key: "build", label: "Build", at: 2 },
     { key: "ci", label: "CI", at: 2.5 },
     { key: "check", label: "Check", at: 3 },
@@ -402,7 +406,9 @@ function RunCardBody({ card, channelId, inPanel }: { card: RunCardData; channelI
           ))}
         </div>
         <p className={`mt-2 flex min-w-0 items-center gap-1.5 text-[12.5px] font-semibold ${TONE.text}`} role="status">
-          {tone === "work" && !closed && (
+          {tone === "work" && !closed && WORKING_HANDLE[st.status] ? (
+            <AgentBot handle={WORKING_HANDLE[st.status]} status="running" size={20} />
+          ) : tone === "work" && !closed && (
             <span className="relative flex h-2 w-2 shrink-0">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand opacity-60 motion-reduce:animate-none" />
               <span className="relative inline-flex h-2 w-2 rounded-full bg-brand" />
