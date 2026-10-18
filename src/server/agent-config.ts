@@ -159,6 +159,9 @@ export type NativeAgentConfig = {
   protocol?: "sse" | "acp";
   /** ¿Este motor sabe subir de modelo dentro de una conversación (el ⚡)? goose no. */
   canEscalate?: boolean;
+  /** ¿Quien mira puede escoger el modelo? Lo decide gs: dueño, admin del espacio o staff;
+   *  un asiento MEMBER no (descti, 13-oct). */
+  canChooseModel?: boolean;
 };
 
 export const nativeAgentConfigFn = createServerFn({ method: "GET" })
@@ -168,7 +171,8 @@ export const nativeAgentConfigFn = createServerFn({ method: "GET" })
     if (!be) return { native: false };
     const rt = await nativeRuntime(be);
     if (!rt) return { native: false };
-    const res = await fetch(`${rt.base}/api/v2/fleet-agents/${be.id}/capabilities`, {
+    const user = await sessionUser();
+    const res = await fetch(`${rt.base}/api/v2/fleet-agents/${be.id}/capabilities?actor=${encodeURIComponent(user?.sub ?? "")}`, {
       headers: rt.headers("", ""),
     });
     if (!res.ok) throw new Error(`capabilities ${res.status}: ${await res.text().catch(() => "")}`);
@@ -182,7 +186,9 @@ export const setNativeAgentConfigFn = createServerFn({ method: "POST" })
     if (!be) throw new Error("este agente no es de flota");
     const rt = await nativeRuntime(be);
     if (!rt) throw new Error("runtime no nativo");
-    const body = JSON.stringify(data.body);
+    // `actorSub` va DENTRO del cuerpo firmado: gs decide con él si esta persona escoge el modelo.
+    const user = await sessionUser();
+    const body = JSON.stringify({ ...data.body, actorSub: user?.sub ?? null });
     const res = await fetch(`${rt.base}/api/v2/fleet-agents/${be.id}/capabilities`, {
       method: "POST",
       headers: rt.headers(body, ""),
