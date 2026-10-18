@@ -144,7 +144,8 @@ content:[text + image/document]}]` (los FileParts A2A pasan a content parts). El
 
 1. Mismo `runId` ya TERMINADO + `messages: []` → `RUN_STARTED` + `RUN_FINISHED` de ese run (con
    `result`, `metadata`, `usage`), no un run nuevo. `runId` desconocido → 404 `run_not_found`.
-2. Ids de mensaje `<runId>:a<n>` en `MESSAGES_SNAPSHOT` (la adopción recupera de ahí el texto ya cerrado).
+2. Reconectar/adoptar = contrato estándar: `MESSAGES_SNAPSHOT` (ids `<runId>:a<n>`; de ahí sale el texto ya
+   cerrado, o la cola de uno que se cerró durante el corte) y luego lo abierto re-emitido acumulado.
 3. `ghosty.reply_to.messageIds` / `ghosty.injected.messageId` = los `messages[].id` que manda Teams
    (el id numérico del mensaje en Teams cuando hay steer).
 4. Cada `TOOL_CALL_END` va seguido de su `TOOL_CALL_RESULT` (con `metadata.error` si falló).
@@ -155,11 +156,11 @@ content:[text + image/document]}]` (los FileParts A2A pasan a content parts). El
 7. Plan de TodoWrite en `TOOL_CALL_ARGS`; subagentes en `state.subagents.tasks[]` con
    `lastTool` = «tool · detalle».
 
-## 5. Corte (orden fijado por team-lead)
+## 5. Corte (orden fijado por team-lead, 18-oct)
 
-1. gs sirve `POST /api/v2/fleet-agents/:id/agui` en producción **con las rutas viejas vivas**.
-2. Deploy de Teams (esta rama a `main` + hot-deploy `~/sandbox-host/scripts/deploy_ghosty_teams.sh`,
-   respaldando `.output` antes; no cambió `package.json`, no hace falta rebake). Los turnos que estaban
-   en vuelo los adopta el Teams nuevo con su `durable_turn_id` de siempre como `runId` → **gs tiene que
-   reconocer en `/agui` los turnos abiertos por `/turns`** (mismo registro de turnos de Teams).
-3. Sólo después, gs corta `turns`/`events`/`cancel`/`message-stream`.
+1. gs despliega `POST /api/v2/fleet-agents/:id/agui` (rama `teams-agui`, aditiva sobre main; conviven
+   `turns`/`message-stream`).
+2. Teams pasa contra prod y, con aviso de team-lead, se despliega (rebake/hot-deploy según
+   `docs/DEPLOY.md`; respaldo antes). Los turnos en vuelo los adopta el Teams nuevo por `/agui` con su
+   `durable_turn_id` (gs reconoce los `teams:<uuid>` de `/turns`).
+3. El día del corte de gs, Teams ya está migrado.

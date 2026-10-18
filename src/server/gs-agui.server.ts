@@ -362,7 +362,12 @@ export class AguiTurnReader {
         for (const m of Array.isArray(ev.messages) ? ev.messages : []) {
           if (m?.role !== "assistant" || typeof m.id !== "string" || !m.id.startsWith(prefix)) continue;
           const content = typeof m.content === "string" ? m.content : "";
-          if (!this.texts.has(m.id) && content) await this.text_(m.id, content);
+          const known = this.texts.get(m.id) ?? "";
+          // Nuevo, o uno que se cerró mientras estábamos desconectados: sólo falta la cola.
+          if (content.length > known.length && content.startsWith(known)) {
+            this.texts.set(m.id, content);
+            await this.h.onChunk(content.slice(known.length));
+          }
         }
         return null;
       }

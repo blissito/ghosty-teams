@@ -159,6 +159,25 @@ describe("AguiTurnReader", () => {
     expect(h.chunks.join("")).toBe("Primera parte. Segunda.");
   });
 
+  test("reconexión con MESSAGES_SNAPSHOT: el mensaje que se cerró durante el corte aporta sólo su cola", async () => {
+    const h = harness();
+    await h.reader.read(sse([started, { type: "TEXT_MESSAGE_START", messageId: `${R}:a0` }, { type: "TEXT_MESSAGE_CONTENT", messageId: `${R}:a0`, delta: "Primera " }], { cut: true }), { idleMs: 5_000 });
+    const out = await h.reader.read(
+      sse([
+        started,
+        { type: "MESSAGES_SNAPSHOT", messages: [{ id: `${R}:a0`, role: "assistant", content: "Primera parte." }] },
+        { type: "STATE_SNAPSHOT", snapshot: {} },
+        { type: "TEXT_MESSAGE_START", messageId: `${R}:a1` },
+        { type: "TEXT_MESSAGE_CONTENT", messageId: `${R}:a1`, delta: " Segunda" },
+        { type: "TEXT_MESSAGE_CONTENT", messageId: `${R}:a1`, delta: "." },
+        { type: "RUN_FINISHED", threadId: "g", runId: R, result: "Primera parte. Segunda." },
+      ]),
+      { idleMs: 5_000 },
+    );
+    expect(h.chunks.join("")).toBe("Primera parte. Segunda.");
+    expect(out).toEqual({ kind: "finished", text: "Primera parte. Segunda.", cancelled: false });
+  });
+
   test("steer: ghosty.injected corta aquí y el run vivo es de otro turno", async () => {
     const h = harness();
     const out = await h.reader.read(
