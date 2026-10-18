@@ -369,6 +369,19 @@ describe("callAgentBackendStream (runtime gs-native)", () => {
     expect(calls[1].body.forwardedProps.steer).toBeUndefined();
   });
 
+  test("steer que llega tarde (409 run_not_live) se manda en seguida como turno normal", async () => {
+    const { reply, calls } = await run(
+      [
+        () => Response.json({ error: "run_not_live", message: "ya terminó" }, { status: 409 }),
+        (b) => ok([{ ...started, runId: b.runId }, { type: "TEXT_MESSAGE_CONTENT", messageId: "a", delta: "va" }, { type: "RUN_FINISHED", threadId: "g1", runId: b.runId }])(),
+      ],
+      { inject: true },
+    );
+    expect(reply).toBe("va");
+    expect(calls[1].body.forwardedProps.steer).toBeUndefined();
+    expect(calls[1].body.messages).toHaveLength(1);
+  });
+
   test("steer que entra devuelve INJECTED", async () => {
     const { INJECTED } = await import("../agents.server");
     const { reply } = await run([ok([{ type: "RUN_STARTED", threadId: "g1", runId: "teams:vivo" }, { type: "CUSTOM", name: "ghosty.injected", value: { messageId: "456" } }])], { inject: true });

@@ -2791,6 +2791,11 @@ async function nativeAguiTurn(o: {
           }
           // Otro run vivo en el hilo. Si era un steer que no pudo entrar, se manda como turno
           // normal en cuanto el vivo termine (contrato §0.7b.6).
+          // `run_not_live` = el steer llegó cuando el vivo ya había terminado: va como run normal, ya.
+          if (e.status === 409 && e.code === "run_not_live" && steer) {
+            steer = false;
+            continue;
+          }
           if (e.status === 409 && e.code === "run_active" && Date.now() - activeSince < RUN_ACTIVE_MAX_MS) {
             steer = false;
             await esperar(e.retryAfterMs ?? RUN_ACTIVE_POLL_MS, signal);
