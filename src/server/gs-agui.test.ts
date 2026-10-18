@@ -178,6 +178,26 @@ describe("AguiTurnReader", () => {
     expect(out).toEqual({ kind: "finished", text: "Primera parte. Segunda.", cancelled: false });
   });
 
+  test("adopción: las herramientas ya cerradas del run salen del snapshot (toolCalls + tool)", async () => {
+    const h = harness();
+    await h.reader.read(
+      sse([
+        started,
+        { type: "MESSAGES_SNAPSHOT", messages: [
+          { id: `${R}:a0`, role: "assistant", content: "Busco.", toolCalls: [{ id: "t1", type: "function", function: { name: "WebSearch", arguments: "{}" } }], metadata: { custom: [{ name: "ghosty.tool", value: { toolCallId: "t1", title: "Busqué", detail: "nyt.com" } }] } },
+          { id: `${R}:tt1`, role: "tool", toolCallId: "t1", content: "boom", error: "boom" },
+        ] },
+        { type: "RUN_FINISHED", threadId: "g", runId: R, result: "Busco." },
+      ]),
+      { idleMs: 5_000 },
+    );
+    expect(h.tools).toEqual([
+      { name: "WebSearch", id: "t1", phase: "start", detail: "nyt.com" },
+      { id: "t1", phase: "end", ok: false },
+    ]);
+    expect(h.chunks.join("")).toBe("Busco.");
+  });
+
   test("steer: ghosty.injected corta aquí y el run vivo es de otro turno", async () => {
     const h = harness();
     const out = await h.reader.read(

@@ -356,17 +356,33 @@ export class AguiTurnReader {
         return null;
       case "MESSAGES_SNAPSHOT": {
         // Teams guarda su propio hilo; del snapshot sólo sirve lo que ESTE run ya cerró
-        // (ids `<runId>:a<n>`), para que una adopción no pierda el texto de antes del corte.
+        // (ids `<runId>:…`): su texto y sus herramientas, para que una adopción rehaga la burbuja.
         const prefix = this.runId ? `${this.runId}:` : null;
         if (!prefix) return null;
-        for (const m of Array.isArray(ev.messages) ? ev.messages : []) {
-          if (m?.role !== "assistant" || typeof m.id !== "string" || !m.id.startsWith(prefix)) continue;
-          const content = typeof m.content === "string" ? m.content : "";
-          const known = this.texts.get(m.id) ?? "";
-          // Nuevo, o uno que se cerró mientras estábamos desconectados: sólo falta la cola.
-          if (content.length > known.length && content.startsWith(known)) {
-            this.texts.set(m.id, content);
-            await this.h.onChunk(content.slice(known.length));
+        const mine = (Array.isArray(ev.messages) ? ev.messages : []).filter((m: any) => typeof m?.id === "string" && m.id.startsWith(prefix));
+        for (const m of mine) {
+          if (m.role === "assistant") {
+            const content = typeof m.content === "string" ? m.content : "";
+            const known = this.texts.get(m.id) ?? "";
+            // Nuevo, o uno que se cerró mientras estábamos desconectados: sólo falta la cola.
+            if (content.length > known.length && content.startsWith(known)) {
+              this.texts.set(m.id, content);
+              await this.h.onChunk(content.slice(known.length));
+            }
+            const rotulos = new Map<string, string>();
+            for (const c of Array.isArray(m.metadata?.custom) ? m.metadata.custom : []) {
+              if (c?.name === "ghosty.tool" && c.value?.toolCallId) rotulos.set(String(c.value.toolCallId), String(c.value.detail ?? c.value.path ?? ""));
+            }
+            for (const tc of Array.isArray(m.toolCalls) ? m.toolCalls : []) {
+              const id = String(tc?.id ?? "");
+              if (!id || this.started.has(id)) continue;
+              this.toolNames.set(id, String(tc.function?.name ?? ""));
+              if (rotulos.get(id)) this.toolDetail.set(id, rotulos.get(id)!);
+              this.pendingStart = id;
+              await this.flushStart();
+            }
+          } else if (m.role === "tool" && typeof m.toolCallId === "string" && this.started.has(m.toolCallId)) {
+            await this.endTool(m.toolCallId, !m.error);
           }
         }
         return null;
