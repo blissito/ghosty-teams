@@ -68,9 +68,9 @@ describe("adopción tras un reinicio", () => {
     expect(durable[0]).toMatchObject({ id: 288, wakeKey: "sched:turn:1:adopt" });
   });
 
-  it("la burbuja dice «Retomando…» en vez de quedar vacía", async () => {
+  it("la burbuja dice «Continuando…» en vez de quedar vacía", async () => {
     await fire("ns", wake("sched:turn:1:adopt"), ref({ shellId: 288, turnId: "t1" }));
-    expect(bodies[0]).toEqual({ id: 288, body: "_Retomando tras un reinicio…_" });
+    expect(bodies[0]).toEqual({ id: 288, body: "_Continuando tras un reinicio…_" });
     expect(bodies.some((b) => b.body === "")).toBe(false);
   });
 

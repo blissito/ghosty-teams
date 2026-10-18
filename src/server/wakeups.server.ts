@@ -359,7 +359,7 @@ export async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
       if (ref.adopt) {
         shellId = ref.adopt.shellId;
         // El backlog de gs se repite desde el frame 0 y lo reemplaza; mientras, no queda vacío.
-        const wait = "_Retomando tras un reinicio…_";
+        const wait = "_Continuando tras un reinicio…_";
         await db.setMessageBody(shellId, wait).catch(() => {});
         publish({ t: "message:body", id: shellId, body: wait });
         return shellId;

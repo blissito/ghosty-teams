@@ -129,7 +129,8 @@ describe("el botón de retomar", () => {
     const { turnoSeMurio } = await import("../components/chat/message");
     expect(turnoSeMurio("⚠️ No pude contactar a @ghosty: terminated")).toBe(true);
     // Y el placeholder del propio reintento: si el disparo no arranca, hay que poder volver a pulsar.
-    expect(turnoSeMurio("⏳ Retomando…")).toBe(true);
+    expect(turnoSeMurio("⏳ Continuando…")).toBe(true);
+    expect(turnoSeMurio("⏳ Retomando…")).toBe(true); // filas viejas
     expect(turnoSeMurio("medio documento\n\n⏹ _Interrumpido: el servidor se reinició mientras el agente escribía._")).toBe(true);
     expect(turnoSeMurio("⏹ Detenido (el servidor se reinició).")).toBe(true);
     // Lo que NO es una muerte de la plataforma: el botón Detener del usuario, y una

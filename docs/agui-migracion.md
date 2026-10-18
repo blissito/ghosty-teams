@@ -47,7 +47,7 @@ A2A), `appendSystemPrompt` (contexto de canal), `toolToken`+`toolsUrl`, `wakeUrl
 | `tool {name,id,phase:start\|end,ok,detail,todos,sub}` | `onTool` → checklist ✅/❌ por id, plan (`gt-todos`), filas de subagente (`gs_subagent_child` + `sub`). Tool «sucia» apaga el reintento ciego |
 | `progress {id,elapsedMs}` | reloj de la tool abierta (cada 20 s) |
 | `stalled {rule,tool,detail,count,secs,since,human,steer}` | `factory-runs.onRoleStalled` (aviso / steer en la fábrica) |
-| `truncated {subtype,classification,numTurns,stopReason,notice}` | `avisoDeCorte` (sin pisar el texto); `gs_restart`/`worker_lost` = «Retomar» |
+| `truncated {subtype,classification,numTurns,stopReason,notice}` | `avisoDeCorte` (sin pisar el texto); `gs_restart`/`worker_lost` = «Continuar» |
 | `injected` | devuelve `INJECTED`: la respuesta sale por la burbuja del turno vivo |
 | `reply_to {messageIds,folded}` | dónde empieza la respuesta a cada mensaje inyectado |
 | `attachments {failed:[{name,reason}]}` | pie «no llegaron estos adjuntos» |
@@ -136,8 +136,9 @@ content:[text + image/document]}]` (los FileParts A2A pasan a content parts). El
   La rama EasyBits conserva `message-stream`.
 - `factory-runs.server.ts` `steerRole`: `steer: true` + `injectOnly`, lee hasta `ghosty.injected`.
 - Pruebas: `src/server/gs-agui.test.ts` (20, streams grabados + extremo a extremo con gs simulado).
-- ⚠️ Corte: los `gt_turns.durable_turn_id` del contrato viejo no existen para `/agui`; un turno en
-  vuelo durante el deploy cae a «No pude contactar» + Retomar. Deploy de Teams el mismo día que gs.
+- Rótulo unificado del turno cortado: **«Continuar»** (botón, aviso, placeholder `⏳ Continuando…`;
+  `⏳ Retomando…` se sigue reconociendo en filas viejas). El «Retomar» de la barra del pedido de la
+  fábrica es otra acción (destrabar el pedido) y no cambia.
 
 ### Lo que Teams asume de gs (confirmar con gs-agui)
 
@@ -154,7 +155,11 @@ content:[text + image/document]}]` (los FileParts A2A pasan a content parts). El
 7. Plan de TodoWrite en `TOOL_CALL_ARGS`; subagentes en `state.subagents.tasks[]` con
    `lastTool` = «tool · detalle».
 
-## 5. Deploy (pendiente del aviso de team-lead)
+## 5. Corte (orden fijado por team-lead)
 
-Hot-deploy `~/sandbox-host/scripts/deploy_ghosty_teams.sh` (push no despliega; respaldar `.output`
-antes). No cambió `package.json`, así que no hace falta rebake.
+1. gs sirve `POST /api/v2/fleet-agents/:id/agui` en producción **con las rutas viejas vivas**.
+2. Deploy de Teams (esta rama a `main` + hot-deploy `~/sandbox-host/scripts/deploy_ghosty_teams.sh`,
+   respaldando `.output` antes; no cambió `package.json`, no hace falta rebake). Los turnos que estaban
+   en vuelo los adopta el Teams nuevo con su `durable_turn_id` de siempre como `runId` → **gs tiene que
+   reconocer en `/agui` los turnos abiertos por `/turns`** (mismo registro de turnos de Teams).
+3. Sólo después, gs corta `turns`/`events`/`cancel`/`message-stream`.

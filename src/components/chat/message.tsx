@@ -2634,7 +2634,8 @@ export function TurnLiveFooter({ id, handle }: { id: number; handle?: string | n
 // nuevo. Si ese disparo no arranca (devolvió `ok:false`, o el server cayó en medio) nadie
 // lo reescribe, y sin esta entrada la burbuja se quedaba sin botón para siempre. El turno
 // vivo se distingue por `turns.get(id)`, no por el texto, así que no compite con el reloj.
-const MUERTO = ["⚠️ No pude contactar a @", "⏹ _Interrumpido:", "⏹ Detenido (el servidor se reinició)", "⏳ Retomando…"];
+// «Retomando…» es el placeholder viejo (antes de unificar el rótulo en «Continuar»): filas guardadas.
+const MUERTO = ["⚠️ No pude contactar a @", "⏹ _Interrumpido:", "⏹ Detenido (el servidor se reinició)", "⏳ Continuando…", "⏳ Retomando…"];
 export function turnoSeMurio(body: string | null | undefined): boolean {
   return !!body && MUERTO.some((f) => body.includes(f));
 }
@@ -2713,7 +2714,7 @@ export function TurnFailedFooter({ id, body }: { id: number; body: string | null
         onClick={() => retryTurn(id)}
         className="rounded-full border border-border px-2 py-0.5 transition hover:border-accent/50 hover:text-accent"
       >
-        {t("Retomar")}
+        {t("Continuar")}
       </button>
     </div>
   );
@@ -3184,7 +3185,7 @@ export function MessageRow({
               {/* «⏳ Retomando…» es un placeholder: con el turno nuevo YA vivo, el indicador de
                   abajo (frase, reloj, detener) dice que trabaja. Pintarlo además hacía creer que
                   retomar tardaba minutos cuando el agente sólo trabajaba sin escribir (10-oct). */}
-              {!extractAlert(m.body) && !(isAgent && m.agent_handle === "ads" && parseVersionLine(m.body)) && bubbleWithoutEbDoc(m.body).trim() && !(turns.has(m.id) && m.body.trim() === "⏳ Retomando…") ? (
+              {!extractAlert(m.body) && !(isAgent && m.agent_handle === "ads" && parseVersionLine(m.body)) && bubbleWithoutEbDoc(m.body).trim() && !(turns.has(m.id) && (m.body.trim() === "⏳ Continuando…" || m.body.trim() === "⏳ Retomando…")) ? (
               <Markdown
                 body={bubbleWithoutEbDoc(m.body)}
                 artifactUrl={m.artifact?.url}

@@ -1513,13 +1513,13 @@ function ChannelPage() {
     // Cada salida sin turno se avisa: antes el botón no hacía NADA y se leía como «no recibe
     // clic» (26-sep, @ads: quien lo pulsó no era quien pidió el turno).
     const avisar = (preview: string) =>
-      pushToast({ sender: t("Retomar"), avatar: "", preview, kind: "room", onOpen: () => {} });
+      pushToast({ sender: t("Continuar"), avatar: "", preview, kind: "room", onOpen: () => {} });
     const porQue = (razon: string) =>
       razon === "ajeno"
-        ? t("Sólo quien pidió este turno puede retomarlo.")
+        ? t("Sólo quien pidió este turno puede continuarlo.")
         : razon === "no-retomable"
-          ? t("Este turno ya no se puede retomar. Vuelve a mencionar al agente.")
-          : t("No se pudo retomar. Intenta de nuevo.");
+          ? t("Este turno ya no se puede continuar. Vuelve a mencionar al agente.")
+          : t("No se pudo continuar. Intenta de nuevo.");
     void prepareRetryFn({ data: { messageId } })
       .then(async (r) => {
         if (!r.ok && r.razon === "confirmar") {
@@ -1529,7 +1529,7 @@ function ChannelPage() {
           const qué = r.desconocidas
             ? t("No hay registro de qué alcanzó a hacer antes de cortarse.")
             : t("Antes de cortarse ya ejecutó:") + " " + r.tools.join(", ") + ".";
-          if (!window.confirm(`${qué}\n\n${t("¿Retomar de todos modos?")}`)) return;
+          if (!window.confirm(`${qué}\n\n${t("¿Continuar de todos modos?")}`)) return;
           const r2 = await prepareRetryFn({ data: { messageId, confirmado: true } });
           if (!r2.ok) return avisar(porQue(r2.razon));
           return disparar(r2);
@@ -1537,7 +1537,7 @@ function ChannelPage() {
         if (!r.ok) return avisar(porQue(r.razon));
         return disparar(r);
       })
-      .catch(() => avisar(t("No se pudo retomar. Intenta de nuevo.")));
+      .catch(() => avisar(t("No se pudo continuar. Intenta de nuevo.")));
 
     type Preparado = Extract<Awaited<ReturnType<typeof prepareRetryFn>>, { ok: true }>;
     function disparar(r: Preparado) {

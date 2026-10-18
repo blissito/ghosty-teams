@@ -200,7 +200,7 @@ export const stopTurnFn = createServerFn({ method: "POST" })
 export async function prefijoDeAdopcion(shellId: number): Promise<string | undefined> {
   const db = await import("../db.server");
   const body = (await db.getMessage(shellId).catch(() => null))?.body ?? "";
-  return body && body !== "⏳ Retomando…" ? body : undefined;
+  return body && body !== "⏳ Continuando…" && body !== "⏳ Retomando…" ? body : undefined;
 }
 
 export const prepareRetryFn = createServerFn({ method: "POST" })
@@ -247,7 +247,7 @@ export const prepareRetryFn = createServerFn({ method: "POST" })
       // prefijo de la burbuja. En el camino normal, el placeholder de siempre.
       const previo = adoptar ? (await db.getMessage(t.shellId).catch(() => null))?.body ?? "" : "";
       const limpio = previo.replace(/\n\n⏹ _Interrumpido:[^\n]*$/, "").replace(/^⏹ Detenido \(el servidor se reinició\)\.$/, "");
-      const placeholder = adoptar && limpio.trim() ? limpio : "⏳ Retomando…";
+      const placeholder = adoptar && limpio.trim() ? limpio : "⏳ Continuando…";
       await db.setMessageBody(t.shellId, placeholder).catch(() => {});
       const bus = await import("./bus.server");
       const canal = t.dmId ? bus.ch.dm(ns, t.dmId) : t.channelId ? bus.ch.room(ns, t.channelId) : null;
