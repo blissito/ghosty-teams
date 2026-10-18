@@ -380,6 +380,13 @@ export class AguiTurnReader {
               if (rotulos.get(id)) this.toolDetail.set(id, rotulos.get(id)!);
               this.pendingStart = id;
               await this.flushStart();
+              // El plan de un TodoWrite ya cerrado viaja en sus argumentos (igual que en vivo).
+              if (tc.function?.name === "TodoWrite") {
+                try {
+                  const todos = (JSON.parse(String(tc.function.arguments || "{}")) as { todos?: TodoItem[] }).todos;
+                  if (Array.isArray(todos) && todos.length) await this.h.onTool?.({ name: "TodoWrite", id, phase: "start", todos });
+                } catch { /* args no JSON */ }
+              }
             }
           } else if (m.role === "tool" && typeof m.toolCallId === "string" && this.started.has(m.toolCallId)) {
             await this.endTool(m.toolCallId, !m.error);
