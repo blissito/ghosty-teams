@@ -53,6 +53,22 @@ describe.skipIf(!URL_GS || !AGENT || !WS)("gs-agui extremo a extremo (agente sim
     return { reply, chunks, tools, truncated, failures, attachments, models };
   }
 
+  // Seguro en PRODUCCIÓN (turno real y corto, sin herramientas): `-t "prod-seguro"`.
+  test("prod-seguro: turno corto y reenganche al run ya terminado", async () => {
+    const groupId = thread();
+    let runId = "";
+    const r = await turn("Responde únicamente OK. No uses herramientas.", { groupId, onDurable: (t) => (runId = t) });
+    expect(r.failures).toEqual([]);
+    expect(r.reply.trim()).toMatch(/OK/);
+    expect(r.chunks.join("").trim()).toBe(r.reply.trim());
+    expect(runId).toMatch(/^teams:/);
+    expect(r.models.length).toBe(1);
+    // Adopción de un run terminado: no abre otro turno, repite su cierre con el mismo texto.
+    const again = await turn("", { groupId, resume: runId });
+    expect(again.failures).toEqual([]);
+    expect(again.reply.trim()).toBe(r.reply.trim());
+  }, 120_000);
+
   test("turno simple: el texto en vivo y el autoritativo coinciden", async () => {
     const r = await turn("hola");
     expect(r.failures).toEqual([]);
