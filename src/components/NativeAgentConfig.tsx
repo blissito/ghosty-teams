@@ -116,6 +116,13 @@ export function NativeAgentConfig({ agentId, flushRef }: { agentId: number; flus
         <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted">
           {t("Modelo")}
         </label>
+        {/* Un asiento MEMBER no escoge el modelo (lo decide gs): ve cuál es, sin selector. */}
+        {cfg.canChooseModel === false ? (
+          <p className="rounded-lg border border-border bg-surface px-3 py-2 text-sm">
+            {cfg.models.find((m) => m.id === cfg.model)?.label ?? cfg.model}
+            <span className="mt-0.5 block text-xs text-muted">{t("El modelo lo eligen el dueño o un admin del espacio.")}</span>
+          </p>
+        ) : (
         <select
           value={cfg.model ?? ""}
           disabled={busy}
@@ -136,6 +143,7 @@ export function NativeAgentConfig({ agentId, flushRef }: { agentId: number; flus
             </optgroup>
           ))}
         </select>
+        )}
         {/* Se dice porque es real y se nota, y CADA transporte cuesta algo distinto:
             en un worker nativo cambiar de modelo recicla cajas y arranca la conversación
             de nuevo; en un agente ACP hay que reescribir el env de SU caja, lo que reinicia

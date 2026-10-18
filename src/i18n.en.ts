@@ -6,6 +6,7 @@ export const en: Record<string, string> = {
   "Abrir el PR en GitHub": "Open the PR on GitHub",
   "Al cambiar de modelo se reinicia el agente: un turno en curso se corta. Las conversaciones ya abiertas siguen con el modelo anterior hasta que uses /clear en cada una.": "Changing the model restarts the agent: a turn in progress is cut short. Conversations already open keep the previous model until you run /clear in each one.",
   "Al cambiar de modelo, la conversación arranca de nuevo.": "Changing the model restarts the conversation.",
+  "El modelo lo eligen el dueño o un admin del espacio.": "The model is chosen by the owner or a workspace admin.",
   "Es el modelo base. Una conversación puede subir temporalmente a uno más capaz con el ⚡ de su cabecera, sin cambiar esto.":
     "This is the base model. A conversation can temporarily move up to a more capable one with the ⚡ in its header, without changing this.",
   "Es la identidad del agente en todos los espacios. Se aplica al siguiente turno.":
