@@ -981,7 +981,7 @@ export async function noteFromGithub(run: Run, by: string, ask: { text: string; 
 
 /**
  * Mete `text` al turno VIVO del rol en este pedido (steer), sin abrir uno nuevo: `injectOnly`
- * hace que gs conteste `not_live` si no hay turno. true sólo si gs confirma `injected`. Sin
+ * hace que gs conteste `409 run_not_live` si no hay turno. true sólo si gs confirma `injected`. Sin
  * esto una nota a media obra esperaba al siguiente encargo y @build terminaba con el alcance
  * viejo (MailMask, 4-oct). Nunca lanza.
  */
@@ -997,15 +997,29 @@ export async function steerRole(run: Run, role: "plan" | "build" | "check", text
     const ft = await factoryTurnFor(role, { channelId: run.channelId, parentId: run.rootMsgId }, agent.backend.id).catch(() => null);
     const fleetId = ft?.fleetId ?? agent.backend.id;
     const groupId = await agentGroupId(agent, `factory-${run.id}`);
-    const body = JSON.stringify({ groupId, configGroupId: "teams", sender: "plataforma", text, inject: true, injectOnly: true });
-    const res = await fetch(`${rt.base}/api/v2/fleet-agents/${fleetId}/message-stream`, {
+    // AG-UI: `steer: true` = el run vivo de este hilo; con `injectOnly`, gs contesta
+    // `409 run_not_live` (o `run_active` si no pudo meterlo) en vez de abrir un turno.
+    const { buildRunInput } = await import("../gs-agui.server");
+    const runId = `teams:${crypto.randomUUID()}`;
+    const body = JSON.stringify(
+      buildRunInput({
+        threadId: groupId,
+        runId,
+        message: { id: `${runId}:u`, text },
+        forwardedProps: { configGroupId: "teams", sender: "plataforma", steer: true, injectOnly: true },
+      }),
+    );
+    const res = await fetch(`${rt.base}/api/v2/fleet-agents/${fleetId}/agui`, {
       method: "POST",
-      headers: rt.headers(body, agent.backend.token),
+      headers: { ...rt.headers(body, agent.backend.token), Accept: "text/event-stream" },
       body,
       signal: AbortSignal.timeout(10_000),
     });
-    if (!res.ok || !res.body) return false;
-    // `injected` = entró; `not_live`/`error`/`done` = no. Lo demás (progreso) se ignora.
+    if (!(res.headers.get("content-type") ?? "").includes("text/event-stream") || !res.body) {
+      await res.body?.cancel().catch(() => {});
+      return false;
+    }
+    // `ghosty.injected` = entró. Cualquier fin de run o error = no. Cerrar NO corta el run vivo.
     const reader = res.body.getReader();
     const dec = new TextDecoder();
     let buf = "";
@@ -1014,14 +1028,16 @@ export async function steerRole(run: Run, role: "plan" | "build" | "check", text
         const { value, done } = await reader.read();
         if (done) return false;
         buf += dec.decode(value, { stream: true });
-        for (const line of buf.split("\n")) {
-          const m = /^data:\s*(.+)$/.exec(line.trim());
-          if (!m) continue;
-          const ev = JSON.parse(m[1]) as { type?: string };
-          if (ev.type === "injected") return true;
-          if (ev.type === "not_live" || ev.type === "error" || ev.type === "done") return false;
+        let nl: number;
+        while ((nl = buf.indexOf("\n\n")) !== -1) {
+          const frame = buf.slice(0, nl);
+          buf = buf.slice(nl + 2);
+          const line = frame.split("\n").find((l) => l.startsWith("data:"));
+          if (!line) continue;
+          const ev = JSON.parse(line.slice(5).trim()) as { type?: string; name?: string };
+          if (ev.type === "CUSTOM" && ev.name === "ghosty.injected") return true;
+          if (ev.type === "RUN_FINISHED" || ev.type === "RUN_ERROR") return false;
         }
-        buf = buf.slice(buf.lastIndexOf("\n") + 1);
       }
     } finally {
       void reader.cancel().catch(() => {});

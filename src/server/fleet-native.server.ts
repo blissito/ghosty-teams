@@ -19,7 +19,7 @@ export type FleetPool = {
   sponsored?: boolean;
   /**
    * Cómo se le habla a ese agente. Ausente = `sse`, el camino nativo de siempre
-   * (`message-stream` contra Studio).
+   * (`POST …/agui` contra Studio, AG-UI).
    *
    * `acp` es otro transporte: WebSocket contra la caja del agente, con `runAcpTurn`. Studio
    * lo declara por MOTOR y manda además su `runtimeUrl`, que es un dominio FIJO — no la URL

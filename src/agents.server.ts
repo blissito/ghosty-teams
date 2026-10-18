@@ -2469,119 +2469,73 @@ export async function callAgentBackendStream(
   // socket siga abierto: se corta como `terminated` para que reintente o avise. Antes se quedaba
   // colgado para siempre con la burbuja vacía (@build, 2026-10-01).
   const IDLE_MS = 90_000;
-  // TURNO DURABLE (2026-10-01): con gs nuevo, el turno nativo vive en gs y no en esta
-  // conexión — `POST /turns` lo arranca (idempotente por turnId) y `GET /turns/:id/events` lo
-  // lee con `Last-Event-ID`. Si la conexión se cae, se REENGANCHA al mismo turno: no se repite
-  // trabajo y no hay que adivinar si una tool fue sucia. Detener = `POST …/cancel`.
-  // `durable` = null hasta saber si gs tiene la ruta (404 → camino viejo de message-stream).
-  const durableTurnId = durableOpts?.resumeTurnId ?? `teams:${crypto.randomUUID()}`;
-  // Adoptar: el turno ya existe en gs, no se manda POST /turns.
-  let durable: boolean | null = durableOpts?.resumeTurnId ? true : null;
-  let lastSeq = -1;
-  let cancelSent = false;
-  let cancelHooked = false;
+  // `parts` = FileParts A2A (media); EasyBits los normaliza por MIME (Slice E1).
+  // configGroupId "teams" = unidad de config ESTABLE de este canal en EasyBits
+  // (tools + comportamiento por-Teams via groupConfigs["teams"]); sin él la config
+  // caería por-conversación (groupId) → solo el default del agente.
+  const fields: Record<string, unknown> = {
+    groupId,
+    configGroupId: "teams",
+    sender: sender || "invitado",
+    text: outText,
+    parts,
+    // Persona por-agente + guardrail eb-doc, ambos en la capa system. EasyBits los
+    // mergea al system del worker (claude-worker) o al marco de confianza del turno
+    // (ghosty-gc). Nunca en el texto del usuario → nunca se lee como inyección.
+    appendSystemPrompt: [
+      // NATIVO: Studio es dueño de la identidad (FleetAgent.persona.prompt, aplicada
+      // en routeTurn) → NO la mandamos desde aquí para evitar doble prompt. EasyBits
+      // sí la lleva (su worker no la conoce). Product-context/self-identity/guardrail
+      // son contexto del canal (Teams), van siempre.
+      !native && persona ? `[Persona de ${agent.name}]\n${persona}` : null,
+      TEAMS_PRODUCT_CONTEXT,
+      handleIdentity(agent),
+      selfIdentity(agent),
+      EB_DOC_STREAM_GUARDRAIL,
+      // Guía de DISEÑO del artefacto. Va pegada al guardrail porque comparte su
+      // condición: sólo cuenta en el canal Teams/web, que es donde el agente puede
+      // emitir un eb-artifact.
+      ARTIFACT_DESIGN_GUIDE,
+      // Qué hacer cuando la tarea le queda grande: mandarla al hermano mayor si vive
+      // en este espacio, o proponer subir de modelo si no. Depende del padrón del
+      // workspace, así que se resuelve aquí y no en Studio.
+      await escalationHint(agent),
+    ]
+      .filter(Boolean)
+      .join("\n\n"),
+    // Solo runtime nativo + hay invocador → tools de conectores per-user (opaco a Studio).
+    ...(toolToken && toolsUrl ? { toolToken, toolsUrl } : {}),
+    ...(wakeUrl && wakeRef ? { wakeUrl, wakeRef } : {}),
+    ...(inject ? { inject: true } : {}),
+    ...(inject && durableOpts?.messageRef != null ? { messageRef: String(durableOpts.messageRef) } : {}),
+    ...(salesBoardId ? { boardId: salesBoardId } : {}),
+    // Modelo de ESTE turno (fábrica). gs lo valida contra el motor y lo topa por plan.
+    ...(native && factoryTurn?.model ? { model: factoryTurn.model } : {}),
+    // Ayudantes nativos síncronos en @build, @plan y @check; gs los prende si el espacio tiene
+    // `factoryNativeSubagents`. Los tres: Arqui es @plan y @check en la MISMA sesión y su lista
+    // de tools se fija al abrirla. En @plan/@check sólo `investigador` (sólo lectura, lo fija el
+    // worker). Van en TODO turno de un rol para que las claves del turno no oscilen.
+    ...(native && factoryTurn
+      ? {
+          nativeSubagents: ["build", "plan", "check"].includes(agent.handle),
+          childProfile: agent.handle === "build" ? "" : "investigador",
+        }
+      : {}),
+  };
+  if (native) {
+    return await nativeAguiTurn({ agent, rt, base, fleetAgentId, groupId, fields, outText, parts, onChunk, onTool, onTruncated, onModel, onFailure, signal, inject, durableOpts });
+  }
+  // Desde aquí sólo EasyBits: su `message-stream` (contrato «B») sigue vivo allá.
   for (let intento = 0; ; intento++) {
   try {
-    // `parts` = FileParts A2A (media); EasyBits los normaliza por MIME (Slice E1).
-    // configGroupId "teams" = unidad de config ESTABLE de este canal en EasyBits
-    // (tools + comportamiento por-Teams via groupConfigs["teams"]); sin él la config
-    // caería por-conversación (groupId) → solo el default del agente.
-    const streamBody = JSON.stringify({
-      groupId,
-      configGroupId: "teams",
-      sender: sender || "invitado",
-      text: outText,
-      parts,
-      // Persona por-agente + guardrail eb-doc, ambos en la capa system. EasyBits los
-      // mergea al system del worker (claude-worker) o al marco de confianza del turno
-      // (ghosty-gc). Nunca en el texto del usuario → nunca se lee como inyección.
-      appendSystemPrompt: [
-        // NATIVO: Studio es dueño de la identidad (FleetAgent.persona.prompt, aplicada
-        // en routeTurn) → NO la mandamos desde aquí para evitar doble prompt. EasyBits
-        // sí la lleva (su worker no la conoce). Product-context/self-identity/guardrail
-        // son contexto del canal (Teams), van siempre.
-        !native && persona ? `[Persona de ${agent.name}]\n${persona}` : null,
-        TEAMS_PRODUCT_CONTEXT,
-        handleIdentity(agent),
-        selfIdentity(agent),
-        EB_DOC_STREAM_GUARDRAIL,
-        // Guía de DISEÑO del artefacto. Va pegada al guardrail porque comparte su
-        // condición: sólo cuenta en el canal Teams/web, que es donde el agente puede
-        // emitir un eb-artifact.
-        ARTIFACT_DESIGN_GUIDE,
-        // Qué hacer cuando la tarea le queda grande: mandarla al hermano mayor si vive
-        // en este espacio, o proponer subir de modelo si no. Depende del padrón del
-        // workspace, así que se resuelve aquí y no en Studio.
-        await escalationHint(agent),
-      ]
-        .filter(Boolean)
-        .join("\n\n"),
-      // Solo runtime nativo + hay invocador → tools de conectores per-user (opaco a Studio).
-      ...(toolToken && toolsUrl ? { toolToken, toolsUrl } : {}),
-      ...(wakeUrl && wakeRef ? { wakeUrl, wakeRef } : {}),
-      ...(inject ? { inject: true } : {}),
-      ...(inject && durableOpts?.messageRef != null ? { messageRef: String(durableOpts.messageRef) } : {}),
-      ...(salesBoardId ? { boardId: salesBoardId } : {}),
-      // Modelo de ESTE turno (fábrica). gs lo valida contra el motor y lo topa por plan.
-      ...(native && factoryTurn?.model ? { model: factoryTurn.model } : {}),
-      // Ayudantes nativos síncronos en @build, @plan y @check; gs los prende si el espacio tiene
-      // `factoryNativeSubagents`. Los tres: Arqui es @plan y @check en la MISMA sesión y su lista
-      // de tools se fija al abrirla. En @plan/@check sólo `investigador` (sólo lectura, lo fija el
-      // worker). Van en TODO turno de un rol para que las claves del turno no oscilen.
-      ...(native && factoryTurn
-        ? {
-            nativeSubagents: ["build", "plan", "check"].includes(agent.handle),
-            childProfile: agent.handle === "build" ? "" : "investigador",
-          }
-        : {}),
-    });
+    const streamBody = JSON.stringify(fields);
     const url = `${base}/api/v2/fleet-agents/${fleetAgentId}/message-stream`;
     const doStream = (tok: string) =>
       fetch(url, { method: "POST", headers: rt.headers(streamBody, tok), body: streamBody, signal });
     // SELF-HEAL: el fleet_token de EasyBits (pool) CADUCA. Ante 401 refrescamos el
     // OAuth + re-obtenemos el token fresco y reintentamos UNA vez (incidente
     // 2026-07-14). El runtime lo declara — la HMAC del nativo no caduca por turno.
-    const turnsBase = `${base}/api/v2/fleet-agents/${fleetAgentId}/turns`;
-    const agentTok = agent.backend.token;
-    const openEvents = () => {
-      const h: Record<string, string> = { ...rt.headers("", agentTok), Accept: "text/event-stream" };
-      if (lastSeq >= 0) h["Last-Event-ID"] = String(lastSeq);
-      return fetch(`${turnsBase}/${encodeURIComponent(durableTurnId)}/events`, { headers: h, signal });
-    };
-    if (native && durable !== false && signal && !cancelHooked) {
-      cancelHooked = true;
-      // Detener: además de cortar ESTA conexión, se le dice a gs que pare el turno (si no, el
-      // turno durable seguiría trabajando sin nadie que lo lea).
-      signal.addEventListener(
-        "abort",
-        () => {
-          if (cancelSent || !durable) return;
-          cancelSent = true;
-          void fetch(`${turnsBase}/${encodeURIComponent(durableTurnId)}/cancel`, { method: "POST", headers: rt.headers("{}", agentTok), body: "{}" }).catch(() => {});
-        },
-        { once: true },
-      );
-    }
-    let res: Response | undefined;
-    if (native && durable !== false) {
-      if (durable === null) {
-        const startBody = JSON.stringify({ ...JSON.parse(streamBody), turnId: durableTurnId });
-        const st = await fetch(turnsBase, { method: "POST", headers: rt.headers(startBody, agentTok), body: startBody, signal });
-        if (st.status === 404 || st.status === 405) {
-          await st.text().catch(() => "");
-          durable = false; // gs viejo: camino de siempre
-        } else {
-          res = st;
-          if (st.status === 202 || st.ok) {
-            await st.text().catch(() => "");
-            durable = true;
-            durableOpts?.onDurable?.(durableTurnId);
-          }
-        }
-      }
-      if (durable) res = await openEvents();
-    }
-    if (!res) res = await doStream(agent.backend.token);
+    let res = await doStream(agent.backend.token);
     if (rt.refreshesOn401 && res.status === 401) {
       // El body del 401 se DRENA antes de reasignar `res`: una respuesta sin consumir
       // retiene su socket hasta que el GC la recoja, y esto corre en cada caducidad
@@ -2636,14 +2590,6 @@ export async function callAgentBackendStream(
         while ((nl = buf.indexOf("\n\n")) !== -1) {
           const frame = buf.slice(0, nl);
           buf = buf.slice(nl + 2);
-          const idLine = frame.split("\n").find((l) => l.startsWith("id:"));
-          if (idLine) {
-            const n = Number(idLine.slice(3).trim());
-            if (Number.isFinite(n)) {
-              if (n <= lastSeq) continue; // ya procesado antes del reenganche
-              lastSeq = n;
-            }
-          }
           const line = frame.split("\n").find((l) => l.startsWith("data:"));
           if (!line) continue;
           let ev: { type?: string; value?: string; model?: string; message?: string; name?: string; id?: string; phase?: "start" | "end"; ok?: boolean; detail?: string; todos?: TodoItem[]; sub?: SubEvent; elapsedMs?: number; messageIds?: unknown; folded?: boolean; failed?: unknown } & Partial<TruncatedEvent>;
@@ -2705,7 +2651,7 @@ export async function callAgentBackendStream(
     // el usuario no provocó… cuando lo provocó él (visto en prod 2026-07-29). Se relanza:
     // runAgentTurn ya sabe cerrar el turno con "⏹ Detenido" conservando lo escrito.
     if (signal?.aborted || (e instanceof Error && e.name === "AbortError")) throw e;
-    if ((durable === true || (!streamed && !huboTool)) && intento < ESPERAS_MS.length && esFalloDeTransporte(e)) {
+    if (!streamed && !huboTool && intento < ESPERAS_MS.length && esFalloDeTransporte(e)) {
       const ms = (e as { retryAfterMs?: number }).retryAfterMs ?? ESPERAS_MS[intento];
       console.warn(`[fleet-stream] @${agent.handle} ${String((e as Error)?.message ?? e).slice(0, 80)} → reintento ${intento + 1}/${ESPERAS_MS.length} en ${ms} ms`);
       await esperar(ms, signal);
@@ -2724,6 +2670,155 @@ export async function callAgentBackendStream(
     await onChunk(msg);
     return msg;
   }
+  }
+}
+
+// ── Turno contra el runtime NATIVO (gs) en AG-UI ─────────────────────────────
+//
+// `POST /api/v2/fleet-agents/:id/agui` (contrato gs-agui 1, docs/agui-migracion.md). El run vive
+// en gs: cerrar la conexión NO lo detiene, y volver a pedir el mismo `runId` se engancha a él
+// (gs re-emite lo abierto acumulado; `AguiTurnReader` sólo pasa lo nuevo). Detener =
+// `forwardedProps.cancel`. No hay cola en gs: con otro run vivo en el hilo contesta
+// `409 run_active` y aquí se espera a que termine (antes la cola era el lock del worker).
+const AGUI_IDLE_MS = 90_000;
+/** Cada cuánto se reintenta un `409 run_active`, y hasta cuándo (un @build largo tarda). */
+const RUN_ACTIVE_POLL_MS = 5_000;
+const RUN_ACTIVE_MAX_MS = 60 * 60_000;
+
+async function nativeAguiTurn(o: {
+  agent: ResolvedAgent;
+  rt: import("./server/agent-runtime.server").HttpRuntime;
+  base: string;
+  fleetAgentId: string;
+  groupId: string;
+  /** Lo que antes iba en el body de `message-stream`. */
+  fields: Record<string, unknown>;
+  outText: string;
+  parts: MediaPart[];
+  onChunk: (chunk: string) => void | Promise<void>;
+  onTool?: (ev: ToolEvent) => void | Promise<void>;
+  onTruncated?: (ev: TruncatedEvent) => void;
+  onModel?: (model: string) => void;
+  onFailure?: (info: { message: string }) => void;
+  signal?: AbortSignal;
+  inject?: boolean;
+  durableOpts?: Parameters<typeof callAgentBackendStream>[18];
+}): Promise<string> {
+  const { agent, groupId, signal, durableOpts } = o;
+  const { AguiTurnReader, AguiHttpError, buildRunInput, httpErrorOf, userMessageId } = await import("./server/gs-agui.server");
+  const { isCleanTool } = await import("./server/turns.server");
+  const rt = o.rt;
+  const url = `${o.base}/api/v2/fleet-agents/${encodeURIComponent(o.fleetAgentId)}/agui`;
+  const agentTok = (agent.backend as { token?: string }).token ?? "";
+  const post = (input: Record<string, unknown>, sig?: AbortSignal) => {
+    const body = JSON.stringify(input);
+    return fetch(url, { method: "POST", headers: { ...rt.headers(body, agentTok), Accept: "text/event-stream" }, body, signal: sig });
+  };
+
+  const runId = durableOpts?.resumeTurnId ?? `teams:${crypto.randomUUID()}`;
+  const adopting = !!durableOpts?.resumeTurnId;
+  // El texto ya lleva todos los hints; lo demás del body viejo viaja tal cual en forwardedProps.
+  const { groupId: _g, text: _t, parts: _p, inject: _i, messageRef: _m, ...props } = o.fields;
+  let steer = !!o.inject;
+  const message = { id: userMessageId(runId, steer ? durableOpts?.messageRef : null), text: o.outText, parts: o.parts };
+
+  let huboTool = false;
+  const reader = new AguiTurnReader({
+    onChunk: o.onChunk,
+    onTool: async (ev) => {
+      if (ev.phase === "start" && ev.name && !isCleanTool(ev.name)) huboTool = true;
+      await o.onTool?.(ev);
+    },
+    onTruncated: o.onTruncated,
+    onModel: o.onModel,
+    // En un steer el RUN_STARTED trae el run del OTRO turno: ése no es nuestro para adoptar.
+    onRunStarted: (rid) => {
+      if (rid === runId) durableOpts?.onDurable?.(rid);
+    },
+    onReplyTo: durableOpts?.onReplyTo,
+    onAttachmentsFailed: durableOpts?.onAttachmentsFailed,
+    onStalled: (st) =>
+      void import("./server/apps/factory-runs.server")
+        .then((m) => m.onRoleStalled(groupId, st as unknown as import("./server/apps/factory-runs.server").StalledFrame))
+        .catch(() => {}),
+  });
+
+  // Detener: colgar ya no basta, hay que pedirle a gs que pare el run.
+  let injected = false;
+  const onAbort = () => {
+    if (injected) return; // el run vivo es de otro turno: Detener aquí no lo mata
+    const input = buildRunInput({ threadId: groupId, runId: `teams:${crypto.randomUUID()}`, forwardedProps: { cancel: reader.runId ?? runId } });
+    void post(input, AbortSignal.timeout(10_000))
+      .then((r) => r.body?.cancel())
+      .catch(() => {});
+  };
+  signal?.addEventListener("abort", onAbort, { once: true });
+
+  const ESPERAS_MS = [5_000, 15_000, 30_000, 60_000];
+  let fallos = 0;
+  const activeSince = Date.now();
+  try {
+    for (;;) {
+      try {
+        // Antes del RUN_STARTED (o adoptando) gs aún podría no tener el run: se manda completo.
+        // Después, reconectar = `messages: []` con el mismo runId.
+        const reconnect = adopting || reader.runId !== null;
+        const input = buildRunInput({
+          threadId: groupId,
+          runId,
+          message: reconnect ? null : message,
+          forwardedProps: { ...props, ...(steer && !reconnect ? { steer: true } : {}) },
+        });
+        const res = await post(input, signal);
+        if (!(res.headers.get("content-type") ?? "").includes("text/event-stream") || !res.body) {
+          throw await httpErrorOf(res);
+        }
+        const out = await reader.read(res.body, { idleMs: AGUI_IDLE_MS });
+        if (!out) throw new Error("terminated (gs cerró el stream sin RUN_FINISHED)");
+        if (out.kind === "injected") {
+          injected = true;
+          return INJECTED;
+        }
+        return out.text || "(sin respuesta)";
+      } catch (e) {
+        if (signal?.aborted || (e instanceof Error && e.name === "AbortError")) throw e;
+        if (e instanceof AguiHttpError) {
+          // ⚠️ 402 = sin saldo: respuesta legítima del turno, no avería (ver el camino EasyBits).
+          if (e.status === 402) {
+            const texto = e.detail || "Este agente se quedó sin saldo.";
+            await o.onChunk(texto);
+            return texto;
+          }
+          // Otro run vivo en el hilo. Si era un steer que no pudo entrar, se manda como turno
+          // normal en cuanto el vivo termine (contrato §0.7b.6).
+          if (e.status === 409 && e.code === "run_active" && Date.now() - activeSince < RUN_ACTIVE_MAX_MS) {
+            steer = false;
+            await esperar(e.retryAfterMs ?? RUN_ACTIVE_POLL_MS, signal);
+            if (signal?.aborted) throw new DOMException("Detenido mientras esperaba", "AbortError");
+            continue;
+          }
+        }
+        const transporte = esFalloDeTransporte(e) || (e instanceof AguiHttpError && [429, 502, 503, 504].includes(e.status));
+        // Con el run ya en gs reintentar es reengancharse, nunca repetir trabajo. Sin él, sólo
+        // si aún no hubo texto ni tool sucia (lo mismo que el camino EasyBits).
+        if (transporte && fallos < ESPERAS_MS.length && (reader.runId !== null || (!reader.hadOutput && !huboTool))) {
+          const ms = (e as { retryAfterMs?: number }).retryAfterMs ?? ESPERAS_MS[fallos];
+          fallos++;
+          console.warn(`[gs-agui] @${agent.handle} ${String((e as Error)?.message ?? e).slice(0, 80)} → reintento ${fallos}/${ESPERAS_MS.length} en ${ms} ms`);
+          await esperar(ms, signal);
+          if (signal?.aborted) throw new DOMException("Detenido durante el reintento", "AbortError");
+          continue;
+        }
+        const streamed = reader.text;
+        const fenceAbierto = (streamed.match(/^```/gm)?.length ?? 0) % 2 === 1;
+        const msg = `${fenceAbierto ? "\n```\n\n" : ""}⚠️ No pude contactar a @${agent.handle}: ${e instanceof Error ? e.message : e}`;
+        o.onFailure?.({ message: e instanceof Error ? e.message : String(e) });
+        await o.onChunk(msg);
+        return msg;
+      }
+    }
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
   }
 }
 

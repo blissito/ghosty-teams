@@ -78,8 +78,10 @@ describe("un reinicio de Teams no mata los turnos durables", () => {
     expect(w).toMatch(/durableResume: ref\.adopt\.turnId/);
     expect(w).toMatch(/shellId = ref\.adopt\.shellId/);
     const a = leer("agents.server.ts");
-    expect(a).toMatch(/let durable: boolean \| null = durableOpts\?\.resumeTurnId \? true : null;/);
-    expect(a).toMatch(/durableOpts\?\.onDurable\?\.\(durableTurnId\)/);
+    // AG-UI: adoptar = reengancharse al mismo runId con `messages: []`; sólo se guarda el run propio.
+    expect(a).toMatch(/const adopting = !!durableOpts\?\.resumeTurnId;/);
+    expect(a).toMatch(/message: reconnect \? null : message/);
+    expect(a).toMatch(/if \(rid === runId\) durableOpts\?\.onDurable\?\.\(rid\);/);
   });
 });
 
