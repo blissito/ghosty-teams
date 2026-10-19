@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 afterEach(cleanup);
 
@@ -12,6 +12,7 @@ const runs: Record<number, object> = {
   12: { runId: 12, title: "CLI", status: "pr_review", planVersion: 2, loops: 0, canSign: false, prUrl: "https://github.com/o/r/pull/34", preview: null, repo: "o/r", threadUrl: "/c/dev?thread=98", ci: { state: "pending", repoHasCi: true }, mergeQueued: true },
   11: { runId: 11, title: "CLI", status: "pr_review", planVersion: 2, loops: 1, canSign: false, prUrl: "https://github.com/o/r/pull/34", preview: null, repo: "o/r", threadUrl: "/c/dev?thread=98", ci: { state: "success", repoHasCi: true } },
 };
+const decisions: object[] = [];
 vi.mock("../../server/apps/factory", () => ({
   factoryVerdictFn: async ({ data }: { data: { runId: number } }) => ({
     ci: data.runId === 12
@@ -29,7 +30,11 @@ vi.mock("../../server/apps/factory", () => ({
     prUrl: null, preview: null, repo: "o/r", threadUrl: "/c/dev?thread=99",
     escalation: { points: ["`ci.yml:51` agrega un paso", "dos cifras de vendido hoy", "c", "d"], at: 1 },
   }),
-  factoryDecisionFn: async () => ({}),
+  factoryDecisionFn: async (a: { data: object }) => (decisions.push(a.data), {}),
+  factoryAdviseFn: async () => ({
+    decision: "fix", why: "Los 4 puntos caben en el plan.", confidence: "high", checkScope: "Sólo los 4 puntos",
+    buildNote: [{ point: "Filtrar activeMarketers", cites: "campaign-permission.server.ts:34" }], note: "1. Filtrar activeMarketers",
+  }),
   factoryRetryPreviewFn: async () => ({}),
   factorySetPreviewOffFn: async () => ({}),
 }));
@@ -40,8 +45,20 @@ describe("RunCard escalado", () => {
   it("muestra «Te toca decidir» y qué pasó", async () => {
     render(<RunCard card={{ runId: 10 } as never} channelId={3} />);
     await waitFor(() => expect(screen.getByText("Te toca decidir")).toBeTruthy());
-    expect(screen.getByText("3 vueltas sin cerrar: ¿otra vuelta o replanear?")).toBeTruthy();
-    expect(screen.getByText("Otra vuelta")).toBeTruthy();
+    expect(screen.getByText("@check frenó 3 veces. Si los puntos caben en el plan, que @build los arregle.")).toBeTruthy();
+    expect(screen.getByText("Que @build lo arregle")).toBeTruthy();
+    expect(screen.getByText("¿Qué hago?")).toBeTruthy();
+  });
+
+  it("«¿Qué hago?» trae la recomendación y «Aplicar» firma con la nota y el alcance editados", async () => {
+    render(<RunCard card={{ runId: 10 } as never} channelId={3} />);
+    await waitFor(() => expect(screen.getByText("¿Qué hago?")).toBeTruthy());
+    fireEvent.click(screen.getByText("¿Qué hago?"));
+    await waitFor(() => expect(screen.getByText("Recomendación: que @build lo arregle")).toBeTruthy());
+    fireEvent.change(screen.getByDisplayValue("1. Filtrar activeMarketers"), { target: { value: "1. Filtrar activeMarketers y su prueba" } });
+    fireEvent.click(screen.getByText("Aplicar"));
+    await waitFor(() => expect(decisions).toHaveLength(1));
+    expect(decisions[0]).toMatchObject({ runId: 10, decision: "approve", note: "1. Filtrar activeMarketers y su prueba", checkScope: "Sólo los 4 puntos" });
   });
 
   it("pinta los puntos arriba y aprobar pide un 2º clic", async () => {
@@ -50,13 +67,13 @@ describe("RunCard escalado", () => {
     await waitFor(() => expect(screen.getByText("Lo que @check pide decidir:")).toBeTruthy());
     expect(screen.getByText("dos cifras de vendido hoy")).toBeTruthy();
     expect(screen.queryByText("d")).toBeNull();
-    fireEvent.click(screen.getByText("Otra vuelta"));
-    expect(screen.getByText("Leí los {n} puntos: otra vuelta".replace("{n}", "4"))).toBeTruthy();
+    fireEvent.click(screen.getByText("Que @build lo arregle"));
+    expect(screen.getByText("Leí los {n} puntos: que @build lo arregle".replace("{n}", "4"))).toBeTruthy();
     expect(screen.getByText("d")).toBeTruthy();
   });
 
-  it("escalado sin agotar vueltas: Worker no puede resolverlo", () => {
-    expect(escalationLine(1, (s) => s)).toContain("Worker no puede resolverlo");
+  it("escalado sin agotar vueltas: falta algo que @build no puede resolver", () => {
+    expect(escalationLine(1, (s) => s)).toContain("@build no puede resolver");
   });
 });
 

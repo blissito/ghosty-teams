@@ -177,6 +177,34 @@ export async function fetchRunWhy(runId: number, opts: { full?: boolean; refresh
   }
 }
 
+export type RunAdvice = {
+  decision: "fix" | "replan";
+  why: string;
+  buildNote: { point: string; cites: string }[];
+  checkScope: string;
+  confidence: "high" | "medium" | "low";
+  /** La nota lista para mandarla con la decisión: un renglón por punto. */
+  note: string;
+};
+
+/**
+ * «¿Qué hago?» con un pedido escalado (gs `/api/v2/factory/why` con `advise`): arreglar o rehacer
+ * el plan, la nota para @build y el alcance de @check. Lanza con el mensaje de gs (no escalado,
+ * modelo sin contestar) para que la tarjeta lo enseñe.
+ */
+export async function fetchRunAdvice(runId: number): Promise<RunAdvice> {
+  const { nativeRuntimeBase, partnerHeaders } = await import("../ghosty-runtime.server");
+  const { currentNamespace } = await import("../tenant.server");
+  const base = await nativeRuntimeBase();
+  const ns = await currentNamespace();
+  if (!base || !ns) throw new Error("sin conexión con Ghosty Studio");
+  const body = JSON.stringify({ runId, advise: true });
+  const res = await fetch(`${base}/api/v2/factory/why`, { method: "POST", headers: partnerHeaders(body, ns), body, signal: AbortSignal.timeout(60_000) });
+  const j = (await res.json().catch(() => null)) as { advice?: RunAdvice; message?: string } | null;
+  if (!res.ok || !j?.advice) throw new Error(j?.message ?? `gs ${res.status}`);
+  return j.advice;
+}
+
 /**
  * Le pide a gs el análisis del pedido y, si no fue sano (atascos, @build de más de 30 min,
  * vueltas, CI rojo, escalado), deja sus 3 líneas en el hilo: qué pasó, el paso crítico y qué

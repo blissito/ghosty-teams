@@ -463,6 +463,20 @@ export const factoryDecisionFn = createServerFn({ method: "POST" })
     return { ok: true as const, status: next.status };
   });
 
+/** «¿Qué hago?» de un pedido escalado: sólo recomienda; decidir sigue siendo `factoryDecisionFn`. */
+export const factoryAdviseFn = createServerFn({ method: "POST" })
+  .validator((d: { runId: number }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) throw new Error("no autenticado");
+    const R = await import("./factory-runs.server");
+    const run = await R.getRun(Number(data.runId));
+    if (!run) throw new Error("pedido no encontrado");
+    const db = await import("../../db.server");
+    if (!(await db.listChannels(me.sub, me.isOwner)).some((c) => c.id === run.channelId)) throw new Error("no ves ese room");
+    return R.fetchRunAdvice(run.id);
+  });
+
 // ── Tareas programadas (revisión nocturna, dependencias) ─────────────────────
 
 export const factorySchedulesFn = createServerFn({ method: "GET" }).handler(async () => {

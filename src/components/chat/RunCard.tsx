@@ -17,7 +17,7 @@ import { playYourTurnSound } from "../../utils/notificationSound";
 // dos veces (en el hilo y «también en el room»).
 const turnChimed = new Set<string>();
 import { DiffBar, MergeBox } from "./ReviewPanel";
-import { factoryVerdictFn, factoryMergeFn, factoryRunCardFn, factoryDecisionFn, factoryRetryPreviewFn, factorySetPreviewOffFn, factoryRunActionFn, factoryRunCiFn, factoryFixCiFn } from "../../server/apps/factory";
+import { factoryVerdictFn, factoryMergeFn, factoryRunCardFn, factoryDecisionFn, factoryAdviseFn, factoryRetryPreviewFn, factorySetPreviewOffFn, factoryRunActionFn, factoryRunCiFn, factoryFixCiFn } from "../../server/apps/factory";
 import { prepareRepoFn } from "../../server/apps/readiness";
 import type { RunCardData } from "../../lib/ebdoc";
 
@@ -81,8 +81,8 @@ const STEPS = [
  */
 export function escalationLine(loops: number, t: (s: string) => string): string {
   return loops >= 3
-    ? t("{n} vueltas sin cerrar: ¿otra vuelta o replanear?").replace("{n}", String(loops))
-    : t("Worker no puede resolverlo con sus herramientas: ¿otra vuelta o replanear?");
+    ? t("@check frenó {n} veces. Si los puntos caben en el plan, que @build los arregle.").replace("{n}", String(loops))
+    : t("Falta algo que @build no puede resolver con sus herramientas: dalo tú, o rehaz el plan.");
 }
 
 /**
@@ -184,6 +184,10 @@ function RunCardBody({ card, channelId, inPanel, msgId }: { card: RunCardData; c
   // Escalado: aprobar pide un 2º clic con los puntos a la vista (no se aprueba a ciegas).
   const [confirming, setConfirming] = useState(false);
   const [allPoints, setAllPoints] = useState(false);
+  // «¿Qué hago?»: la recomendación de gs, con la nota y el alcance editables antes de «Aplicar».
+  const [advice, setAdvice] = useState<Awaited<ReturnType<typeof factoryAdviseFn>> | null>(null);
+  const [adviceNote, setAdviceNote] = useState("");
+  const [adviceScope, setAdviceScope] = useState("");
 
   const [review, setReview] = useState<VerdictState>(null);
   // Confeti en el ROOM cuando el pedido se mezcla con la tarjeta a la vista. El del hilo
@@ -308,13 +312,38 @@ function RunCardBody({ card, channelId, inPanel, msgId }: { card: RunCardData; c
     }
   };
 
-  const decide = async (decision: "approve" | "changes") => {
+  const askAdvice = async () => {
     setBusy(true);
     setErr("");
     try {
-      await factoryDecisionFn({ data: { runId: st.runId, version: st.planVersion, decision, note: decision === "changes" ? note : undefined } });
+      const a = await factoryAdviseFn({ data: { runId: st.runId } });
+      setAdvice(a);
+      setAdviceNote(a.note);
+      setAdviceScope(a.checkScope);
+      setAsking(false);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const decide = async (decision: "approve" | "changes", opts?: { note: string; checkScope: string }) => {
+    setBusy(true);
+    setErr("");
+    try {
+      await factoryDecisionFn({
+        data: {
+          runId: st.runId,
+          version: st.planVersion,
+          decision,
+          note: opts ? opts.note.trim() || undefined : decision === "changes" ? note : undefined,
+          checkScope: opts?.checkScope.trim() || undefined,
+        },
+      });
       setAsking(false);
       setNote("");
+      setAdvice(null);
       refresh();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -669,8 +698,8 @@ function RunCardBody({ card, channelId, inPanel, msgId }: { card: RunCardData; c
               >
                 {st.status === "escalated"
                   ? confirming
-                    ? t("Leí los {n} puntos: otra vuelta").replace("{n}", String(st.escalation?.points.length ?? 0))
-                    : t("Otra vuelta")
+                    ? t("Leí los {n} puntos: que @build lo arregle").replace("{n}", String(st.escalation?.points.length ?? 0))
+                    : t("Que @build lo arregle")
                   : `${t("Aprobar plan")} v${st.planVersion}`}
               </button>
               <button
@@ -679,8 +708,18 @@ function RunCardBody({ card, channelId, inPanel, msgId }: { card: RunCardData; c
                 onClick={() => setAsking((v) => !v)}
                 className="rounded-full border border-border px-3 py-1 text-xs font-semibold text-muted hover:text-ink disabled:opacity-50"
               >
-                {st.status === "escalated" ? t("Replanear") : t("Pedir cambios")}
+                {st.status === "escalated" ? t("Rehacer el plan") : t("Pedir cambios")}
               </button>
+              {st.status === "escalated" && (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => (advice ? setAdvice(null) : askAdvice())}
+                  className="rounded-full bg-brand px-3 py-1 text-xs font-bold text-white disabled:opacity-50"
+                >
+                  {busy && !advice ? t("Analizando…") : t("¿Qué hago?")}
+                </button>
+              )}
             </>
           )}
           {/* El plan se lee en el panel lateral del pedido (plan, firma y bitácora), no dentro de la
@@ -770,6 +809,47 @@ function RunCardBody({ card, channelId, inPanel, msgId }: { card: RunCardData; c
             {t("Ver hilo")} →
           </a>
         </div>
+        {advice && st.status === "escalated" && (
+          <div className="mt-2 rounded-lg border border-brand/40 bg-brand/5 px-3 py-2 text-xs" role="region" aria-label={t("¿Qué hago?")}>
+            <p className="font-bold text-ink">
+              {advice.decision === "fix" ? t("Recomendación: que @build lo arregle") : t("Recomendación: rehacer el plan")}
+            </p>
+            <p className="mt-1 text-ink">{advice.why}</p>
+            <label className="mt-2 block font-semibold text-ink">
+              {advice.decision === "fix" ? t("Nota para @build") : t("Qué cambiar en el plan")}
+              <textarea
+                value={adviceNote}
+                onChange={(e) => setAdviceNote(e.target.value)}
+                rows={Math.min(8, adviceNote.split("\n").length + 1)}
+                className="mt-1 block w-full rounded-lg border border-border bg-surface px-2 py-1.5 text-xs font-normal text-ink"
+              />
+            </label>
+            {advice.decision === "fix" && (
+              <label className="mt-2 block font-semibold text-ink">
+                {t("@check revisa sólo")}
+                <input
+                  value={adviceScope}
+                  onChange={(e) => setAdviceScope(e.target.value)}
+                  className="mt-1 block w-full rounded-lg border border-border bg-surface px-2 py-1.5 text-xs font-normal text-ink"
+                />
+              </label>
+            )}
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={busy || !adviceNote.trim()}
+                onClick={() => decide(advice.decision === "fix" ? "approve" : "changes", { note: adviceNote, checkScope: advice.decision === "fix" ? adviceScope : "" })}
+                className="rounded-full bg-brand px-3 py-1 text-xs font-bold text-white disabled:opacity-50"
+              >
+                {t("Aplicar")}
+              </button>
+              <button type="button" onClick={() => setAdvice(null)} className="text-xs font-semibold text-muted hover:text-ink">
+                {t("Cerrar")}
+              </button>
+              <span className="text-muted">{t("No se aplica sola: revisa la nota antes.")}</span>
+            </div>
+          </div>
+        )}
         {asking && (
           <div className="mt-2 flex gap-2">
             <input
