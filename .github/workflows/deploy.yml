@@ -62,7 +62,9 @@ jobs:
       # nativos en Linux), así que es `npm install`, no `npm ci`.
       - name: npm install
         working-directory: app
-        run: npm install --no-audit --no-fund
+        # --legacy-peer-deps: sin lockfile, el arborist de npm 10 truena resolviendo los peers
+        # («Cannot read properties of null (reading 'edgesOut')», 19-oct); así instala y compila igual.
+        run: npm install --no-audit --no-fund --legacy-peer-deps
 
       # Informativo mientras main tenga pruebas en rojo: hoy fallan 12 y bloquearían todo
       # deploy. Cuando queden en verde, quitar continue-on-error para que un rojo frene.
