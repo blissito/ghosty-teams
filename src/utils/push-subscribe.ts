@@ -40,10 +40,16 @@ export async function reconcilePushSubscription(): Promise<void> {
     if (!sub) return; // sin sub no hay nada que reconciliar (activar es decisión del usuario)
     const { key } = await getVapidKeyFn();
     const current = sub.options?.applicationServerKey;
-    if (!current) return; // el browser no lo expone → no podemos comparar, no tocamos nada
-    const a = new Uint8Array(current);
     const b = urlBase64ToUint8Array(key);
-    if (a.length === b.length && a.every((v, i) => v === b[i])) return; // al día
+    const a = current ? new Uint8Array(current) : null;
+    // Llave al día (o el browser no la expone): se vuelve a guardar en el server, que es
+    // un upsert por endpoint. El 19-oct la PWA de iOS decía «Desactivar» (sub viva en el
+    // browser) y el server no tenía ninguna fila: nada llegaba y nadie lo notaba.
+    if (!a || (a.length === b.length && a.every((v, i) => v === b[i]))) {
+      const json = sub.toJSON() as { endpoint: string; keys: { p256dh: string; auth: string } };
+      await subscribePushFn({ data: { endpoint: json.endpoint, p256dh: json.keys.p256dh, auth: json.keys.auth } });
+      return;
+    }
     await enablePush(); // desuscribe la vieja y suscribe con la llave vigente
   } catch {
     /* SW muriendo / server caído → se reintenta en la próxima carga */

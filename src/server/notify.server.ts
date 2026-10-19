@@ -92,7 +92,9 @@ async function deliverWebPush(ev: NotifyEvent, ns: string): Promise<void> {
   const recipients = isCall ? ev.recipients : ev.recipients.filter((sub) => !isOnline(ns, sub));
   if (!recipients.length) return;
   const stored = await db.listPushSubsForUsers(recipients);
-  if (!stored.length) return;
+  // Sin suscripción también deja rastro: salir mudo escondió por semanas que ninguna PWA
+  // de iPhone estaba suscrita (sólo se veían los `[push app …]`).
+  if (!stored.length) return void console.log(`[push ${ev.kind}] subs=0 (${recipients.length} persona(s) sin PWA suscrita)`);
   // El badge del ícono del PWA se calcula POR DESTINATARIO (es su total de no-leídos)
   // → una query por persona, no por suscripción. Con la app cerrada este es el único
   // camino para que el número del ícono suba (la página no corre).
