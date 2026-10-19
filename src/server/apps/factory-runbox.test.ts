@@ -66,7 +66,7 @@ describe("ensureRunBox", () => {
     expect(await ensureRunBox(run())).toBe("waiting");
     expect(await ensureRunBox(run())).toBe("waiting");
     expect(posts).toHaveLength(1);
-    expect(posts[0]).toMatch(/F1 tiene 2 lugar\(es\) y están ocupados por pedidos en curso \(#15, #14\)/);
+    expect(posts[0]).toMatch(/Tu plan F1 deja construir \*\*2 pedidos a la vez\*\* y ya van #15 y #14/);
   });
 
   it("sin repo o con gs caído sigue el camino viejo", async () => {
