@@ -35,7 +35,8 @@ vi.mock("../users.server", () => ({
 vi.mock("../server/apps/installed.server", () => ({ isInstalled: async () => true }));
 vi.mock("../server/connectors/github.server", () => ({
   normalizeRepo: (r: string) => (/^[\w.-]+\/[\w.-]+$/.test(r) ? r : null),
-  allTools: () => [{ name: "github_list_repos", handler: async () => ({ repos: [{ repo: "blissito/ghosty-studio" }], addMoreUrl: "https://github.com/apps/ghosty/installations/new" }) }],
+  githubApi: async (_s: string, path: string) => (path === "/repos/blissito/ghosty-studio" ? { full_name: "blissito/ghosty-studio" } : { error: "Not Found" }),
+  allTools: () => [{ name: "github_install_link", handler: async () => ({ instalarOAgregarRepos: "https://github.com/apps/ghosty/installations/new" }) }],
 }));
 vi.mock("../server/apps/factory", () => ({ requestCiBox: async (r: string[]) => (ciAsked.push(r), "ws-business") }));
 vi.mock("../server/apps/uptime.server", () => ({ autoMonitorRepo: async () => {} }));

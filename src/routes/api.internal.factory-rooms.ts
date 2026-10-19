@@ -83,20 +83,16 @@ export const Route = createFileRoute("/api/internal/factory-rooms")({
 
         if (body.action !== "connect") return bad("action: ls | connect | disconnect");
 
-        // ¿La GitHub App de quien conecta alcanza el repo? Misma tool que el selector de la UI.
-        const list = allTools().find((t) => t.name === "github_list_repos");
-        const seen = list
-          ? ((await list.handler(member.sub, {}).catch(() => null)) as { repos?: { repo: string }[]; installUrl?: string; addMoreUrl?: string; error?: string } | null)
-          : null;
-        if (!seen?.repos?.some((r) => r.repo.toLowerCase() === repo.toLowerCase())) {
-          const url = seen?.addMoreUrl ?? seen?.installUrl ?? null;
-          return bad(
-            seen?.error && !seen.repos
-              ? `tu GitHub no está conectado a Ghosty: ${seen.error}`
-              : `la GitHub App de Ghosty no ve ${repo} con tu cuenta${url ? `: dale acceso en ${url}` : ""}`,
-            409,
-            { installUrl: url },
-          );
+        // ¿La GitHub App de quien conecta alcanza el repo? Se pregunta por ESE repo con su token:
+        // `github_list_repos` sólo trae la primera página (100) y en una cuenta con más repos decía
+        // «no lo ve» de uno que sí veía (blissito/ghosty-studio, 19-oct).
+        const { githubApi } = await import("../server/connectors/github.server");
+        const info = await githubApi(member.sub, `/repos/${repo}`).catch((e: Error) => ({ error: e.message }));
+        if (!info || info.error || !info.full_name) {
+          const list = allTools().find((t) => t.name === "github_install_link");
+          const links = list ? ((await list.handler(member.sub, {}).catch(() => null)) as { instalarOAgregarRepos?: string } | null) : null;
+          const url = links?.instalarOAgregarRepos ?? null;
+          return bad(`la GitHub App de Ghosty no ve ${repo} con tu cuenta${url ? `: dale acceso en ${url}` : ""}`, 409, { installUrl: url, detail: info?.error ?? null });
         }
 
         let created = false;
