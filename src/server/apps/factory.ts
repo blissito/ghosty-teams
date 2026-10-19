@@ -581,10 +581,13 @@ export const factoryRunCardFn = createServerFn({ method: "POST" })
     const ch = (await db.listChannels(me.sub, me.isOwner)).find((c) => c.id === run.channelId);
     if (!ch) return null; // quien no ve el room no ve la corrida
     const plan = run.planVersion ? await R.getPlan(run.id, run.planVersion) : null;
+    const cardRow = await (await import("../../dbq.server")).dbq("SELECT card_msg_id FROM gt_factory_runs WHERE id = ?", [run.id]).catch(() => []);
     return {
       runId: run.id,
       title: run.title,
       status: run.status,
+      // La tarjeta viva: otra copia del mismo pedido se pinta como huella (`RunFossil`).
+      cardMsgId: Number(cardRow[0]?.card_msg_id) || null,
       planVersion: run.planVersion,
       loops: run.loops,
       prUrl: run.prUrl,

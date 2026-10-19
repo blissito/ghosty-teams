@@ -1472,7 +1472,7 @@ export function stripPlanCard(body: string): string {
 export type RunCardData = { runId: number };
 
 export function extractRunCard(body: string): RunCardData | null {
-  const m = body.match(/```gt-run[^\n]*\n([\s\S]*?)```/);
+  const m = body.match(/```gt-run(?!-)[^\n]*\n([\s\S]*?)```/);
   if (!m) return null;
   try {
     const runId = Number((JSON.parse(m[1].trim()) as Record<string, unknown>).runId);
@@ -1484,6 +1484,31 @@ export function extractRunCard(body: string): RunCardData | null {
 
 export function stripRunCard(body: string): string {
   return body.replace(/```gt-run[^\n]*\n[\s\S]*?```/, "").trim();
+}
+
+// Huella de una tarjeta que ya no es la viva (```gt-run-fossil```): una sola tarjeta viva por
+// pedido; al bajarla, la anterior se reescribe con cómo iba el pedido (factory-runs `postRunCard`).
+export type RunFossilData = { runId: number; title: string; status: string; planVersion: number; prUrl: string | null; at: number; liveMsgId: number | null };
+
+export function extractRunFossil(body: string): RunFossilData | null {
+  const m = body.match(/```gt-run-fossil[^\n]*\n([\s\S]*?)```/);
+  if (!m) return null;
+  try {
+    const j = JSON.parse(m[1].trim()) as Record<string, unknown>;
+    const runId = Number(j.runId);
+    if (!(runId > 0)) return null;
+    return {
+      runId,
+      title: String(j.title ?? ""),
+      status: String(j.status ?? ""),
+      planVersion: Number(j.planVersion) || 0,
+      prUrl: typeof j.prUrl === "string" ? j.prUrl : null,
+      at: Number(j.at) || 0,
+      liveMsgId: Number(j.liveMsgId) || null,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /* ── Línea de relevo entre roles (```gt-relay```) ──────────────────────────── */

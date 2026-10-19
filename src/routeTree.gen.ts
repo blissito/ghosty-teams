@@ -56,6 +56,7 @@ import { Route as ApiInternalPostMessageRouteImport } from './routes/api.interna
 import { Route as ApiInternalMembersRouteImport } from './routes/api.internal.members'
 import { Route as ApiInternalGithubEventRouteImport } from './routes/api.internal.github-event'
 import { Route as ApiInternalFactoryDecideRouteImport } from './routes/api.internal.factory-decide'
+import { Route as ApiInternalFactoryActRouteImport } from './routes/api.internal.factory-act'
 import { Route as ApiInternalBoardEventRouteImport } from './routes/api.internal.board-event'
 import { Route as ApiInternalAnnouncementsRouteImport } from './routes/api.internal.announcements'
 import { Route as ApiInternalAlertRouteImport } from './routes/api.internal.alert'
@@ -325,6 +326,11 @@ const ApiInternalFactoryDecideRoute =
     path: '/api/internal/factory-decide',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiInternalFactoryActRoute = ApiInternalFactoryActRouteImport.update({
+  id: '/api/internal/factory-act',
+  path: '/api/internal/factory-act',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiInternalBoardEventRoute = ApiInternalBoardEventRouteImport.update({
   id: '/api/internal/board-event',
   path: '/api/internal/board-event',
@@ -537,6 +543,7 @@ export interface FileRoutesByFullPath {
   '/api/internal/alert': typeof ApiInternalAlertRoute
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
   '/api/internal/board-event': typeof ApiInternalBoardEventRoute
+  '/api/internal/factory-act': typeof ApiInternalFactoryActRoute
   '/api/internal/factory-decide': typeof ApiInternalFactoryDecideRoute
   '/api/internal/github-event': typeof ApiInternalGithubEventRoute
   '/api/internal/members': typeof ApiInternalMembersRoute
@@ -616,6 +623,7 @@ export interface FileRoutesByTo {
   '/api/internal/alert': typeof ApiInternalAlertRoute
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
   '/api/internal/board-event': typeof ApiInternalBoardEventRoute
+  '/api/internal/factory-act': typeof ApiInternalFactoryActRoute
   '/api/internal/factory-decide': typeof ApiInternalFactoryDecideRoute
   '/api/internal/github-event': typeof ApiInternalGithubEventRoute
   '/api/internal/members': typeof ApiInternalMembersRoute
@@ -697,6 +705,7 @@ export interface FileRoutesById {
   '/api/internal/alert': typeof ApiInternalAlertRoute
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
   '/api/internal/board-event': typeof ApiInternalBoardEventRoute
+  '/api/internal/factory-act': typeof ApiInternalFactoryActRoute
   '/api/internal/factory-decide': typeof ApiInternalFactoryDecideRoute
   '/api/internal/github-event': typeof ApiInternalGithubEventRoute
   '/api/internal/members': typeof ApiInternalMembersRoute
@@ -779,6 +788,7 @@ export interface FileRouteTypes {
     | '/api/internal/alert'
     | '/api/internal/announcements'
     | '/api/internal/board-event'
+    | '/api/internal/factory-act'
     | '/api/internal/factory-decide'
     | '/api/internal/github-event'
     | '/api/internal/members'
@@ -858,6 +868,7 @@ export interface FileRouteTypes {
     | '/api/internal/alert'
     | '/api/internal/announcements'
     | '/api/internal/board-event'
+    | '/api/internal/factory-act'
     | '/api/internal/factory-decide'
     | '/api/internal/github-event'
     | '/api/internal/members'
@@ -938,6 +949,7 @@ export interface FileRouteTypes {
     | '/api/internal/alert'
     | '/api/internal/announcements'
     | '/api/internal/board-event'
+    | '/api/internal/factory-act'
     | '/api/internal/factory-decide'
     | '/api/internal/github-event'
     | '/api/internal/members'
@@ -1018,6 +1030,7 @@ export interface RootRouteChildren {
   ApiInternalAlertRoute: typeof ApiInternalAlertRoute
   ApiInternalAnnouncementsRoute: typeof ApiInternalAnnouncementsRoute
   ApiInternalBoardEventRoute: typeof ApiInternalBoardEventRoute
+  ApiInternalFactoryActRoute: typeof ApiInternalFactoryActRoute
   ApiInternalFactoryDecideRoute: typeof ApiInternalFactoryDecideRoute
   ApiInternalGithubEventRoute: typeof ApiInternalGithubEventRoute
   ApiInternalMembersRoute: typeof ApiInternalMembersRoute
@@ -1373,6 +1386,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiInternalFactoryDecideRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/internal/factory-act': {
+      id: '/api/internal/factory-act'
+      path: '/api/internal/factory-act'
+      fullPath: '/api/internal/factory-act'
+      preLoaderRoute: typeof ApiInternalFactoryActRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/internal/board-event': {
       id: '/api/internal/board-event'
       path: '/api/internal/board-event'
@@ -1674,6 +1694,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiInternalAlertRoute: ApiInternalAlertRoute,
   ApiInternalAnnouncementsRoute: ApiInternalAnnouncementsRoute,
   ApiInternalBoardEventRoute: ApiInternalBoardEventRoute,
+  ApiInternalFactoryActRoute: ApiInternalFactoryActRoute,
   ApiInternalFactoryDecideRoute: ApiInternalFactoryDecideRoute,
   ApiInternalGithubEventRoute: ApiInternalGithubEventRoute,
   ApiInternalMembersRoute: ApiInternalMembersRoute,
@@ -1700,12 +1721,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { createStart } from '@tanstack/react-start'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-  }
-}

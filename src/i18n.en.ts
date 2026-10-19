@@ -2256,4 +2256,14 @@ export const en: Record<string, string> = {
   "Confirmar: mezclar sin probarlo en la preview": "Confirm: merge without testing it in the preview",
   "Mezclar sin preview": "Merge without preview",
   "✓ probada en la preview": "✓ tested in the preview",
+  // Huella de una tarjeta de pedido reemplazada (RunFossil)
+  "escribiendo el plan": "writing the plan",
+  "esperando aprobación": "awaiting approval",
+  "construyendo": "building",
+  "en revisión": "in review",
+  "PR listo": "PR ready",
+  "necesitaba una decisión": "needed a decision",
+  "terminado": "done",
+  "cancelado": "cancelled",
+  "Ver la tarjeta actual ↓": "See the current card ↓",
 };

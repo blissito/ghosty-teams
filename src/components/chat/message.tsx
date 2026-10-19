@@ -73,7 +73,7 @@ import { agentMetaFn, type AgentMeta } from "../../server/agent-meta";
 import { SmilePlus, Pencil, ArrowLeft, Reply, Square, Ban, CircleHelp, ShieldAlert, Github, Circle, Asterisk, ListChecks, MessageCircle, ArrowRight } from "lucide-react";
 import { useRtSubscribe } from "../../utils/rt-bus";
 import { PlanCard } from "./PlanCard";
-import { RunCard } from "./RunCard";
+import { RunCard, RunFossil } from "./RunCard";
 import { PrPreviewButton } from "./PrPreviewButton";
 import { VerdictCard, PreviewErrorCard } from "./VerdictCard";
 import { AdsProposalCard } from "./AdsProposalCard";
@@ -90,7 +90,7 @@ import { registerModalEsc } from "../../utils/modal-esc";
 import { useScrollLock } from "../../utils/scroll-lock";
 import { type ArtifactView, viewFromAttachment } from "../../components/ArtifactPanel";
 import { FxOverlay } from "./FxOverlay";
-import { extractFx, extractEbDoc, bubbleWithoutEbDoc, extractToolState, extractSubagents, extractSteps, extractTodos, extractAlert, extractAsk, extractPermission, extractAllPr, extractAllGh, extractTask, extractTests, extractPlanCard, extractRunCard, extractRelay, type RelayData, extractVerdictCard, extractPreviewErrorCard, extractSprintCard, extractAsksCard, extractAdsProposalCard, extractAdsCampaignCard, extractAdsReportCard, extractAdsPendingCard, parseAskUserMd, type ToolState, type TodoState, type AlertCardData, type AskCardData, type PermissionCardData, type GhCardData, type PrCardData, type TaskCardData, type TestsCardData } from "../../lib/ebdoc";
+import { extractFx, extractEbDoc, bubbleWithoutEbDoc, extractToolState, extractSubagents, extractSteps, extractTodos, extractAlert, extractAsk, extractPermission, extractAllPr, extractAllGh, extractTask, extractTests, extractPlanCard, extractRunCard, extractRunFossil, extractRelay, type RelayData, extractVerdictCard, extractPreviewErrorCard, extractSprintCard, extractAsksCard, extractAdsProposalCard, extractAdsCampaignCard, extractAdsReportCard, extractAdsPendingCard, parseAskUserMd, type ToolState, type TodoState, type AlertCardData, type AskCardData, type PermissionCardData, type GhCardData, type PrCardData, type TaskCardData, type TestsCardData } from "../../lib/ebdoc";
 import { SubagentList } from "./SubagentList";
 import { prCardStateFn, runCardActionFn, taskCardStateFn, runTaskCardActionFn } from "../../server/connectors";
 import { answerAgentAskFn } from "../../server/agent-ask";
@@ -3238,7 +3238,11 @@ export function MessageRow({
               })()}
               {(() => {
                 const rc = extractRunCard(m.body);
-                return rc ? <RunCard card={rc} channelId={m.channel_id ?? 0} /> : null;
+                return rc ? <RunCard card={rc} channelId={m.channel_id ?? 0} msgId={m.id} /> : null;
+              })()}
+              {(() => {
+                const rf = extractRunFossil(m.body);
+                return rf ? <RunFossil runId={rf.runId} title={rf.title} status={rf.status} at={rf.at} cardMsgId={rf.liveMsgId} /> : null;
               })()}
               {(() => {
                 const vc = extractVerdictCard(m.body);

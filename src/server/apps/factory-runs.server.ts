@@ -1188,7 +1188,8 @@ export async function maybeThreadDecision(opts: {
     // Escalado: un «✅» en el hilo no aprueba a ciegas lo que @check frenó (mercadito #7, 5-oct).
     // Se contesta con la tarjeta: los puntos arriba y la decisión con clics, sin escribir nada.
     if (run.status === "escalated" && d.decision === "approve" && (await escalationOf(run))) {
-      await postInThread(run, "check", `Antes de otra vuelta, lee lo que frené y decide en la tarjeta:\n\n${runCardFence(run.id)}`);
+      await postInThread(run, "check", "Antes de otra vuelta, lee lo que frené y decide en la tarjeta de abajo.");
+      await postRunCard(run);
       return true;
     }
     await decide({
@@ -1223,18 +1224,24 @@ export async function refreshRoom(channelId: number): Promise<void> {
 /** La tarjeta viva de un pedido (`RunCard`): estado y botones para decidir. */
 export const runCardFence = (runId: number) => "```gt-run\n" + JSON.stringify({ runId }) + "\n```";
 
+/** Huella de una tarjeta que ya no es la viva: cómo iba el pedido cuando la reemplazaron. */
+export type RunFossil = { runId: number; title: string; status: string; planVersion: number; prUrl: string | null; at: number; liveMsgId: number };
+export const runFossilFence = (f: RunFossil) => "```gt-run-fossil\n" + JSON.stringify(f) + "\n```";
+const RUN_FENCE = /```gt-run(?!-)[^\n]*\n[\s\S]*?```/;
+
 /**
- * Publica UNA vez la tarjeta viva de la corrida en el room (top-level, con la cara de @plan).
- * Dice en qué etapa va y deja firmar ahí mismo; el detalle vive en el hilo del pedido. Nunca
- * lanza: sin tarjeta, la corrida funciona igual.
+ * Una sola tarjeta viva por pedido (bliss, 19-oct). Publica la tarjeta abajo del hilo («también
+ * en el room») y la anterior queda como FÓSIL: su mensaje se reescribe a ```gt-run-fossil``` con
+ * cómo iba el pedido, sin botones y con liga a la viva. Antes la tarjeta se publicaba una vez y,
+ * perdida hilo arriba o borrada, no había forma de volver a traerla. Nunca lanza.
  */
-export async function ensureRunCard(run: Run): Promise<void> {
+export async function postRunCard(run: Run): Promise<number | null> {
   try {
-    const rows = await dbq("SELECT card_msg_id FROM gt_factory_runs WHERE id = ?", [run.id]);
-    if (rows[0]?.card_msg_id) return;
     const db = await import("../../db.server");
     const bus = await import("../bus.server");
     const { currentNamespace } = await import("../tenant.server");
+    const ns = await currentNamespace();
+    const prevId = Number((await dbq("SELECT card_msg_id FROM gt_factory_runs WHERE id = ?", [run.id]))[0]?.card_msg_id) || null;
     const who = await agentIdentity("plan");
     const body = runCardFence(run.id);
     // Dentro del hilo del pedido y «también en el room» (8-oct): antes salía suelta en el room y
@@ -1242,11 +1249,43 @@ export async function ensureRunCard(run: Run): Promise<void> {
     const { id } = run.rootMsgId
       ? await db.postAgent(run.channelId, run.rootMsgId, body, "msg", who.handle, who.name, run.topic, who.avatar, { alsoInChannel: true })
       : await db.postAgent(run.channelId, null, body, "msg", who.handle, who.name, run.topic, who.avatar);
-    await dbq("UPDATE gt_factory_runs SET card_msg_id = ? WHERE id = ? AND card_msg_id IS NULL", [id, run.id]);
+    await dbq("UPDATE gt_factory_runs SET card_msg_id = ? WHERE id = ?", [id, run.id]);
     const msg = await db.getMessage(id);
-    if (msg) bus.publish(bus.ch.room(await currentNamespace(), run.channelId), { t: "message:new", msg });
+    if (msg) bus.publish(bus.ch.room(ns, run.channelId), { t: "message:new", msg });
+    const prev = prevId ? await db.getMessage(prevId) : null;
+    if (prev && RUN_FENCE.test(prev.body)) {
+      const fossil = runFossilFence({ runId: run.id, title: run.title, status: run.status, planVersion: run.planVersion, prUrl: run.prUrl, at: Math.floor(Date.now() / 1000), liveMsgId: id });
+      const next = prev.body.replace(RUN_FENCE, fossil);
+      // Sin `edited_at`: no la editó nadie, la plataforma la dejó como huella.
+      await dbq("UPDATE gc_messages SET body = ? WHERE id = ?", [next, prev.id]);
+      bus.publish(bus.ch.room(ns, run.channelId), { t: "message:edited", id: prev.id, body: next, edited_at: 0 } as never);
+    }
+    return id;
   } catch (e) {
     console.error("[factory] no pude publicar la tarjeta viva", e);
+    return null;
+  }
+}
+
+/**
+ * Asegura la tarjeta viva del pedido. Sin `force`, sólo la publica si no hay una viva (nunca se
+ * publicó o su mensaje se borró); con `force` la baja al final del hilo aunque exista. Nunca lanza:
+ * sin tarjeta, la corrida funciona igual.
+ */
+export async function ensureRunCard(run: Run, opts: { force?: boolean } = {}): Promise<number | null> {
+  try {
+    if (!opts.force) {
+      const cur = Number((await dbq("SELECT card_msg_id FROM gt_factory_runs WHERE id = ?", [run.id]))[0]?.card_msg_id) || null;
+      if (cur) {
+        const db = await import("../../db.server");
+        const msg = await db.getMessage(cur);
+        if (msg && RUN_FENCE.test(msg.body)) return cur;
+      }
+    }
+    return await postRunCard(run);
+  } catch (e) {
+    console.error("[factory] no pude publicar la tarjeta viva", e);
+    return null;
   }
 }
 

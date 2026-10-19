@@ -748,8 +748,9 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
             next,
             "check",
             `⚠️ **Necesita una decisión** — @build no puede resolver esto con sus herramientas, así que no se lo regresé:\n\n${findings}\n\n` +
-              `Decide en la tarjeta (lee los puntos y elige «Otra vuelta» o «Replanear»):\n\n${R.runCardFence(next.id)}`,
+              "Decide en la tarjeta de abajo: lee los puntos y elige «Otra vuelta» o «Replanear».",
           );
+          await R.postRunCard(next);
           return { ok: true, status: next.status, note: "Escalado a una persona. No lo repitas." };
         }
         // Una vuelta cuenta sólo si @build movió el código desde la revisión anterior.
@@ -765,8 +766,9 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
             next,
             "check",
             `⚠️ **Necesita una decisión** — ${next.loops} vueltas entre @build y @check sin cerrar. Lo último que encontré:\n\n${findings}\n\n` +
-              `Decide en la tarjeta (lee los puntos y elige «Otra vuelta» o «Replanear»):\n\n${R.runCardFence(next.id)}`,
+              "Decide en la tarjeta de abajo: lee los puntos y elige «Otra vuelta» o «Replanear».",
           );
+          await R.postRunCard(next);
           return { ok: true, status: next.status };
         }
         await R.handoff(
@@ -1332,6 +1334,23 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
       },
     },
     {
+      name: "factory_card",
+      description:
+        "Baja la tarjeta viva del pedido al final de su hilo (y del room); la anterior queda como huella sin botones. " +
+        "Úsala cuando la persona no encuentra la tarjeta o pregunta dónde va el pedido. Sin argumentos: el pedido de este hilo.",
+      inputSchema: {
+        type: "object",
+        properties: { runId: { type: "number", description: "Id del PEDIDO, no el número del PR" } },
+      },
+      handler: async (sub, a) => {
+        const run = a.runId != null ? await resolveNoteRun(dest, sub, a.runId) : await runOf(dest, undefined);
+        if (!run) return { ok: false, error: "no hay pedido en este hilo: pasa runId" };
+        const R = await import("./factory-runs.server");
+        const id = await R.ensureRunCard(run, { force: true });
+        return id ? { ok: true, note: "La tarjeta ya está abajo. No la vuelvas a pegar en tu respuesta." } : { ok: false, error: "no pude publicar la tarjeta" };
+      },
+    },
+    {
       name: "factory_context",
       description:
         "Lectura. Un pedido A DETALLE: plan vigente completo, notas pendientes para @build, últimos 20 eventos de su bitácora, " +
@@ -1626,8 +1645,9 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
   }
   // Misma frase que Tasks: tenerlas y no llamarlas es el otro modo de falla.
   parts.push(
-    "Tus tools de la fábrica (factory_plan_submit, factory_plan_critique, factory_build_done, factory_check_verdict, factory_status, factory_close, factory_ci_starter, factory_repo_prep, factory_preview, factory_sprint_submit, factory_note, factory_message, factory_context, factory_room, factory_run_review) " +
-      "ya están disponibles en este turno: LLÁMALAS para cerrar tu paso; sin ellas la estafeta no avanza." +
+    "Tus tools de la fábrica (factory_plan_submit, factory_plan_critique, factory_build_done, factory_check_verdict, factory_status, factory_close, factory_ci_starter, factory_repo_prep, factory_preview, factory_sprint_submit, factory_note, factory_message, factory_context, factory_room, factory_run_review, factory_card) " +
+      "ya están disponibles en este turno: LLÁMALAS para cerrar tu paso; sin ellas la estafeta no avanza. " +
+      "Si la persona no encuentra la tarjeta del pedido, bájala con factory_card; nunca pegues tú el bloque ```gt-run```." +
       notaNombres(toolChannel),
   );
   parts.push(

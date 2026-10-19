@@ -118,13 +118,54 @@ function Morph({ children, appear }: { children: ReactNode; appear: boolean }) {
   );
 }
 
-export function RunCard(props: { card: RunCardData; channelId: number; inPanel?: boolean }) {
+/** Cómo iba el pedido, en palabras, para la huella de una tarjeta reemplazada. */
+const FOSSIL_STATUS: Record<string, string> = {
+  planning: "escribiendo el plan",
+  plan_review: "esperando aprobación",
+  building: "construyendo",
+  checking: "en revisión",
+  pr_review: "PR listo",
+  escalated: "necesitaba una decisión",
+  done: "terminado",
+  cancelled: "cancelado",
+};
+
+/**
+ * Huella de una tarjeta que ya no es la viva (una sola viva por pedido, bliss 19-oct): cómo iba
+ * el pedido cuando la bajaron, sin botones, y una liga que salta a la viva.
+ */
+export function RunFossil({ runId, title, status, at, cardMsgId }: { runId: number; title: string; status: string; at?: number; cardMsgId?: number | null }) {
+  const t = useT();
+  const jump = () => {
+    const el = cardMsgId ? document.getElementById(`msg-${cardMsgId}`) : null;
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    el.classList.add("flash-highlight");
+    setTimeout(() => el.classList.remove("flash-highlight"), 1200);
+  };
+  const when = at ? new Date(at * 1000).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : null;
+  return (
+    <div className="mt-1.5 flex max-w-xl items-center gap-2 rounded-lg border border-dashed border-border px-3 py-2 text-xs text-muted opacity-75">
+      <span className="truncate">
+        #{runId} {title} · {t(FOSSIL_STATUS[status] ?? status)}
+        {when ? ` · ${when}` : ""}
+      </span>
+      {cardMsgId ? (
+        <button type="button" onClick={jump} className="ml-auto shrink-0 font-medium text-ink hover:underline">
+          {t("Ver la tarjeta actual ↓")}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+export function RunCard(props: { card: RunCardData; channelId: number; inPanel?: boolean; msgId?: number }) {
   // Sólo crece al aparecer la que nunca se había visto; la de caché ya está ahí.
   const appear = useRef(typeof window !== "undefined" && !cards().has(props.card.runId)).current;
   return props.inPanel ? <RunCardBody {...props} /> : <Morph appear={appear}><RunCardBody {...props} /></Morph>;
 }
 
-function RunCardBody({ card, channelId, inPanel }: { card: RunCardData; channelId: number; inPanel?: boolean }) {
+function RunCardBody({ card, channelId, inPanel, msgId }: { card: RunCardData; channelId: number; inPanel?: boolean; msgId?: number }) {
   const { onOpenArtifact, me } = useContext(ChatCtx);
   // En ref: `refresh` es un useCallback y no debe recrearse (ni re-suscribirse) por esto.
   const meSub = useRef<string | null>(null);
@@ -221,6 +262,9 @@ function RunCardBody({ card, channelId, inPanel }: { card: RunCardData; channelI
     },
   });
   if (!st) return loaded ? null : <RunCardSkeleton />;
+  // Una sola tarjeta viva por pedido: las que quedaron arriba en el hilo (de antes del 19-oct, o
+  // si la reescritura a huella no llegó) se pintan como huella y saltan a la viva.
+  if (msgId && st.cardMsgId && st.cardMsgId !== msgId) return <RunFossil runId={st.runId} title={st.title} status={st.status} cardMsgId={st.cardMsgId} />;
   const mergeBoxOpen = st.status === "pr_review" && !inPanel && (merging || !!st.mergeQueued);
 
   // Cancelado: se pinta la etapa en la que iba (bitácora), no ninguna; lo hecho conserva su ✓.

@@ -77,6 +77,7 @@ vi.mock("./factory-runs.server", () => ({
   prFiles: async () => [],
   parsePrUrl: () => ({ repo: "o/r", number: 8 }),
   runCardFence: () => "",
+  postRunCard: async () => 1,
   fetchRunWhy: async (runId: number, opts: Run) => (whyCalls.push({ runId, opts }), whyReply),
 }));
 vi.mock("./factory-smoke.server", async (orig) => ({
