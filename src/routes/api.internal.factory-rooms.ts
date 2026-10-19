@@ -92,7 +92,21 @@ export const Route = createFileRoute("/api/internal/factory-rooms")({
           const list = allTools().find((t) => t.name === "github_install_link");
           const links = list ? ((await list.handler(member.sub, {}).catch(() => null)) as { instalarOAgregarRepos?: string } | null) : null;
           const url = links?.instalarOAgregarRepos ?? null;
-          return bad(`la GitHub App de Ghosty no ve ${repo} con tu cuenta${url ? `: dale acceso en ${url}` : ""}`, 409, { installUrl: url, detail: info?.error ?? null });
+          // Las instalaciones de la App que alcanza quien conecta: con eso el CLI agrega el repo a la
+          // de su dueño (`PUT /user/installations/:id/repositories/:repo` con el `gh` de la persona)
+          // en vez de mandarla a GitHub a buscar la casilla.
+          const inst = await githubApi(member.sub, "/user/installations").catch(() => null);
+          const installations = ((inst?.installations ?? []) as { id: number; account?: { login?: string }; repository_selection?: string }[]).map((i) => ({
+            id: i.id,
+            account: i.account?.login ?? null,
+            selection: i.repository_selection ?? null,
+          }));
+          return bad(`la GitHub App de Ghosty no ve ${repo} con tu cuenta${url ? `: dale acceso en ${url}` : ""}`, 409, {
+            code: "repo_not_in_installation",
+            installUrl: url,
+            installations,
+            detail: info?.error ?? null,
+          });
         }
 
         let created = false;
