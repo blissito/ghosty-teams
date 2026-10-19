@@ -5,7 +5,7 @@
 // con `enqueueWakeup` en el hilo del pedido. Ningún agente decide a quién le toca: así el
 // plan no se construye sin firma y @check no se salta.
 import { dbq } from "../../dbq.server";
-import { nextStatus, stageLabel, type RunEvent, type RunStatus } from "./factory-flow";
+import { MAX_LOOPS, nextStatus, stageLabel, type RunEvent, type RunStatus } from "./factory-flow";
 import { classifyPrRisk, type PrFile } from "./factory-risk";
 
 export type Run = {
@@ -27,6 +27,8 @@ export type Run = {
   approvedBy: string | null;
   /** La cabeza del PR que @check revisó en su último veredicto (ver `countsLoop`). */
   checkedSha?: string | null;
+  /** Lo único que @check revisa en la siguiente vuelta (lo pone quien decide un escalado). */
+  checkScope?: string | null;
   /** Firmado pero sin lugar en el tier: espera su caja (`box_state = 'waiting'`). */
   boxWaiting?: boolean;
   /** `sprint`, `dependabot`… (NULL en los pedidos sueltos). */
@@ -51,6 +53,7 @@ const toRun = (r: Record<string, any>): Run => ({
   boxWaiting: r.box_state === "waiting",
   approvedBy: r.approved_by ?? null,
   checkedSha: r.checked_sha ?? null,
+  checkScope: r.check_scope ?? null,
   kind: r.kind ?? null,
 });
 
@@ -1095,6 +1098,8 @@ export async function decide(opts: {
   version: number;
   decision: "approve" | "changes";
   note?: string;
+  /** Lo único que @check revisa en la siguiente vuelta; lo nuevo va como nota, no como hallazgo. */
+  checkScope?: string;
   sub: string;
   who: string;
   origin: string;
@@ -1105,13 +1110,21 @@ export async function decide(opts: {
   if (version !== run.planVersion) throw new Error(`ese es el plan v${version}; el vigente es v${run.planVersion}`);
   const note = (opts.note ?? "").trim().slice(0, 2000);
   if (decision === "changes" && !note) throw new Error("di qué cambiar");
+  const checkScope = (opts.checkScope ?? "").trim().slice(0, 2000);
+  const scope = checkScope ? { check_scope: checkScope } : {};
   // Replanear reinicia las vueltas de check (si no, un plan nuevo tras escalar volvía a
   // escalar al primer hallazgo). Aprobar deja registrado con qué credenciales se construye.
+  // «Otra vuelta» tras escalar deja UNA vuelta real: sin bajar `loops`, el siguiente check_fail
+  // escalaba al instante (#115, 19-oct). Un escalado por check_blocked conserva las suyas.
   const next = await applyEvent(
     run,
     decision === "approve" ? "approve" : "changes",
-    decision === "approve" ? (run.status === "escalated" ? { approved_by: sub } : { approved_by: sub, loops: 0 }) : { loops: 0 },
-    { actor: who, data: { version, ...(note ? { note } : {}) } },
+    decision === "approve"
+      ? run.status === "escalated"
+        ? { approved_by: sub, loops: Math.min(run.loops, MAX_LOOPS - 1), ...scope }
+        : { approved_by: sub, loops: 0, ...scope }
+      : { loops: 0, ...scope },
+    { actor: who, data: { version, ...(note ? { note } : {}), ...(checkScope ? { checkScope } : {}) } },
   );
   await dbq("UPDATE gt_factory_plans SET decision = ?, decided_by = ?, note = ? WHERE run_id = ? AND version = ?", [
     decision,
@@ -1126,10 +1139,12 @@ export async function decide(opts: {
   if (decision === "approve") {
     // Desde `escalated` también se aprueba («otra vuelta»): el encargo lo dice.
     const again = run.status === "escalated";
+    // La nota de quien decide va con las demás: antes sólo quedaba en gt_factory_plans y @build no la veía.
+    if (again && note) await addNote(run.id, who, note);
     const why = again ? "otra vuelta tras escalar" : "construir el plan aprobado";
     const text =
       (again
-        ? `${who} pidió otra vuelta. Revisa los últimos hallazgos de @check en este hilo, corrige en la misma rama y cierra con factory_build_done.`
+        ? `${who} pidió otra vuelta. Revisa lo que pide (abajo, en las notas) y los últimos hallazgos de @check en este hilo, corrige en la misma rama y cierra con factory_build_done.`
         : run.prUrl
           ? // El PR ya existe (Dependabot, PR adoptado): se arregla EN su rama, o su CI y su preview
             // se quedan rojos para siempre mientras el arreglo vive en otro PR.

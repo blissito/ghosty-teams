@@ -1033,6 +1033,9 @@ async function migrate(): Promise<void> {
   // La cabeza del PR que @check revisó en su último veredicto: un `check_fail` sólo gasta vuelta
   // si @build la movió (`countsLoop` en apps/factory-flow.ts).
   await addColumn("gt_factory_runs", "checked_sha", "TEXT");
+  // Lo único que @check revisa en la siguiente vuelta (lo pone quien decide un escalado); se
+  // borra con su veredicto.
+  await addColumn("gt_factory_runs", "check_scope", "TEXT");
   // Notas sobre un pedido que llegan de cualquier hilo (`factory_note`): «faltan los docs del CLI»
   // dicho en el hilo del PR. El siguiente encargo de @build las incluye y las marca consumidas.
   await exec(`CREATE TABLE IF NOT EXISTS gt_factory_notes (

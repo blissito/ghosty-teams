@@ -25,7 +25,7 @@ async function verify(ts: string, sig: string, rawBody: string): Promise<boolean
 
 const bad = (error: string, status = 400) => Response.json({ error }, { status });
 
-type Body = { runId?: number; action?: string; version?: number; note?: string; skipPreview?: boolean; sub?: string };
+type Body = { runId?: number; action?: string; version?: number; note?: string; checkScope?: string; skipPreview?: boolean; sub?: string };
 
 export const Route = createFileRoute("/api/internal/factory-act")({
   server: {
@@ -71,7 +71,9 @@ export const Route = createFileRoute("/api/internal/factory-act")({
               run,
               version: version > 0 ? version : run.planVersion,
               decision: body.action,
-              note: body.action === "changes" ? String(body.note).slice(0, 4000) : undefined,
+              // También al aprobar: la nota de «otra vuelta» le llega a @build.
+              note: body.note ? String(body.note).slice(0, 4000) : undefined,
+              checkScope: body.checkScope ? String(body.checkScope) : undefined,
               sub: member.sub,
               who: member.name || "alguien",
               origin,

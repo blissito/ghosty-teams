@@ -440,7 +440,7 @@ export const factoryPlanCardFn = createServerFn({ method: "POST" })
 
 /** Aprobar / pedir cambios desde la tarjeta. Firma QUIEN HACE CLIC, no el agente. */
 export const factoryDecisionFn = createServerFn({ method: "POST" })
-  .validator((d: { runId: number; version: number; decision: "approve" | "changes"; note?: string }) => d)
+  .validator((d: { runId: number; version: number; decision: "approve" | "changes"; note?: string; checkScope?: string }) => d)
   .handler(async ({ data }) => {
     const me = await sessionUser();
     if (!me) throw new Error("no autenticado");
@@ -455,6 +455,7 @@ export const factoryDecisionFn = createServerFn({ method: "POST" })
       version: Number(data.version),
       decision: data.decision === "changes" ? "changes" : "approve",
       note: data.note,
+      checkScope: data.checkScope,
       sub: me.sub,
       who: me.name || "alguien",
       origin: await reqOrigin().catch(() => ""),

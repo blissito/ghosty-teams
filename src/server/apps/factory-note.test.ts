@@ -64,6 +64,9 @@ vi.mock("./factory-runs.server", () => ({
     return { ...run, status: "building" };
   },
   prConflicted: async () => null,
+  prTouchesGithubDir: async () => false,
+  ensurePrClosesIssue: async () => {},
+  getPlan: async () => ({ planMd: "1. permiso de Marketer" }),
   MERGE_FROM_HINT: "",
   addNote: async (runId: number, by: string, text: string) => (notes.push({ runId, by, text }), 77),
   consumeNote: async (id: number) => void consumed.push(id),
@@ -145,6 +148,32 @@ describe("factory_check_verdict: una vuelta cuenta sólo si el PR cambió", () =
     head = "bbb";
     await (await tool("factory_check_verdict", dest)).handler("beto", { pass: false, findings: "falta X" });
     expect(applied[0]).toMatchObject({ patch: { loops: 2, checked_sha: "bbb" }, data: { counted: true } });
+  });
+});
+
+// Alcance acotado tras un escalado (#115, 19-oct): @check revisa sólo eso y se borra con su veredicto.
+describe("alcance de @check", () => {
+  it("el encargo de revisar lo trae", async () => {
+    current = baseRun({ status: "building", checkScope: "los 4 puntos del escalado" });
+    await (await tool("factory_build_done", { channelId: 3, parentId: 99, handle: "build" })).handler("beto", {
+      pr_url: "https://github.com/o/r/pull/8",
+      tests: "vitest 120/120, typecheck ok",
+    });
+    const h = handoffs.find((x) => x.to === "check")!;
+    expect(h.text).toContain("## Alcance de esta vuelta\nlos 4 puntos del escalado");
+  });
+  it("sin alcance no aparece", async () => {
+    current = baseRun({ status: "building" });
+    await (await tool("factory_build_done", { channelId: 3, parentId: 99, handle: "build" })).handler("beto", {
+      pr_url: "https://github.com/o/r/pull/8",
+      tests: "vitest 120/120, typecheck ok",
+    });
+    expect(handoffs.find((x) => x.to === "check")!.text).not.toContain("Alcance de esta vuelta");
+  });
+  it("el veredicto lo borra", async () => {
+    current = baseRun({ checkScope: "los 4 puntos" });
+    await (await tool("factory_check_verdict", { channelId: 3, parentId: 99, handle: "check" })).handler("beto", { pass: false, findings: "falta X" });
+    expect(applied[0].patch).toMatchObject({ check_scope: null });
   });
 });
 

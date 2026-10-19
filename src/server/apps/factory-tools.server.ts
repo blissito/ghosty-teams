@@ -498,6 +498,10 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           "revisar el PR",
           `Revisa el PR ${url} contra el plan APROBADO (v${run.planVersion}). Resultado que reporta @build: ${String(a.tests).slice(0, 500)}\n\n` +
             `## Plan aprobado\n${plan?.planMd ?? "(no encontré el plan)"}\n\n` +
+            (next.checkScope
+              ? `## Alcance de esta vuelta\n${next.checkScope}\n\nRevisa SÓLO esto. Lo nuevo que encuentres fuera del alcance va como nota ` +
+                `(factory_note) o issue aparte, no como pass=false.\n\n`
+              : "") +
             (touchesGithub
               ? `⚠️ Este PR modifica archivos de .github/ (CI o CODEOWNERS). Si el pedido NO es agregar o arreglar el CI, es un hallazgo: repórtalo con pass=false` +
                 (run.kind === "dependabot"
@@ -618,7 +622,8 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         // desde que @build cerró, alguien empujó durante la revisión.
         const head = run.prUrl ? await R.prHead(sub, run.prUrl) : null;
         // Lo que @check revisó; se guarda con cada veredicto para decidir si la próxima vuelta cuenta.
-        const checked = { checked_sha: head?.sha ?? run.checkedSha ?? null };
+        // El alcance acotado sirve para UNA revisión: se borra con el veredicto.
+        const checked = { checked_sha: head?.sha ?? run.checkedSha ?? null, check_scope: null };
         // La cabeza se movió durante la revisión (la plataforma lo puso al día con main, «Correr CI»,
         // o empujó una persona). Unos hallazgos siguen valiendo; aprobar exige mirar lo nuevo: se
         // fija la cabeza nueva y @check revisa sólo ese tramo. Antes se rechazaba siempre y @check

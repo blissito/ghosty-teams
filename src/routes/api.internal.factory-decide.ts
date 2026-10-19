@@ -29,7 +29,7 @@ export const Route = createFileRoute("/api/internal/factory-decide")({
         const ok = await verify(request.headers.get("x-ghosty-ts") ?? "", request.headers.get("x-ghosty-sig") ?? "", raw);
         if (!ok) return new Response("firma inválida", { status: 403 });
 
-        let body: { runId?: number; decision?: string; action?: string; note?: string; sub?: string; who?: string };
+        let body: { runId?: number; decision?: string; action?: string; note?: string; checkScope?: string; sub?: string; who?: string };
         try {
           body = JSON.parse(raw) as typeof body;
         } catch {
@@ -61,6 +61,7 @@ export const Route = createFileRoute("/api/internal/factory-decide")({
             version: run.planVersion,
             decision: body.decision === "changes" ? "changes" : "approve",
             note: body.note,
+            checkScope: body.checkScope,
             sub,
             who: String(body.who || "staff de Ghosty").slice(0, 80),
             origin: await (await import("../origin.server")).reqOrigin().catch(() => ""),
