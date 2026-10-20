@@ -852,8 +852,16 @@ const ALL_TOOLS: ConnectorTool[] = [
       // del trabajo, que suelen ser los que importan.
       const perInstall = await Promise.all(
         installs.map(async (inst) => {
-          const repos = await api(sub, `/user/installations/${inst.id}/repositories?per_page=100`);
-          return (repos?.repositories ?? []).map((x: any) => ({
+          // Por páginas de 100 (hasta 1000): con sólo la primera, una cuenta con más repos «no veía»
+          // repos que sí estaban en la instalación (blissito/ghosty-studio, 19-oct).
+          const all: any[] = [];
+          for (let page = 1; page <= 10; page++) {
+            const repos = await api(sub, `/user/installations/${inst.id}/repositories?per_page=100&page=${page}`);
+            const batch: any[] = repos?.repositories ?? [];
+            all.push(...batch);
+            if (batch.length < 100) break;
+          }
+          return all.map((x: any) => ({
             repo: x?.full_name,
             owner: inst?.account?.login ?? null,
             private: x?.private,

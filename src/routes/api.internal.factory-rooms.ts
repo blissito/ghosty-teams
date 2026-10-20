@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 
 // ── Endpoint interno: rooms de la fábrica desde la terminal ─────────────────────
 //
-// `ghosty factory rooms ls|connect|disconnect` (19-oct): crear un room y conectarle un repo sin
+// `ghosty factory rooms ls|repos|connect|disconnect` (19-oct): crear un room y conectarle un repo sin
 // abrir Teams, para que un agente de terminal deje lista la fábrica antes de pedirle algo. Hace lo
 // mismo que el ícono de GitHub del room (`addRoomRepoFn`/`removeRoomRepoFn`) y que «Nuevo room»
 // (`createChannelFn`), a nombre de quien llega por gs (`sub`), con sus mismos permisos.
@@ -63,6 +63,39 @@ export const Route = createFileRoute("/api/internal/factory-rooms")({
           return Response.json({ factoryInstalled, rooms });
         }
 
+        // Los repos que ve la GitHub App de quien pregunta, con los rooms donde ya está cada uno: la
+        // lista de la hoja «Conectar repo» del teléfono (escoger en vez de teclear `dueño/repo`).
+        if (body.action === "repos") {
+          const { allTools: tools } = await import("../server/connectors/github.server");
+          const list = tools().find((t) => t.name === "github_list_repos");
+          const r = (list ? await list.handler(member.sub, {}).catch((e: Error) => ({ error: e.message })) : null) as {
+            repos?: { repo: string; private?: boolean; description?: string | null; language?: string | null; pushedAt?: string | null }[];
+            installed?: boolean;
+            installUrl?: string;
+            addMoreUrl?: string;
+            error?: string;
+          } | null;
+          const where = new Map<string, string[]>();
+          for (const ch of await db.listChannels(member.sub, isOwner)) {
+            if (ch.archived) continue;
+            for (const rr of await db.listRoomRepos(ch.id)) where.set(rr.repo.toLowerCase(), [...(where.get(rr.repo.toLowerCase()) ?? []), ch.slug]);
+          }
+          // Sin `repos` ni `installed:false`: la cuenta de GitHub no está conectada (o su token caducó).
+          const connected = !!r && (Array.isArray(r.repos) || r.installed === false);
+          const repos = (r?.repos ?? [])
+            .filter((x) => x.repo)
+            .map((x) => ({ repo: x.repo, private: !!x.private, description: x.description ?? null, language: x.language ?? null, pushedAt: x.pushedAt ?? null, rooms: where.get(x.repo.toLowerCase()) ?? [] }))
+            .sort((a, b) => String(b.pushedAt ?? "").localeCompare(String(a.pushedAt ?? "")));
+          return Response.json({
+            factoryInstalled,
+            connected,
+            installed: connected && r?.installed !== false,
+            installUrl: r?.addMoreUrl ?? r?.installUrl ?? null,
+            detail: connected ? null : (r?.error ?? null),
+            repos,
+          });
+        }
+
         const { normalizeRepo, allTools } = await import("../server/connectors/github.server");
         const repo = normalizeRepo(String(body.repo ?? ""));
         if (!repo) return bad('el repositorio va como "dueño/repo"');
@@ -81,7 +114,7 @@ export const Route = createFileRoute("/api/internal/factory-rooms")({
           return Response.json({ ok: true, room: ch.slug, repos: (await db.listRoomRepos(ch.id)).map((r) => r.repo) });
         }
 
-        if (body.action !== "connect") return bad("action: ls | connect | disconnect");
+        if (body.action !== "connect") return bad("action: ls | repos | connect | disconnect");
 
         // ¿La GitHub App de quien conecta alcanza el repo? Se pregunta por ESE repo con su token:
         // `github_list_repos` sólo trae la primera página (100) y en una cuenta con más repos decía

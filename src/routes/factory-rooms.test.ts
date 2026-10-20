@@ -8,6 +8,7 @@ const channels: { id: number; slug: string; name: string; is_private: number; ar
 const repos: { channelId: number; repo: string; connectedBy: string }[] = [];
 let created: { name: string; isPrivate: boolean; createdBy: string }[] = [];
 let ciAsked: string[][] = [];
+let listRepos: (sub: string) => Promise<unknown> = async () => ({ repos: [] });
 
 vi.mock("../server/schema.server", () => ({ ensureSchema: async () => {} }));
 vi.mock("../db.server", () => ({
@@ -36,7 +37,10 @@ vi.mock("../server/apps/installed.server", () => ({ isInstalled: async () => tru
 vi.mock("../server/connectors/github.server", () => ({
   normalizeRepo: (r: string) => (/^[\w.-]+\/[\w.-]+$/.test(r) ? r : null),
   githubApi: async (_s: string, path: string) => (path === "/repos/blissito/ghosty-studio" ? { full_name: "blissito/ghosty-studio" } : { error: "Not Found" }),
-  allTools: () => [{ name: "github_install_link", handler: async () => ({ instalarOAgregarRepos: "https://github.com/apps/ghosty/installations/new" }) }],
+  allTools: () => [
+    { name: "github_install_link", handler: async () => ({ instalarOAgregarRepos: "https://github.com/apps/ghosty/installations/new" }) },
+    { name: "github_list_repos", handler: async (sub: string) => listRepos(sub) },
+  ],
 }));
 vi.mock("../server/apps/factory", () => ({ requestCiBox: async (r: string[]) => (ciAsked.push(r), "ws-business") }));
 vi.mock("../server/apps/uptime.server", () => ({ autoMonitorRepo: async () => {} }));
@@ -98,6 +102,35 @@ describe("api/internal/factory-rooms", () => {
     expect((await call({ action: "disconnect", room: "mailmask", repo: "blissito/ghosty-studio", sub: "u2" })).status).toBe(403);
     expect((await call({ action: "disconnect", room: "mailmask", repo: "blissito/ghosty-studio", sub: "u1" })).status).toBe(200);
     expect(repos).toHaveLength(0);
+  });
+
+  it("repos: los que ve la App, del más reciente al más viejo, con los rooms donde ya están", async () => {
+    repos.push({ channelId: 7, repo: "blissito/mailmask", connectedBy: "u1" });
+    listRepos = async () => ({
+      repos: [
+        { repo: "blissito/mailmask", private: true, language: "TypeScript", pushedAt: "2026-10-01T00:00:00Z" },
+        { repo: "blissito/ghosty-studio", private: false, pushedAt: "2026-10-19T00:00:00Z" },
+      ],
+      addMoreUrl: "https://github.com/apps/ghosty/installations/new",
+    });
+    const r = await call({ action: "repos", sub: "u1" });
+    expect(r.json.connected).toBe(true);
+    expect(r.json.installed).toBe(true);
+    expect(r.json.repos.map((x: { repo: string }) => x.repo)).toEqual(["blissito/ghosty-studio", "blissito/mailmask"]);
+    expect(r.json.repos[1].rooms).toEqual(["mailmask"]);
+    expect(r.json.installUrl).toContain("installations/new");
+  });
+
+  it("repos: GitHub sin conectar o la App sin instalar se distinguen", async () => {
+    listRepos = async () => ({ error: "La cuenta de GitHub no está conectada." });
+    const off = await call({ action: "repos", sub: "u1" });
+    expect(off.json.connected).toBe(false);
+    expect(off.json.detail).toContain("no está conectada");
+    listRepos = async () => ({ connected: true, installed: false, installUrl: "https://github.com/apps/ghosty/installations/new" });
+    const noApp = await call({ action: "repos", sub: "u1" });
+    expect(noApp.json.connected).toBe(true);
+    expect(noApp.json.installed).toBe(false);
+    expect(noApp.json.repos).toEqual([]);
   });
 
   it("ls dice qué rooms trabajan como fábrica", async () => {
