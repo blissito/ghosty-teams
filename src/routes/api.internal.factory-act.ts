@@ -97,7 +97,7 @@ export const Route = createFileRoute("/api/internal/factory-act")({
             if (!dotenv) return bad("las variables no pueden ir vacías");
             if (dotenv.length > 32_000) return bad("demasiado largo");
             const { gsPreview } = await import("../server/apps/preview.server");
-            const out = await gsPreview("env-set", { repo: run.repo, dotenv });
+            const out = await gsPreview("env-set", { repo: run.repo, dotenv, merge: true });
             const { invalidateReadiness } = await import("../server/apps/readiness.server");
             invalidateReadiness(run.repo);
             await R.retryPreviews({ repo: run.repo, envChanged: true });
