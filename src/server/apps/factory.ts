@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { summarizeEvals } from "./factory-evals";
-import { sessionUser } from "../chat";
+import { sessionUser, type SessionMe } from "../chat";
 import { FACTORY_ENGINES, FACTORY_HANDLES as HANDLES, ROLE_NAMES, roleAvatar, type FactoryHandle } from "./factory-roles";
 import { keepRoleColor, recolorRoleAvatar } from "../../utils/factory-avatar";
 
@@ -1216,8 +1216,9 @@ export const factoryMergeFn = createServerFn({ method: "POST" })
 // ── Sprints (ver apps/sprint.server.ts) ─────────────────────────────────────
 
 /** El sprint es de un room: lo ve quien ve el room; lo edita/aprueba el dueño o quien lo pidió. */
-async function sprintAccess(sprintId: number) {
-  const me = await sessionUser();
+/** `who`: la persona que llega por gs (endpoint de partner); sin él, la sesión de la web. */
+async function sprintAccess(sprintId: number, who?: SessionMe) {
+  const me = who ?? (await sessionUser());
   if (!me) throw new Error("no autenticado");
   const S = await import("./sprint.server");
   const sprint = await S.getSprint(Number(sprintId));
@@ -1230,8 +1231,8 @@ async function sprintAccess(sprintId: number) {
 
 export type SprintView = Awaited<ReturnType<typeof readSprint>>;
 
-async function readSprint(sprintId: number) {
-  const { S, sprint, ch, canEdit } = await sprintAccess(sprintId);
+export async function readSprint(sprintId: number, who?: SessionMe) {
+  const { S, sprint, ch, canEdit } = await sprintAccess(sprintId, who);
   const R = await import("./factory-runs.server");
   const items = await S.getSprintItems(sprint.id);
   const out = [];
@@ -1292,136 +1293,144 @@ export const factorySprintFn = createServerFn({ method: "POST" })
   .handler(async ({ data }) => readSprint(Number(data.sprintId)).catch(() => null));
 
 /** Borrador: dejar fuera/incluir un ticket o cambiarle el título. */
+export async function sprintEdit(data: { sprintId: number; itemId: number; included?: boolean; title?: string; bodyMd?: string }, who?: SessionMe) {
+  const { sprint, canEdit } = await sprintAccess(Number(data.sprintId), who);
+  if (!canEdit) throw new Error("sólo el dueño o quien pidió el sprint lo edita");
+  const { dbq } = await import("../../dbq.server");
+  // Sprint ya aprobado: sólo se puede SUMAR un ticket que se dejó fuera (arranca solo cuando
+  // sus dependencias tengan merge). Antes, lo que no entraba al aprobar quedaba fuera para
+  // siempre (MailMask, 01-oct: se aprobaron 2 de 8).
+  if (sprint.status !== "draft") {
+    if (data.included !== true || sprint.status === "cancelled") throw new Error("el sprint ya se aprobó: sólo puedes sumar tickets que dejaste fuera");
+    const { S } = await sprintAccess(Number(data.sprintId), who);
+    const items = await S.getSprintItems(sprint.id);
+    const it = items.find((i) => i.id === Number(data.itemId));
+    if (!it || it.included) return readSprint(sprint.id, who);
+    const out = new Set(items.filter((i) => !i.included && i.id !== it.id).map((i) => i.key));
+    const falta = it.dependsOn.find((d) => out.has(d));
+    if (falta) throw new Error(`«${it.title}» depende del ticket ${falta}, que también está fuera: inclúyelo primero`);
+    await dbq("UPDATE gt_factory_sprint_items SET included = 1 WHERE id = ? AND sprint_id = ?", [it.id, sprint.id]);
+    // Un sprint terminado vuelve a correr con el ticket nuevo.
+    await dbq("UPDATE gt_factory_sprints SET status = 'active', updated_at = unixepoch() WHERE id = ? AND status = 'done'", [sprint.id]);
+    await S.advanceSprint(sprint.id);
+    return readSprint(sprint.id, who);
+  }
+  if (typeof data.included === "boolean")
+    await dbq("UPDATE gt_factory_sprint_items SET included = ? WHERE id = ? AND sprint_id = ?", [data.included ? 1 : 0, data.itemId, sprint.id]);
+  const title = String(data.title ?? "").trim().slice(0, 120);
+  if (title) await dbq("UPDATE gt_factory_sprint_items SET title = ? WHERE id = ? AND sprint_id = ?", [title, data.itemId, sprint.id]);
+  // El cuerpo (qué y cómo, criterios, archivos) es lo que lee @code: editarlo a mano es
+  // la forma directa de corregir un ticket sin pedirle a Arqui que rehaga todo el sprint.
+  if (typeof data.bodyMd === "string") {
+    const body = data.bodyMd.trim().slice(0, 20000);
+    if (body) await dbq("UPDATE gt_factory_sprint_items SET body_md = ? WHERE id = ? AND sprint_id = ?", [body, data.itemId, sprint.id]);
+  }
+  return readSprint(sprint.id, who);
+}
+
 export const factorySprintEditFn = createServerFn({ method: "POST" })
   .validator((d: { sprintId: number; itemId: number; included?: boolean; title?: string; bodyMd?: string }) => d)
-  .handler(async ({ data }) => {
-    const { sprint, canEdit } = await sprintAccess(Number(data.sprintId));
-    if (!canEdit) throw new Error("sólo el dueño o quien pidió el sprint lo edita");
-    const { dbq } = await import("../../dbq.server");
-    // Sprint ya aprobado: sólo se puede SUMAR un ticket que se dejó fuera (arranca solo cuando
-    // sus dependencias tengan merge). Antes, lo que no entraba al aprobar quedaba fuera para
-    // siempre (MailMask, 01-oct: se aprobaron 2 de 8).
-    if (sprint.status !== "draft") {
-      if (data.included !== true || sprint.status === "cancelled") throw new Error("el sprint ya se aprobó: sólo puedes sumar tickets que dejaste fuera");
-      const { S } = await sprintAccess(Number(data.sprintId));
-      const items = await S.getSprintItems(sprint.id);
-      const it = items.find((i) => i.id === Number(data.itemId));
-      if (!it || it.included) return readSprint(sprint.id);
-      const out = new Set(items.filter((i) => !i.included && i.id !== it.id).map((i) => i.key));
-      const falta = it.dependsOn.find((d) => out.has(d));
-      if (falta) throw new Error(`«${it.title}» depende del ticket ${falta}, que también está fuera: inclúyelo primero`);
-      await dbq("UPDATE gt_factory_sprint_items SET included = 1 WHERE id = ? AND sprint_id = ?", [it.id, sprint.id]);
-      // Un sprint terminado vuelve a correr con el ticket nuevo.
-      await dbq("UPDATE gt_factory_sprints SET status = 'active', updated_at = unixepoch() WHERE id = ? AND status = 'done'", [sprint.id]);
-      await S.advanceSprint(sprint.id);
-      return readSprint(sprint.id);
-    }
-    if (typeof data.included === "boolean")
-      await dbq("UPDATE gt_factory_sprint_items SET included = ? WHERE id = ? AND sprint_id = ?", [data.included ? 1 : 0, data.itemId, sprint.id]);
-    const title = String(data.title ?? "").trim().slice(0, 120);
-    if (title) await dbq("UPDATE gt_factory_sprint_items SET title = ? WHERE id = ? AND sprint_id = ?", [title, data.itemId, sprint.id]);
-    // El cuerpo (qué y cómo, criterios, archivos) es lo que lee @code: editarlo a mano es
-    // la forma directa de corregir un ticket sin pedirle a Arqui que rehaga todo el sprint.
-    if (typeof data.bodyMd === "string") {
-      const body = data.bodyMd.trim().slice(0, 20000);
-      if (body) await dbq("UPDATE gt_factory_sprint_items SET body_md = ? WHERE id = ? AND sprint_id = ?", [body, data.itemId, sprint.id]);
-    }
-    return readSprint(sprint.id);
-  });
+  .handler(async ({ data }) => sprintEdit(data));
 
 /** «Dejar como issue»: el ticket queda en GitHub para después (y su PR lo cerrará si se construye). */
+export async function sprintIssue(data: { sprintId: number; itemId: number }, who?: SessionMe) {
+  const { me, S, sprint, canEdit } = await sprintAccess(Number(data.sprintId), who);
+  if (!canEdit) throw new Error("sólo el dueño o quien pidió el sprint decide");
+  await S.createItemIssue(sprint.id, Number(data.itemId), me.sub);
+  return readSprint(sprint.id, who);
+}
+
 export const factorySprintIssueFn = createServerFn({ method: "POST" })
   .validator((d: { sprintId: number; itemId: number }) => d)
-  .handler(async ({ data }) => {
-    const me = await sessionUser();
-    if (!me) throw new Error("no autenticado");
-    const { S, sprint, canEdit } = await sprintAccess(Number(data.sprintId));
-    if (!canEdit) throw new Error("sólo el dueño o quien pidió el sprint decide");
-    await S.createItemIssue(sprint.id, Number(data.itemId), me.sub);
-    return readSprint(sprint.id);
-  });
+  .handler(async ({ data }) => sprintIssue(data));
 
 /** «Crear sprint»: una sola aprobación para todos los tickets. */
+export async function sprintApprove(data: { sprintId: number }, who?: SessionMe) {
+  const { me, S, sprint, canEdit } = await sprintAccess(Number(data.sprintId), who);
+  if (!canEdit) throw new Error("sólo el dueño o quien pidió el sprint lo aprueba");
+  // Un ticket incluido que depende de uno que se dejó fuera no podría arrancar nunca.
+  const items = await S.getSprintItems(sprint.id);
+  const out = new Set(items.filter((i) => !i.included).map((i) => i.key));
+  const stuck = items.find((i) => i.included && i.dependsOn.some((d) => out.has(d)));
+  if (stuck) throw new Error(`«${stuck.title}» depende de un ticket que dejaste fuera: inclúyelo o quita también ése`);
+  const { reqOrigin } = await import("../../origin.server");
+  await S.approveSprint(sprint.id, me.sub, await reqOrigin().catch(() => ""));
+  return readSprint(sprint.id, who);
+}
+
 export const factorySprintApproveFn = createServerFn({ method: "POST" })
   .validator((d: { sprintId: number }) => d)
-  .handler(async ({ data }) => {
-    const { me, S, sprint, canEdit } = await sprintAccess(Number(data.sprintId));
-    if (!canEdit) throw new Error("sólo el dueño o quien pidió el sprint lo aprueba");
-    // Un ticket incluido que depende de uno que se dejó fuera no podría arrancar nunca.
-    const items = await S.getSprintItems(sprint.id);
-    const out = new Set(items.filter((i) => !i.included).map((i) => i.key));
-    const stuck = items.find((i) => i.included && i.dependsOn.some((d) => out.has(d)));
-    if (stuck) throw new Error(`«${stuck.title}» depende de un ticket que dejaste fuera: inclúyelo o quita también ése`);
-    const { reqOrigin } = await import("../../origin.server");
-    await S.approveSprint(sprint.id, me.sub, await reqOrigin().catch(() => ""));
-    return readSprint(sprint.id);
-  });
+  .handler(async ({ data }) => sprintApprove(data));
 
 /** «Pedir cambios»: @plan rehace el borrador en el hilo de la tarjeta. */
+export async function sprintChanges(data: { sprintId: number; note: string }, who?: SessionMe) {
+  const { me, S, sprint, canEdit } = await sprintAccess(Number(data.sprintId), who);
+  if (!canEdit) throw new Error("sólo el dueño o quien pidió el sprint lo cambia");
+  if (sprint.status !== "draft") throw new Error("el sprint ya se aprobó");
+  const note = String(data.note ?? "").trim().slice(0, 2000);
+  if (!note) throw new Error("di qué cambiar");
+  const items = await S.getSprintItems(sprint.id);
+  // El borrador COMPLETO, con cuerpo: la persona pudo editar tickets a mano y Arqui los
+  // reescribía desde su memoria (se perdían). Los que están fuera se marcan.
+  const current = items
+    .map(
+      (i) =>
+        `### ${i.key}. ${i.title} [${i.size}]${i.included ? "" : " (FUERA: la persona lo dejó fuera)"}${i.dependsOn.length ? ` · tras ${i.dependsOn.join(", ")}` : ""}\n${i.bodyMd.replace(/^# .*\n+/, "").trim()}`,
+    )
+    .join("\n\n");
+  // Hilo REAL de la tarjeta: si el sprint se pidió dentro de un hilo, la tarjeta es una
+  // respuesta y su raíz es la del pedido.
+  const root = sprint.rootMsgId ?? sprint.cardMsgId;
+  // La nota se publica en el hilo como mensaje de quien la pidió: es el acuse y la evidencia
+  // (patrón Copilot/Linear). Inserción directa y no postMessageAs: su auto-seguir abriría
+  // OTRO turno de @plan además del despertador de abajo.
+  const db = await import("../../db.server");
+  const bus = await import("../bus.server");
+  const { currentNamespace } = await import("../tenant.server");
+  let noteMsgId: number | null = null;
+  if (root) {
+    const rootMsg = await db.getMessage(root).catch(() => null);
+    const { id } = await db.createMessage({
+      channelId: sprint.channelId,
+      parentId: root,
+      sender: me.name ?? "Una persona",
+      senderSub: me.sub,
+      avatar: me.avatar ?? "",
+      body: `🔁 **Cambios al sprint** (v${sprint.version}): ${note}`,
+      topic: (rootMsg as { topic?: string } | null)?.topic ?? "general",
+    });
+    noteMsgId = id;
+    const msg = await db.getMessage(id);
+    if (msg) bus.publish(bus.ch.room(await currentNamespace(), sprint.channelId), { t: "message:new", msg });
+  }
+  const { dbq } = await import("../../dbq.server");
+  await dbq(
+    "UPDATE gt_factory_sprints SET change_note = ?, change_by_name = ?, change_msg_id = ?, change_at = unixepoch(), change_version = version WHERE id = ?",
+    [note, me.name ?? null, noteMsgId, sprint.id],
+  );
+  await wakePlanForSprint(me.sub, sprint.channelId, root, `sprint:${sprint.id}`,
+    `${me.name ?? "Una persona"} pidió cambios al sprint «${sprint.title}» (sprint_id ${sprint.id}, repo ${sprint.repo ?? "—"}): «${note}».\n` +
+      `Ajústalo y entrégalo otra vez con factory_sprint_submit mandando sprint_id ${sprint.id}. No discutas lo decidido. ` +
+      `Conserva el texto de cada ticket tal cual (pudo editarse a mano) salvo lo que la nota pida cambiar, y respeta los que están FUERA. ` +
+      `Al entregar, di en una línea qué cambiaste.\n\n## Borrador actual (v${sprint.version})\n${current}`);
+  return readSprint(sprint.id, who);
+}
+
 export const factorySprintChangesFn = createServerFn({ method: "POST" })
   .validator((d: { sprintId: number; note: string }) => d)
-  .handler(async ({ data }) => {
-    const { me, S, sprint, canEdit } = await sprintAccess(Number(data.sprintId));
-    if (!canEdit) throw new Error("sólo el dueño o quien pidió el sprint lo cambia");
-    if (sprint.status !== "draft") throw new Error("el sprint ya se aprobó");
-    const note = String(data.note ?? "").trim().slice(0, 2000);
-    if (!note) throw new Error("di qué cambiar");
-    const items = await S.getSprintItems(sprint.id);
-    // El borrador COMPLETO, con cuerpo: la persona pudo editar tickets a mano y Arqui los
-    // reescribía desde su memoria (se perdían). Los que están fuera se marcan.
-    const current = items
-      .map(
-        (i) =>
-          `### ${i.key}. ${i.title} [${i.size}]${i.included ? "" : " (FUERA: la persona lo dejó fuera)"}${i.dependsOn.length ? ` · tras ${i.dependsOn.join(", ")}` : ""}\n${i.bodyMd.replace(/^# .*\n+/, "").trim()}`,
-      )
-      .join("\n\n");
-    // Hilo REAL de la tarjeta: si el sprint se pidió dentro de un hilo, la tarjeta es una
-    // respuesta y su raíz es la del pedido.
-    const root = sprint.rootMsgId ?? sprint.cardMsgId;
-    // La nota se publica en el hilo como mensaje de quien la pidió: es el acuse y la evidencia
-    // (patrón Copilot/Linear). Inserción directa y no postMessageAs: su auto-seguir abriría
-    // OTRO turno de @plan además del despertador de abajo.
-    const db = await import("../../db.server");
-    const bus = await import("../bus.server");
-    const { currentNamespace } = await import("../tenant.server");
-    let noteMsgId: number | null = null;
-    if (root) {
-      const rootMsg = await db.getMessage(root).catch(() => null);
-      const { id } = await db.createMessage({
-        channelId: sprint.channelId,
-        parentId: root,
-        sender: me.name ?? "Una persona",
-        senderSub: me.sub,
-        avatar: me.avatar ?? "",
-        body: `🔁 **Cambios al sprint** (v${sprint.version}): ${note}`,
-        topic: (rootMsg as { topic?: string } | null)?.topic ?? "general",
-      });
-      noteMsgId = id;
-      const msg = await db.getMessage(id);
-      if (msg) bus.publish(bus.ch.room(await currentNamespace(), sprint.channelId), { t: "message:new", msg });
-    }
-    const { dbq } = await import("../../dbq.server");
-    await dbq(
-      "UPDATE gt_factory_sprints SET change_note = ?, change_by_name = ?, change_msg_id = ?, change_at = unixepoch(), change_version = version WHERE id = ?",
-      [note, me.name ?? null, noteMsgId, sprint.id],
-    );
-    await wakePlanForSprint(me.sub, sprint.channelId, root, `sprint:${sprint.id}`,
-      `${me.name ?? "Una persona"} pidió cambios al sprint «${sprint.title}» (sprint_id ${sprint.id}, repo ${sprint.repo ?? "—"}): «${note}».\n` +
-        `Ajústalo y entrégalo otra vez con factory_sprint_submit mandando sprint_id ${sprint.id}. No discutas lo decidido. ` +
-        `Conserva el texto de cada ticket tal cual (pudo editarse a mano) salvo lo que la nota pida cambiar, y respeta los que están FUERA. ` +
-        `Al entregar, di en una línea qué cambiaste.\n\n## Borrador actual (v${sprint.version})\n${current}`);
-    return readSprint(sprint.id);
-  });
+  .handler(async ({ data }) => sprintChanges(data));
 
 /** Ticket fallido: reintentarlo o quitarlo del sprint. */
+export async function sprintItem(data: { sprintId: number; itemId: number; action: "retry" | "skip" }, who?: SessionMe) {
+  const { S, sprint, canEdit } = await sprintAccess(Number(data.sprintId), who);
+  if (!canEdit) throw new Error("sólo el dueño o quien pidió el sprint decide");
+  await S.resolveFailedItem(sprint.id, Number(data.itemId), data.action === "skip" ? "skip" : "retry");
+  return readSprint(sprint.id, who);
+}
+
 export const factorySprintItemFn = createServerFn({ method: "POST" })
   .validator((d: { sprintId: number; itemId: number; action: "retry" | "skip" }) => d)
-  .handler(async ({ data }) => {
-    const { S, sprint, canEdit } = await sprintAccess(Number(data.sprintId));
-    if (!canEdit) throw new Error("sólo el dueño o quien pidió el sprint decide");
-    await S.resolveFailedItem(sprint.id, Number(data.itemId), data.action === "skip" ? "skip" : "retry");
-    return readSprint(sprint.id);
-  });
+  .handler(async ({ data }) => sprintItem(data));
 
 /** «Proponer sprint» desde la Fábrica: despierta a @plan con el objetivo. */
 export const factoryProposeSprintFn = createServerFn({ method: "POST" })
