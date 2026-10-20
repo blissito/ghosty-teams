@@ -58,6 +58,7 @@ import { Route as ApiInternalGithubEventRouteImport } from './routes/api.interna
 import { Route as ApiInternalFactoryThreadRouteImport } from './routes/api.internal.factory-thread'
 import { Route as ApiInternalFactorySprintRouteImport } from './routes/api.internal.factory-sprint'
 import { Route as ApiInternalFactoryRoomsRouteImport } from './routes/api.internal.factory-rooms'
+import { Route as ApiInternalFactoryEnvRouteImport } from './routes/api.internal.factory-env'
 import { Route as ApiInternalFactoryDecideRouteImport } from './routes/api.internal.factory-decide'
 import { Route as ApiInternalFactoryActRouteImport } from './routes/api.internal.factory-act'
 import { Route as ApiInternalBoardEventRouteImport } from './routes/api.internal.board-event'
@@ -340,6 +341,11 @@ const ApiInternalFactoryRoomsRoute = ApiInternalFactoryRoomsRouteImport.update({
   path: '/api/internal/factory-rooms',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiInternalFactoryEnvRoute = ApiInternalFactoryEnvRouteImport.update({
+  id: '/api/internal/factory-env',
+  path: '/api/internal/factory-env',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiInternalFactoryDecideRoute =
   ApiInternalFactoryDecideRouteImport.update({
     id: '/api/internal/factory-decide',
@@ -565,6 +571,7 @@ export interface FileRoutesByFullPath {
   '/api/internal/board-event': typeof ApiInternalBoardEventRoute
   '/api/internal/factory-act': typeof ApiInternalFactoryActRoute
   '/api/internal/factory-decide': typeof ApiInternalFactoryDecideRoute
+  '/api/internal/factory-env': typeof ApiInternalFactoryEnvRoute
   '/api/internal/factory-rooms': typeof ApiInternalFactoryRoomsRoute
   '/api/internal/factory-sprint': typeof ApiInternalFactorySprintRoute
   '/api/internal/factory-thread': typeof ApiInternalFactoryThreadRoute
@@ -648,6 +655,7 @@ export interface FileRoutesByTo {
   '/api/internal/board-event': typeof ApiInternalBoardEventRoute
   '/api/internal/factory-act': typeof ApiInternalFactoryActRoute
   '/api/internal/factory-decide': typeof ApiInternalFactoryDecideRoute
+  '/api/internal/factory-env': typeof ApiInternalFactoryEnvRoute
   '/api/internal/factory-rooms': typeof ApiInternalFactoryRoomsRoute
   '/api/internal/factory-sprint': typeof ApiInternalFactorySprintRoute
   '/api/internal/factory-thread': typeof ApiInternalFactoryThreadRoute
@@ -733,6 +741,7 @@ export interface FileRoutesById {
   '/api/internal/board-event': typeof ApiInternalBoardEventRoute
   '/api/internal/factory-act': typeof ApiInternalFactoryActRoute
   '/api/internal/factory-decide': typeof ApiInternalFactoryDecideRoute
+  '/api/internal/factory-env': typeof ApiInternalFactoryEnvRoute
   '/api/internal/factory-rooms': typeof ApiInternalFactoryRoomsRoute
   '/api/internal/factory-sprint': typeof ApiInternalFactorySprintRoute
   '/api/internal/factory-thread': typeof ApiInternalFactoryThreadRoute
@@ -819,6 +828,7 @@ export interface FileRouteTypes {
     | '/api/internal/board-event'
     | '/api/internal/factory-act'
     | '/api/internal/factory-decide'
+    | '/api/internal/factory-env'
     | '/api/internal/factory-rooms'
     | '/api/internal/factory-sprint'
     | '/api/internal/factory-thread'
@@ -902,6 +912,7 @@ export interface FileRouteTypes {
     | '/api/internal/board-event'
     | '/api/internal/factory-act'
     | '/api/internal/factory-decide'
+    | '/api/internal/factory-env'
     | '/api/internal/factory-rooms'
     | '/api/internal/factory-sprint'
     | '/api/internal/factory-thread'
@@ -986,6 +997,7 @@ export interface FileRouteTypes {
     | '/api/internal/board-event'
     | '/api/internal/factory-act'
     | '/api/internal/factory-decide'
+    | '/api/internal/factory-env'
     | '/api/internal/factory-rooms'
     | '/api/internal/factory-sprint'
     | '/api/internal/factory-thread'
@@ -1070,6 +1082,7 @@ export interface RootRouteChildren {
   ApiInternalBoardEventRoute: typeof ApiInternalBoardEventRoute
   ApiInternalFactoryActRoute: typeof ApiInternalFactoryActRoute
   ApiInternalFactoryDecideRoute: typeof ApiInternalFactoryDecideRoute
+  ApiInternalFactoryEnvRoute: typeof ApiInternalFactoryEnvRoute
   ApiInternalFactoryRoomsRoute: typeof ApiInternalFactoryRoomsRoute
   ApiInternalFactorySprintRoute: typeof ApiInternalFactorySprintRoute
   ApiInternalFactoryThreadRoute: typeof ApiInternalFactoryThreadRoute
@@ -1441,6 +1454,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiInternalFactoryRoomsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/internal/factory-env': {
+      id: '/api/internal/factory-env'
+      path: '/api/internal/factory-env'
+      fullPath: '/api/internal/factory-env'
+      preLoaderRoute: typeof ApiInternalFactoryEnvRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/internal/factory-decide': {
       id: '/api/internal/factory-decide'
       path: '/api/internal/factory-decide'
@@ -1758,6 +1778,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiInternalBoardEventRoute: ApiInternalBoardEventRoute,
   ApiInternalFactoryActRoute: ApiInternalFactoryActRoute,
   ApiInternalFactoryDecideRoute: ApiInternalFactoryDecideRoute,
+  ApiInternalFactoryEnvRoute: ApiInternalFactoryEnvRoute,
   ApiInternalFactoryRoomsRoute: ApiInternalFactoryRoomsRoute,
   ApiInternalFactorySprintRoute: ApiInternalFactorySprintRoute,
   ApiInternalFactoryThreadRoute: ApiInternalFactoryThreadRoute,
