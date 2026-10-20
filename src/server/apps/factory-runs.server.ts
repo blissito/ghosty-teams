@@ -645,8 +645,9 @@ export async function onRoleStalled(groupId: string, ev: StalledFrame): Promise<
     });
     if (same) return;
     const firstOfRun = prior.length === 0;
-    await logEvent(run.id, "stuck", null, { role, rule, detail, count: ev.count ?? null, secs: ev.secs ?? null });
     const human = String(ev.human ?? `parece atascado (${rule}).`);
+    // `human` va en la bitácora: el teléfono la pinta tal cual («se atoró: lleva 6 min en …»).
+    await logEvent(run.id, "stuck", null, { role, rule, detail, count: ev.count ?? null, secs: ev.secs ?? null, human: human.slice(0, 300) });
     // Atasco de RAZONAMIENTO de Worker (no del entorno): entra Arqui (su modelo fuerte) como
     // asesor. Lo de entorno (comando colgado, apt) sigue con el aviso de siempre.
     // Primero el empujón gratis (el steer de abajo); desde el segundo atasco de Worker en el pedido,
