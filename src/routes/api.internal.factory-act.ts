@@ -3,7 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 // ── Endpoint interno: decidir un pedido de la fábrica desde la terminal ──────────
 //
 // Lo que hace la tarjeta (`factoryDecisionFn`, `factoryMergeFn`) pero a nombre de una persona que
-// llega por gs (`ghosty factory runs approve|changes|merge|card`, 19-oct): la fábrica como
+// llega por gs (`ghosty factory runs approve|changes|merge|card`, 19-oct; `resume|stop|cancel` desde la app, 20-oct): la fábrica como
 // complemento de un agente de terminal. Firma QUIEN manda el comando (`sub`), con el mismo permiso
 // que la tarjeta: ser miembro del espacio y ver el room del pedido.
 //
@@ -114,7 +114,13 @@ export const Route = createFileRoute("/api/internal/factory-act")({
             if (!r.ok) return bad(r.error, 409);
             return Response.json({ ok: true, status: "done", queued: false });
           }
-          return bad("action: approve | changes | recheck | env | merge | card");
+          // Lo de la tarjeta web para un pedido sin avanzar: retomar al rol de la etapa, detener su
+          // turno o cancelar el pedido (la app de iOS, 20-oct).
+          if (body.action === "resume" || body.action === "stop" || body.action === "cancel") {
+            const { runPersonAction } = await import("../server/apps/factory");
+            return Response.json(await runPersonAction(run, body.action, { sub: member.sub, name: member.name, isOwner }));
+          }
+          return bad("action: approve | changes | recheck | env | merge | card | resume | stop | cancel");
         } catch (e) {
           return bad((e as Error).message, 409);
         }

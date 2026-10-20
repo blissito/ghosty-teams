@@ -794,46 +794,60 @@ export const factoryRunActionFn = createServerFn({ method: "POST" })
     if (!run) throw new Error("pedido no encontrado");
     const db = await import("../../db.server");
     if (!(await db.listChannels(me.sub, me.isOwner)).some((c) => c.id === run.channelId)) throw new Error("no ves ese room");
-    if (data.action === "cancel") {
-      const next = await R.applyEvent(run, "cancel", {}, { actor: me.name || me.sub });
-      return { ok: true as const, status: next.status };
-    }
-    const live = await runLive(run);
-    if (data.action === "stop") {
-      if (!live.liveTurnId) throw new Error("no hay nadie trabajando en este pedido ahora");
-      const turns = await import("../turns.server");
-      const { currentNamespace } = await import("../tenant.server");
-      if (!turns.stopTurn(await currentNamespace(), live.liveTurnId, me.sub, { force: me.isOwner })) throw new Error("no pude detenerlo (sólo quien lo pidió o el dueño del espacio pueden)");
-      await R.logEvent(run.id, "stopped", me.name || me.sub);
-      return { ok: true as const, status: run.status };
-    }
-    // Retomar: el rol de la etapa vuelve a trabajar en el mismo hilo, con un encargo explícito.
-    const role = ({ planning: "plan", building: "build", checking: "check" } as const)[run.status as "planning" | "building" | "checking"];
-    if (!role) throw new Error("en esta etapa no hay nada que retomar");
-    if (live.liveTurnId) throw new Error("ya hay alguien trabajando en este pedido");
-    // Esperando lugar: @build no tiene caja todavía. Retomar = volver a pedirla; si sigue sin lugar,
-    // se dice y no se despierta a nadie.
-    if (run.boxWaiting && role === "build") {
-      if ((await R.resumeWaitingRun(run)) === "waiting") throw new Error("sigue en espera de lugar: arranca solo en cuanto se libere uno");
-      return { ok: true as const, status: run.status };
-    }
-    const { reqOrigin } = await import("../../origin.server");
-    const ok = await R.handoff(
-      run,
-      role,
-      run.approvedBy ?? me.sub,
-      "retomar",
-      `${me.name || "Una persona"} pidió retomar este pedido: se quedó sin avanzar. Revisa lo último del hilo y continúa tu paso; ciérralo con tu tool factory_*.` +
-        // Las notas pendientes sólo llegan al encargar: retomar también es encargar.
-        (role === "build" ? await R.takeNotes(run.id) : ""),
-      await reqOrigin().catch(() => ""),
-    );
-    if (!ok) throw new Error("no pude despertar al agente");
-    await dbq0("UPDATE gt_factory_runs SET stale_warned_at = NULL WHERE id = ?", [run.id]);
-    await R.logEvent(run.id, "resumed", me.name || me.sub, { role });
-    void R.refreshRoom(run.channelId);
-    return { ok: true as const, status: run.status };
+    return runPersonAction(run, data.action, me);
   });
+
+/**
+ * Detener, retomar o cancelar a nombre de una persona que ya ve el room del pedido. Lo comparten la
+ * tarjeta web y `api/internal/factory-act` (la app de iOS por gs, 20-oct: un pedido «sin avanzar»
+ * no tenía salida desde el teléfono).
+ */
+export async function runPersonAction(
+  run: import("./factory-runs.server").Run,
+  action: "stop" | "resume" | "cancel",
+  me: { sub: string; name?: string | null; isOwner: boolean },
+): Promise<{ ok: true; status: string }> {
+  const R = await import("./factory-runs.server");
+  if (action === "cancel") {
+    const next = await R.applyEvent(run, "cancel", {}, { actor: me.name || me.sub });
+    return { ok: true as const, status: next.status };
+  }
+  const live = await runLive(run);
+  if (action === "stop") {
+    if (!live.liveTurnId) throw new Error("no hay nadie trabajando en este pedido ahora");
+    const turns = await import("../turns.server");
+    const { currentNamespace } = await import("../tenant.server");
+    if (!turns.stopTurn(await currentNamespace(), live.liveTurnId, me.sub, { force: me.isOwner })) throw new Error("no pude detenerlo (sólo quien lo pidió o el dueño del espacio pueden)");
+    await R.logEvent(run.id, "stopped", me.name || me.sub);
+    return { ok: true as const, status: run.status };
+  }
+  // Retomar: el rol de la etapa vuelve a trabajar en el mismo hilo, con un encargo explícito.
+  const role = ({ planning: "plan", building: "build", checking: "check" } as const)[run.status as "planning" | "building" | "checking"];
+  if (!role) throw new Error("en esta etapa no hay nada que retomar");
+  if (live.liveTurnId) throw new Error("ya hay alguien trabajando en este pedido");
+  // Esperando lugar: @build no tiene caja todavía. Retomar = volver a pedirla; si sigue sin lugar,
+  // se dice y no se despierta a nadie.
+  if (run.boxWaiting && role === "build") {
+    if ((await R.resumeWaitingRun(run)) === "waiting") throw new Error("sigue en espera de lugar: arranca solo en cuanto se libere uno");
+    return { ok: true as const, status: run.status };
+  }
+  const { reqOrigin } = await import("../../origin.server");
+  const ok = await R.handoff(
+    run,
+    role,
+    run.approvedBy ?? me.sub,
+    "retomar",
+    `${me.name || "Una persona"} pidió retomar este pedido: se quedó sin avanzar. Revisa lo último del hilo y continúa tu paso; ciérralo con tu tool factory_*.` +
+      // Las notas pendientes sólo llegan al encargar: retomar también es encargar.
+      (role === "build" ? await R.takeNotes(run.id) : ""),
+    await reqOrigin().catch(() => ""),
+  );
+  if (!ok) throw new Error("no pude despertar al agente");
+  await dbq0("UPDATE gt_factory_runs SET stale_warned_at = NULL WHERE id = ?", [run.id]);
+  await R.logEvent(run.id, "resumed", me.name || me.sub, { role });
+  void R.refreshRoom(run.channelId);
+  return { ok: true as const, status: run.status };
+}
 
 async function dbq0(sql: string, args: unknown[]) {
   const { dbq } = await import("../../dbq.server");
