@@ -149,9 +149,31 @@ const ENV_NAME_HINT = /\b[A-Z][A-Z0-9]*_[A-Z0-9_]*(KEY|SECRET|TOKEN|URL)\b/;
 const PLATFORM_HINT =
   /factory_preview|preview[^.\n]{0,60}(pending|pendiente|constru|en camino|no (arranc|lleg|est[áa] lista|existe)|nunca)|(pending|pendiente)[^.\n]{0,40}preview/i;
 
+// GitHub limitó las peticiones (#137 de business, 20-oct: «github_pr_files, github_pr_checks y
+// github_get_pr devolvieron "GitHub está limitando las peticiones"»). Es de la plataforma, no una
+// decisión. Pide que se nombre a GitHub (o la frase de nuestros conectores) para no confundirlo con
+// un PR que agrega rate limiting a una API. Un 403 suelto no cuenta: también es «sin permiso».
+const RATE_LIMIT_HINT =
+  /est[áa] limitando las peticiones|secondary rate limit|api rate limit exceeded|github[^.\n]{0,80}(rate.?limit|l[íi]mite de (peticiones|solicitudes)|\b429\b)|(rate.?limit|\b429\b)[^.\n]{0,80}github/i;
+
+/** ¿Los hallazgos (o el motivo) dicen que GitHub limitó las peticiones? */
+export function isGithubRateLimit(text: string): boolean {
+  return RATE_LIMIT_HINT.test(String(text ?? ""));
+}
+
+/** Espera por defecto si GitHub no dijo cuándo se libera. */
+export const RATE_LIMIT_RETRY_S = 15 * 60;
+
+/** El motivo de un escalado por límite de GitHub, con los minutos que faltan para que @check revise sola. */
+export function rateLimitReason(retryAt: number, now = Math.floor(Date.now() / 1000)): string {
+  const min = Math.max(1, Math.ceil((retryAt - now) / 60));
+  return `GitHub limitó las peticiones; @check revisa otra vez sola en ${min} min.`;
+}
+
 /** Escalados viejos (sin `kind`): se deduce con las señales que ya había en los hallazgos. */
 export function deduceEscalationKind(findings: string): EscalationKind {
   const f = String(findings ?? "");
+  if (isGithubRateLimit(f)) return "platform";
   if (ENV_HINT.test(f) || ENV_NAME_HINT.test(f)) return "env";
   if (PLATFORM_HINT.test(f)) return "platform";
   return "decision";

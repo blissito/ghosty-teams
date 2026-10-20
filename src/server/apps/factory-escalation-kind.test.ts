@@ -56,8 +56,8 @@ vi.mock("../connectors/github.server", () => ({
 }));
 vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("sin red"); }));
 
-import { deduceEscalationKind, needsYou, viewState } from "./factory-flow";
-import { closeRunPr, dependabotIgnoreComment, escalationFromEvent, escalationOf, turnNoticeBody, type Run } from "./factory-runs.server";
+import { deduceEscalationKind, isGithubRateLimit, needsYou, rateLimitReason, viewState } from "./factory-flow";
+import { closeRunPr, dependabotIgnoreComment, escalateRateLimit, escalationFromEvent, escalationOf, rateLimitRetryAt, turnNoticeBody, type Run } from "./factory-runs.server";
 import { adoptDependabotPr, DEPENDABOT_LIVE_CAP } from "./dependabot.server";
 
 const run = (over: Partial<Run> = {}): Run => ({
@@ -185,5 +185,65 @@ describe("tope de Dependabot por repo, también en el webhook (easybits, 20-oct)
     expect(await adoptDependabotPr(ev)).toEqual([5]);
     expect(adoptedInserts).toHaveLength(0);
     expect(posts).toHaveLength(0);
+  });
+});
+
+// #137 de business (20-oct): «Bump actions/checkout from 5 to 7» escaló como decision porque GitHub
+// limitó las peticiones. Es de la plataforma: sin push, y @check revisa otra vez sola.
+const FINDINGS_137 =
+  "- `.github/workflows:0` — Sin revisar: github_pr_files, github_pr_checks y github_get_pr devolvieron «GitHub está limitando las peticiones» en 3 intentos durante ~5 min; no se leyó el diff, el CI ni las notas de actions/checkout v6/v7.\n" +
+  "- `(preview):0` — factory_preview: state=none, required=true. Sin preview lista en el último commit no hay aprobación.";
+
+describe("límite de GitHub = plataforma (#137, 20-oct)", () => {
+  it("se reconoce en español, en inglés y con 403/429, pero no un PR que agrega rate limiting", () => {
+    expect(isGithubRateLimit(FINDINGS_137)).toBe(true);
+    expect(isGithubRateLimit("You have exceeded a secondary rate limit")).toBe(true);
+    expect(isGithubRateLimit("API rate limit exceeded for installation")).toBe(true);
+    expect(isGithubRateLimit("github_get_pr respondió 429")).toBe(true);
+    expect(isGithubRateLimit("GitHub rate limit al leer el diff")).toBe(true);
+    expect(isGithubRateLimit("- `app/routes/login.ts:12` — falta rate limit en el login")).toBe(false);
+    expect(isGithubRateLimit("el middleware devuelve 429 sin Retry-After")).toBe(false);
+    expect(isGithubRateLimit("github_get_pr respondió 403: sin permiso para eso en GitHub")).toBe(false);
+  });
+
+  it("el evento viejo de #137 (sin kind) se deduce platform: no te toca y sólo ofrece «Que @check revise»", () => {
+    expect(deduceEscalationKind(FINDINGS_137)).toBe("platform");
+    const e = escalationFromEvent({ findings: FINDINGS_137 }, 10)!;
+    expect(e.kind).toBe("platform");
+    expect(e.actions).toEqual(["recheck"]);
+    expect(e.reason).toBe("GitHub limitó las peticiones; @check revisa otra vez sola.");
+    expect(needsYou({ status: "escalated" }, e)).toBe(false);
+  });
+
+  it("@check lo manda como decision: la plataforma lo guarda platform, sin push y con la hora de la nueva revisión", async () => {
+    runRow = { ...runRow, status: "checking" };
+    const now = Math.floor(Date.now() / 1000);
+    const next = await escalateRateLimit(run({ status: "checking" }), { findings: FINDINGS_137, resetAt: now + 600 });
+    expect(next?.status).toBe("escalated");
+    const ev = events.find((x) => x.type === "check_blocked")!;
+    const data = JSON.parse(ev.data_json!);
+    expect(data).toMatchObject({ kind: "platform", cause: "github_rate_limit" });
+    expect(data.retryAt).toBe(now + 660);
+    expect(data.reason).toMatch(/^GitHub limitó las peticiones; @check revisa otra vez sola en 1[01] min\.$/);
+    expect(turnNoticeBody("escalated", data)).toBeNull();
+    expect(posts.some((p) => p.includes("En pausa por la plataforma"))).toBe(true);
+  });
+
+  it("sin reset de GitHub espera 15 min; un reset absurdo se acota a 1 h", async () => {
+    runRow = { ...runRow, status: "checking" };
+    const now = Math.floor(Date.now() / 1000);
+    await escalateRateLimit(run({ status: "checking" }), { findings: FINDINGS_137 });
+    expect(JSON.parse(events.at(-1)!.data_json!).retryAt).toBeGreaterThanOrEqual(now + 900);
+    runRow = { ...runRow, status: "checking" };
+    await escalateRateLimit(run({ status: "checking" }), { findings: FINDINGS_137, resetAt: now + 86400 });
+    expect(JSON.parse(events.at(-1)!.data_json!).retryAt).toBeLessThanOrEqual(now + 3601);
+  });
+
+  it("rateLimitRetryAt: la hora guardada, 15 min tras el evento viejo, null si no es de GitHub", () => {
+    expect(rateLimitRetryAt({ kind: "platform", cause: "github_rate_limit", retryAt: 500 }, 1)).toBe(500);
+    expect(rateLimitRetryAt({ findings: FINDINGS_137 }, 1000)).toBe(1000 + 900);
+    expect(rateLimitRetryAt({ kind: "platform", findings: "la preview no arrancó" }, 1)).toBeNull();
+    expect(rateLimitRetryAt({ kind: "decision", findings: FINDINGS_137 }, 1)).toBeNull();
+    expect(rateLimitReason(1000 + 15 * 60, 1000)).toBe("GitHub limitó las peticiones; @check revisa otra vez sola en 15 min.");
   });
 });

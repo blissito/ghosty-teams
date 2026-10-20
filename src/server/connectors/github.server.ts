@@ -75,6 +75,31 @@ export async function ackGithubComment(repo: string, commentUrl: string): Promis
   }
 }
 
+// Cuándo se libera el límite de GitHub, por cuenta (epoch s). Lo lee factory_check_verdict para
+// programar la nueva revisión; sin dato, la fábrica espera 15 min.
+const rateLimitReset = new Map<string, number>();
+
+/** La hora de reset: `x-ratelimit-reset` (epoch s) o `retry-after` (s); si no, 15 min. */
+export function rateLimitResetFrom(h: Headers, now = Math.floor(Date.now() / 1000)): number {
+  const reset = Number(h.get("x-ratelimit-reset"));
+  if (Number.isFinite(reset) && reset > now) return reset;
+  const after = Number(h.get("retry-after"));
+  if (Number.isFinite(after) && after > 0) return now + after;
+  return now + 15 * 60;
+}
+
+function noteRateLimit(sub: string, resetAt: number): void {
+  rateLimitReset.set(sub, resetAt);
+  rateLimitReset.set("*", Math.max(rateLimitReset.get("*") ?? 0, resetAt));
+}
+
+/** El reset pendiente del límite de GitHub para esa cuenta (o el último de cualquiera), o null. */
+export function githubRateLimitResetAt(sub?: string | null): number | null {
+  const now = Math.floor(Date.now() / 1000);
+  const r = (sub ? rateLimitReset.get(sub) : undefined) ?? rateLimitReset.get("*");
+  return r && r > now ? r : null;
+}
+
 export function githubApi(sub: string, path: string, init?: RequestInit): Promise<any> {
   return api(sub, path, init);
 }
@@ -106,12 +131,18 @@ async function api(sub: string, path: string, init?: RequestInit): Promise<any> 
   if (res.status === 401) {
     return { error: "La sesión de GitHub expiró. Pídele que reconecte GitHub en Ajustes → Integraciones." };
   }
+  // Rate limit: primario (403 con remaining=0), secundario (403/429 con «secondary rate limit» o
+  // retry-after) o 429. Se anota cuándo se libera: la fábrica pausa al pedido hasta esa hora (#137).
+  if (
+    res.status === 429 ||
+    (res.status === 403 && (res.headers.get("x-ratelimit-remaining") === "0" || !!res.headers.get("retry-after") || /secondary rate limit|rate limit exceeded/i.test(body)))
+  ) {
+    const resetAt = rateLimitResetFrom(res.headers);
+    noteRateLimit(sub, resetAt);
+    const at = new Date(resetAt * 1000).toISOString().slice(11, 16);
+    return { error: `GitHub está limitando las peticiones. Se libera hacia las ${at} UTC; espera unos minutos.`, rateLimitResetAt: resetAt };
+  }
   if (res.status === 403) {
-    // Rate limit y permiso faltante comparten el 403 en GitHub. Se distinguen
-    // por el header, no por el cuerpo.
-    if (res.headers.get("x-ratelimit-remaining") === "0") {
-      return { error: "GitHub está limitando las peticiones. Espera unos minutos." };
-    }
     // Función de plan, no de permiso: rulesets y protección de ramas en repos PRIVADOS de
     // cuentas gratis. Se deja el texto de GitHub para que quien lo lea sepa qué pide.
     if (/upgrade to github pro|make this repository public/i.test(body)) {

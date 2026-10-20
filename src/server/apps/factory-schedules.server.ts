@@ -106,6 +106,9 @@ export async function sweepTenant(ns: string): Promise<void> {
   const { retryWaitingPrPreviews } = await import("./pr-preview.server");
   await retryWaitingPrPreviews().catch(() => {});
   await announcePreviews().catch(() => {});
+  // Pausados porque GitHub limitó las peticiones (#137): a su hora @check revisa otra vez sola.
+  const { recheckRateLimited } = await import("./factory-runs.server");
+  await recheckRateLimited().catch(() => {});
   const { adoptOpenDependabotPrs } = await import("./dependabot.server");
   await adoptOpenDependabotPrs(ns);
   const rows = await dbq(

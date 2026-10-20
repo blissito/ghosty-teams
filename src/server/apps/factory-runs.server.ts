@@ -8,10 +8,13 @@ import { dbq } from "../../dbq.server";
 import {
   ESCALATION_ACTIONS,
   MAX_LOOPS,
+  RATE_LIMIT_RETRY_S,
   clipReason,
   deduceEscalationKind,
   isEscalationKind,
+  isGithubRateLimit,
   nextStatus,
+  rateLimitReason,
   stageLabel,
   type EscalationAction,
   type EscalationKind,
@@ -494,8 +497,10 @@ export function escalationFromEvent(data: Record<string, unknown>, at: number): 
   if (!findings && !data.reason) return null;
   const kind = isEscalationKind(data.kind) ? data.kind : deduceEscalationKind(findings);
   const points = findings ? findingPoints(findings) : [];
-  const reason = clipReason(String(data.reason ?? "") || points[0] || "");
-  return { kind, reason, points, findings, at, actions: ESCALATION_ACTIONS[kind] };
+  // Límite de GitHub (#137): no hay preview que reintentar, sólo que @check revise otra vez.
+  const rateLimited = kind === "platform" && (data.cause === "github_rate_limit" || isGithubRateLimit(`${findings}\n${data.reason ?? ""}`));
+  const reason = clipReason(String(data.reason ?? "") || (rateLimited ? "GitHub limitó las peticiones; @check revisa otra vez sola." : points[0]) || "");
+  return { kind, reason, points, findings, at, actions: rateLimited ? ["recheck"] : ESCALATION_ACTIONS[kind] };
 }
 
 /** Los hallazgos como viñetas (una por punto), para enseñar los primeros arriba. */
@@ -2289,7 +2294,7 @@ async function announceRunPreview(row: Record<string, any>, P: typeof import("./
       if (verdict && verdict.shotSha !== head.sha)
         void import("./factory-shots.server").then((S) => S.captureVerdictShots(run.id, verdict.shotPath ?? verdict.evidencePath ?? null));
       // Escalado SÓLO porque la preview no llegaba: ya llegó, @check revisa otra vez solo.
-      if (run.status === "escalated" && (await escalationOf(run))?.kind === "platform")
+      if (run.status === "escalated" && (await escalationOf(run))?.kind === "platform" && !(await rateLimitPending(run.id)))
         await recheck({ run, sub, who: "La plataforma", note: "la preview ya está lista", origin: "" }).catch((e) =>
           console.warn(`[factory] recheck #${run.id}: ${(e as Error).message}`),
         );
@@ -2332,8 +2337,88 @@ export async function escalatePlatform(run: Run, why: string, repo: string): Pro
   return next;
 }
 
+/**
+ * @check no pudo leer el PR porque GitHub limitó las peticiones (#137 de business, 20-oct: salía
+ * como «decision» y «Te toca»). Escala con tipo `platform` (sin push), guarda cuándo se libera
+ * (`x-ratelimit-reset` si GitHub lo dijo; si no, 15 min) y `recheckRateLimited` le pide a @check
+ * que revise otra vez a esa hora. Un solo aviso por repo, como la preview caída.
+ */
+export async function escalateRateLimit(run: Run, opts: { findings: string; resetAt?: number | null; extra?: Record<string, unknown> }): Promise<Run | null> {
+  if (run.status !== "checking") return null;
+  const now = Math.floor(Date.now() / 1000);
+  // Un minuto de colchón tras el reset de GitHub; nunca antes de 2 min ni después de 1 h.
+  const retryAt = opts.resetAt && opts.resetAt > now ? Math.min(Math.max(opts.resetAt + 60, now + 120), now + 3600) : now + RATE_LIMIT_RETRY_S;
+  const reason = rateLimitReason(retryAt, now);
+  const next = await applyEvent(run, "check_blocked", opts.extra ?? {}, {
+    actor: "check",
+    data: { kind: "platform", cause: "github_rate_limit", reason, retryAt, findings: opts.findings.slice(0, 4000) },
+  }).catch(() => null);
+  if (!next) return null;
+  await postInThread(next, "check", `⏸️ **En pausa por la plataforma:** ${reason} Nadie tiene que decidir nada.`).catch(() => {});
+  await postRunCard(next).catch(() => {});
+  const pr = run.prUrl ? parsePrUrl(run.prUrl) : null;
+  if (pr)
+    await noticePlatformOnce(
+      next,
+      pr.repo,
+      reason,
+      `⚠️ **GitHub está limitando las peticiones de \`${pr.repo}\`.** Es de la plataforma, no de los PRs: ` +
+        "los pedidos que @check no pudo leer quedan en pausa sin pedirte nada y se revisan solos en cuanto GitHub se libere.",
+    );
+  return next;
+}
+
+/** Cuándo toca que @check revise otra vez un escalado por límite de GitHub (null = no es de ésos). Pura. */
+export function rateLimitRetryAt(data: Record<string, unknown>, at: number): number | null {
+  if (data.kind !== "platform" && isEscalationKind(data.kind)) return null;
+  const rateLimited = data.cause === "github_rate_limit" || (!isEscalationKind(data.kind) && isGithubRateLimit(String(data.findings ?? "")));
+  if (!rateLimited) return null;
+  const r = Number(data.retryAt);
+  return Number.isFinite(r) && r > 0 ? r : at + RATE_LIMIT_RETRY_S;
+}
+
+/** ¿El pedido está en pausa por el límite de GitHub y todavía no llega su hora? */
+async function rateLimitPending(runId: number): Promise<boolean> {
+  const [ev] = await dbq(
+    "SELECT data_json, at FROM gt_factory_events WHERE run_id = ? AND type IN ('check_blocked', 'check_fail') ORDER BY id DESC LIMIT 1",
+    [runId],
+  ).catch(() => []);
+  try {
+    const due = rateLimitRetryAt(ev?.data_json ? JSON.parse(String(ev.data_json)) : {}, Number(ev?.at ?? 0));
+    return due !== null && due > Math.floor(Date.now() / 1000);
+  } catch {
+    return false;
+  }
+}
+
+/** Del tick: los pedidos en pausa por el límite de GitHub cuya hora ya llegó vuelven a @check. */
+export async function recheckRateLimited(): Promise<number> {
+  const rows = await dbq("SELECT * FROM gt_factory_runs WHERE status = 'escalated'", []).catch(() => []);
+  const now = Math.floor(Date.now() / 1000);
+  let n = 0;
+  for (const row of rows) {
+    const run = toRun(row);
+    const [ev] = await dbq(
+      "SELECT data_json, at FROM gt_factory_events WHERE run_id = ? AND type IN ('check_blocked', 'check_fail') ORDER BY id DESC LIMIT 1",
+      [run.id],
+    ).catch(() => []);
+    let data: Record<string, unknown> = {};
+    try {
+      data = ev?.data_json ? JSON.parse(String(ev.data_json)) : {};
+    } catch {
+      continue;
+    }
+    const due = rateLimitRetryAt(data, Number(ev?.at ?? 0));
+    if (due === null || due > now) continue;
+    await recheck({ run, sub: run.approvedBy ?? run.requestedBy, who: "La plataforma", note: "GitHub ya liberó las peticiones", origin: "" })
+      .then(() => n++)
+      .catch((e) => console.warn(`[factory] recheck #${run.id} tras el límite de GitHub: ${(e as Error).message}`));
+  }
+  return n;
+}
+
 /** Un solo aviso por repo (cada 6 h a lo más) en el room del pedido, no uno por pedido. */
-async function noticePlatformOnce(run: Run, repo: string, reason: string): Promise<void> {
+async function noticePlatformOnce(run: Run, repo: string, reason: string, text?: string): Promise<void> {
   const claimed = await dbq(
     `INSERT INTO gt_factory_repo_prefs (repo, platform_notice_at) VALUES (?, unixepoch())
      ON CONFLICT(repo) DO UPDATE SET platform_notice_at = excluded.platform_notice_at
@@ -2346,6 +2431,7 @@ async function noticePlatformOnce(run: Run, repo: string, reason: string): Promi
     const bus = await import("../bus.server");
     const { currentNamespace } = await import("../tenant.server");
     const body =
+      text ??
       `⚠️ **Las previews de \`${repo}\` no están arrancando** (${reason}). Es una falla de la plataforma, no de los PRs: ` +
       `los pedidos que la esperan quedan en pausa sin pedirte nada y se reanudan solos en cuanto arranque.`;
     const { id } = await db.postAgent(run.channelId, null, body, "msg", "check", "Check", "general", "");

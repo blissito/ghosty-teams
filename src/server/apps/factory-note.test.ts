@@ -82,13 +82,14 @@ vi.mock("./factory-runs.server", () => ({
   runCardFence: () => "",
   postRunCard: async () => 1,
   fetchRunWhy: async (runId: number, opts: Run) => (whyCalls.push({ runId, opts }), whyReply),
+  escalateRateLimit: async (run: Run, opts: Run) => (applied.push({ event: "rate_limit", patch: opts.extra, data: opts }), { ...run, status: "escalated" }),
 }));
 vi.mock("./factory-smoke.server", async (orig) => ({
   ...(await orig<typeof import("./factory-smoke.server")>()),
   runActionSmoke: async () => smokeResult,
 }));
 vi.mock("./factory-shots.server", () => ({ captureVerdictShots: async () => {} }));
-vi.mock("../connectors/github.server", () => ({ githubApi: async () => ({}) }));
+vi.mock("../connectors/github.server", () => ({ githubApi: async () => ({}), githubRateLimitResetAt: () => 1234 }));
 
 vi.mock("../../dbq.server", () => ({
   dbq: async (sql: string, args: unknown[] = []) => (
@@ -197,6 +198,24 @@ describe("factory_check_verdict: la cabeza del PR se movió durante la revisión
     expect(sqlLog.some((q) => q.sql.startsWith("UPDATE gt_factory_runs SET head_sha") && q.args[0] === "ccc2222")).toBe(true);
     expect(logged).toEqual([{ type: "head_moved", data: { from: "aaa1111", to: "ccc2222" } }]);
     expect(applied).toHaveLength(0);
+  });
+});
+
+// #137 de business (20-oct): @check escaló como decision porque GitHub limitó las peticiones.
+describe("factory_check_verdict: el límite de GitHub lo pone la plataforma", () => {
+  const dest = { channelId: 3, parentId: 99, handle: "check" };
+  it("con kind=decision y «limitando las peticiones» se pausa como platform con el reset de GitHub", async () => {
+    current = baseRun();
+    const findings = "- Sin revisar: github_pr_files y github_get_pr devolvieron «GitHub está limitando las peticiones» en 3 intentos.";
+    const r: any = await (await tool("factory_check_verdict", dest)).handler("beto", { pass: false, blocked: true, findings, kind: "decision", reason: "No pude leer el PR" });
+    expect(r.ok).toBe(true);
+    expect(applied).toHaveLength(1);
+    expect(applied[0]).toMatchObject({ event: "rate_limit", data: { findings, resetAt: 1234 } });
+  });
+  it("un hallazgo de código sobre rate limiting sigue su camino", async () => {
+    current = baseRun();
+    await (await tool("factory_check_verdict", dest)).handler("beto", { pass: false, findings: "- falta rate limit en /login", kind: "fix", reason: "falta rate limit" });
+    expect(applied[0]?.event).not.toBe("rate_limit");
   });
 });
 

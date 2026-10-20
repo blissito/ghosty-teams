@@ -7,7 +7,7 @@
 import { notaNombres, type ConnectorTool, type ToolChannel } from "../connectors/impl";
 import type { ToolDest } from "../connectors/tool-token.server";
 import { isInstalled } from "./installed.server";
-import { MAX_LOOPS, clipReason, countsLoop, isEscalationKind, stageLabel, type EscalationKind } from "./factory-flow";
+import { MAX_LOOPS, clipReason, countsLoop, isEscalationKind, isGithubRateLimit, stageLabel, type EscalationKind } from "./factory-flow";
 import type { EnvRiskEntry } from "./factory-preview-gate";
 
 export async function factoryTools(_sub: string, dest: ToolDest | null): Promise<ConnectorTool[]> {
@@ -568,7 +568,9 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
               "fix = @build lo puede arreglar en la rama (incluye subir los paquetes hermanos de un grupo de Dependabot o un arreglo de tipos de una línea); " +
               "skip = no conviene este cambio o esta subida (cerrar el PR e ignorar la versión); " +
               "decision = una persona tiene que elegir entre caminos. " +
-              "Si la preview no arranca o sigue en camino NO escales: espera (la plataforma lo detecta sola).",
+              "Si la preview no arranca o sigue en camino NO escales: espera (la plataforma lo detecta sola). " +
+              "Si GitHub limita las peticiones (rate limit, 403/429) no es decision: espera y reintenta; si no se libera, " +
+              "pass=false con «GitHub está limitando las peticiones» en findings y la plataforma lo pausa y te lo regresa sola.",
           },
           reason: {
             type: "string",
@@ -775,6 +777,18 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           return { ok: true, status: next.status, note: "La plataforma ya avisó en el hilo y sacó el PR de borrador. Termina sin repetirlo." };
         }
         if (!findings) return { ok: false, error: "con pass=false los hallazgos son obligatorios" };
+        // GitHub limitó las peticiones (#137 de business, 20-oct): no es una decisión ni algo de @build.
+        // `platform` lo pone la plataforma aunque @check mande otro kind; sin push, y @check revisa
+        // otra vez sola cuando GitHub se libera.
+        if (isGithubRateLimit(`${findings}\n${a.reason ?? ""}`)) {
+          let resetAt: number | null = null;
+          try {
+            resetAt = (await import("../connectors/github.server")).githubRateLimitResetAt(sub);
+          } catch { /* sin dato: 15 min */ }
+          const next = await R.escalateRateLimit(run, { findings, resetAt, extra: checked });
+          if (!next) return { ok: false, error: "no pude pausar el pedido por el límite de GitHub" };
+          return { ok: true, status: next.status, note: "GitHub limitó las peticiones: la plataforma pausó el pedido y te lo regresa cuando se libere. No lo repitas." };
+        }
         // El tipo y el motivo del escalado (easybits, 20-oct): sin ellos la persona veía «Te toca» sin
         // saber qué decidir. `platform` no lo elige @check: lo pone la plataforma.
         if (a.kind === "platform")

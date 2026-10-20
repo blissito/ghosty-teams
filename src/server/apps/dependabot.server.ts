@@ -118,7 +118,8 @@ export async function adoptDependabotPr(ev: PrOpened, opts: { room?: number } = 
         `  · kind=skip si no conviene esta subida (p. ej. un major que el repo no puede adoptar hoy): la persona cierra el PR e ignora la versión;\n` +
         `  · kind=env si faltan variables o credenciales para probarlo (nómbralas);\n` +
         `  · kind=decision si una persona tiene que elegir entre caminos (di cuáles).\n` +
-        `  Nunca escales porque el CI o la preview siguen en camino: se espera.\n` +
+        `  Nunca escales porque el CI o la preview siguen en camino: se espera. Que GitHub limite las peticiones (rate limit) tampoco es decision: ` +
+        `reintenta en unos minutos y, si no se libera, pass=false citando «GitHub está limitando las peticiones»: la plataforma lo pausa y te lo regresa sola.\n` +
         `NO edites ni empujes nada.`,
       // Llega por el webhook (sin request de una persona): como `noteFromGithub`, sin origin.
       "",
