@@ -22,7 +22,7 @@ export type RunStatus =
   | "done"
   | "cancelled";
 
-export type RunEvent = "plan_submitted" | "approve" | "changes" | "build_done" | "check_pass" | "check_fail" | "check_blocked" | "close" | "merged" | "cancel" | "conflict" | "rework";
+export type RunEvent = "plan_submitted" | "approve" | "changes" | "build_done" | "check_pass" | "check_fail" | "check_blocked" | "close" | "merged" | "cancel" | "conflict" | "rework" | "recheck";
 
 export const MAX_LOOPS = 3;
 
@@ -54,6 +54,9 @@ export function nextStatus(status: RunStatus, event: RunEvent, loops = 0): RunSt
       // Una persona decide: mandar a construir otra vez o replanear.
       if (event === "approve") return "building";
       if (event === "changes") return "planning";
+      // Lo que bloqueaba lo resolvió una persona (variables de la preview, un acceso): @check
+      // vuelve a revisar el MISMO PR. Mandarlo a @build gastaba una vuelta en nada (#125, 20-oct).
+      if (event === "recheck") return "checking";
       return null;
     case "pr_review":
       if (event === "conflict" || event === "rework") return "building";

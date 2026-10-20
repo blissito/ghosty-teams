@@ -1449,7 +1449,7 @@ export function findingsText(raw: unknown): string {
     if (typeof x !== "object") return String(x);
     const o = x as Record<string, unknown>;
     const lugar = [o.file ?? o.path, o.line ?? o.lines].filter((v) => v != null && v !== "").join(":");
-    const texto = [o.issue, o.message, o.finding, o.description, o.problem, o.detail, o.title].find((v) => typeof v === "string" && v.trim());
+    const texto = [o.issue, o.message, o.text, o.finding, o.description, o.problem, o.detail, o.title].find((v) => typeof v === "string" && v.trim());
     const arreglo = [o.fix, o.suggestion, o.expected].find((v) => typeof v === "string" && v.trim());
     if (!texto && !lugar) return JSON.stringify(o);
     return `${lugar ? `\`${lugar}\` — ` : ""}${texto ?? JSON.stringify(o)}${arreglo ? ` (arreglo: ${arreglo})` : ""}`;

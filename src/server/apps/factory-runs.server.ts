@@ -1122,6 +1122,39 @@ export async function markPrReady(sub: string, url: string): Promise<boolean> {
  * (GitHub) son con las que @build trabaja después. Sólo aplica a la ÚLTIMA versión: firmar
  * una tarjeta vieja sería aprobar un plan que ya no existe.
  */
+/**
+ * «Ya lo resolví, que @check revise otra vez»: el pedido escaló por algo que @build no puede hacer
+ * (variables de la preview, un permiso) y una persona lo resolvió. @check vuelve a revisar el MISMO
+ * PR sin que @build gaste otra vuelta (#125, 20-oct: faltaban 5 variables y la tarjeta sólo
+ * ofrecía «Que @build lo arregle»). No cuenta vuelta.
+ */
+export async function recheck(opts: { run: Run; sub: string; who: string; note?: string; origin: string }): Promise<Run> {
+  const { run } = opts;
+  const note = (opts.note ?? "").trim().slice(0, 2000);
+  const next = await applyEvent(run, "recheck", {}, { actor: opts.who, data: note ? { note } : {} });
+  await postInThread(next, "check", `🔁 ${opts.who} resolvió lo que me bloqueaba${note ? `: ${note}` : ""}. Reviso el PR otra vez.`).catch(() => {});
+  const plan = await getPlan(run.id, run.planVersion);
+  const previewNeeded = await previewRequired(next);
+  await handoff(
+    next,
+    "check",
+    opts.sub,
+    "volver a revisar",
+    `${opts.who} resolvió lo que te bloqueó en tu revisión anterior${note ? `: «${note}»` : ""}. Revisa OTRA VEZ el PR ${run.prUrl ?? ""} ` +
+      `contra el plan APROBADO (v${run.planVersion}). @build no cambió nada: no repitas hallazgos de código que ya diste por buenos.\n\n` +
+      `## Plan aprobado\n${plan?.planMd ?? "(no encontré el plan)"}\n\n` +
+      (previewNeeded
+        ? `Este pedido EXIGE la preview: pide la URL con factory_preview (runId ${run.id}); si se está reconstruyendo con las variables nuevas, ` +
+          `espera a que esté lista. Comprueba AHÍ los criterios de aceptación (incluida una acción que envíe datos) y cita la URL en tu veredicto. `
+        : `Si el repo publica previews, pide la URL con factory_preview (runId ${run.id}) y comprueba ahí lo que se ve en pantalla. `) +
+      `Si sigue faltando algo que @build no puede resolver, vuelve a usar blocked=true y di exactamente qué. NO edites ni empujes nada. ` +
+      `Cierra con factory_check_verdict (runId ${run.id}).`,
+    opts.origin,
+    "",
+  );
+  return next;
+}
+
 export async function decide(opts: {
   run: Run;
   version: number;

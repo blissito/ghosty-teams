@@ -25,7 +25,7 @@ async function verify(ts: string, sig: string, rawBody: string): Promise<boolean
 
 const bad = (error: string, status = 400) => Response.json({ error }, { status });
 
-type Body = { runId?: number; action?: string; version?: number; note?: string; checkScope?: string; skipPreview?: boolean; sub?: string };
+type Body = { runId?: number; action?: string; version?: number; note?: string; checkScope?: string; skipPreview?: boolean; dotenv?: string; sub?: string };
 
 export const Route = createFileRoute("/api/internal/factory-act")({
   server: {
@@ -80,6 +80,29 @@ export const Route = createFileRoute("/api/internal/factory-act")({
             });
             return Response.json({ ok: true, status: next.status });
           }
+          // Escalado por algo que @build no puede hacer y que la persona ya resolvió: @check revisa
+          // otra vez el mismo PR, sin otra vuelta de @build.
+          if (body.action === "recheck") {
+            if (run.status !== "escalated") return bad(`el pedido está en «${run.status}», no escalado`, 409);
+            const next = await R.recheck({ run, sub: member.sub, who: member.name || "alguien", note: body.note ? String(body.note) : undefined, origin });
+            return Response.json({ ok: true, status: next.status });
+          }
+          // Las variables de la preview del repo del pedido (lo de «Variables» en la preparación del
+          // repo): entran a la bóveda de gs y nunca vuelven; se contestan sólo los NOMBRES. Sólo el
+          // dueño, como en la web. Las previews abiertas del repo se reconstruyen con ellas.
+          if (body.action === "env") {
+            if (!isOwner) return bad("sólo el dueño del espacio guarda variables", 403);
+            if (!run.repo) return bad("el pedido no tiene repo");
+            const dotenv = String(body.dotenv ?? "").trim();
+            if (!dotenv) return bad("las variables no pueden ir vacías");
+            if (dotenv.length > 32_000) return bad("demasiado largo");
+            const { gsPreview } = await import("../server/apps/preview.server");
+            const out = await gsPreview("env-set", { repo: run.repo, dotenv });
+            const { invalidateReadiness } = await import("../server/apps/readiness.server");
+            invalidateReadiness(run.repo);
+            await R.retryPreviews({ repo: run.repo, envChanged: true });
+            return Response.json({ ok: true, keys: (out?.keys ?? []) as string[] });
+          }
           if (body.action === "merge") {
             if (run.status !== "pr_review") return bad(`el pedido está en «${run.status}», no esperando merge`, 409);
             const r = await R.mergeRun(run, member.sub, { skipPreview: body.skipPreview === true });
@@ -91,7 +114,7 @@ export const Route = createFileRoute("/api/internal/factory-act")({
             if (!r.ok) return bad(r.error, 409);
             return Response.json({ ok: true, status: "done", queued: false });
           }
-          return bad("action: approve | changes | merge | card");
+          return bad("action: approve | changes | recheck | env | merge | card");
         } catch (e) {
           return bad((e as Error).message, 409);
         }

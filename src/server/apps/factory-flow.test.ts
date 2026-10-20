@@ -25,6 +25,9 @@ describe("nextStatus", () => {
     expect(nextStatus("checking", "check_fail", MAX_LOOPS - 1)).toBe("escalated");
     expect(nextStatus("escalated", "approve")).toBe("building");
     expect(nextStatus("escalated", "changes")).toBe("planning");
+    // Lo que bloqueaba lo resolvió una persona: @check revisa otra vez, sin vuelta de @build.
+    expect(nextStatus("escalated", "recheck")).toBe("checking");
+    expect(nextStatus("building", "recheck")).toBeNull();
   });
 
   it("no se salta la firma ni el check", () => {
