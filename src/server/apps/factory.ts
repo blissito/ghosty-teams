@@ -624,9 +624,10 @@ export const factoryRunCardFn = createServerFn({ method: "POST" })
       ci: run.prUrl && run.status !== "done" ? await liveCi(run.approvedBy ?? run.requestedBy ?? me.sub, run.prUrl, run.repo, me.sub) : null,
       canPrep: !!me.isOwner && !!run.repo,
       // Escalado: lo que @check pide decidir, para pintarlo arriba (y aprobar con un 2º clic).
+      // Con su tipo, el motivo de un renglón y lo que se le ofrece a la persona (20-oct).
       escalation: await (async () => {
         const e = await R.escalationOf(run);
-        return e ? { points: R.findingPoints(e.findings), at: e.at } : null;
+        return e ? { kind: e.kind, reason: e.reason, points: e.points, at: e.at, actions: e.actions } : null;
       })(),
       // Después del merge: lo que vio el vigilante en producción (paso «Prod»).
       prod: run.status === "done" ? await (await import("./post-merge.server")).runProd(run) : null,
@@ -655,7 +656,7 @@ export function forgetPrClosed(runId: number): void {
 async function cancelledView(run: { id: number; prUrl: string | null; approvedBy?: string | null; requestedBy?: string | null }, meSub: string) {
   const R = await import("./factory-runs.server");
   const info = await R.cancelInfo(run.id);
-  let prClosed = info?.reason === "pr_closed";
+  let prClosed = info?.reason === "pr_closed" || info?.reason === "closed_by_person";
   if (!prClosed && run.prUrl) {
     // Con el GitHub de quien aprobó, pidió o mira: el primero que pueda leer el PR.
     for (const sub of new Set([run.approvedBy, run.requestedBy, meSub].filter(Boolean) as string[])) {
@@ -733,7 +734,8 @@ export async function runLive(run: import("./factory-runs.server").Run) {
   const { blocksAutoMerge } = await import("./dependabot.server");
   const roomAuto = !blocksAutoMerge(run.taskRef) && ((await (await import("../../db.server")).getRoomAutoMerge(run.channelId).catch(() => null))?.on ?? false);
   const merge = mq ? mergeMode(mq.merge_queued_by, mq.merge_queued_auto, roomAuto) : null;
-  const view = viewState(run, { lastActivityAt, now, busy: !!live, waitingOn, merge });
+  const escalationKind = run.status === "escalated" ? ((await (await import("./factory-runs.server")).escalationOf(run))?.kind ?? null) : null;
+  const view = viewState(run, { lastActivityAt, now, busy: !!live, waitingOn, merge, escalationKind });
   return {
     view,
     waitingOn,
@@ -970,6 +972,16 @@ export const factoryOverviewFn = createServerFn({ method: "GET" })
   if (room)
     for (const d of await dbq("SELECT pr, state FROM gt_post_merge WHERE channel_id = ? AND started_at > unixepoch() - 86400", [room.id]).catch(() => []))
       deploys.set(Number(d.pr), String(d.state));
+  // El tipo de cada escalado: uno de la plataforma no va a «te toca» (easybits, 20-oct).
+  const escKinds = new Map<number, string>();
+  {
+    const R = await import("./factory-runs.server");
+    for (const r of rows.filter((x) => x.status === "escalated" && byId.has(Number(x.channel_id))).slice(0, 100)) {
+      const run = await R.getRun(Number(r.id));
+      const e = run ? await R.escalationOf(run) : null;
+      if (e) escKinds.set(Number(r.id), e.kind);
+    }
+  }
   const viewOf = (r: Record<string, any>) => {
     if (String(r.status) === "done") {
       const prNum = Number(String(r.pr_url ?? "").match(/\/pull\/(\d+)/)?.[1] ?? 0);
@@ -985,6 +997,7 @@ export const factoryOverviewFn = createServerFn({ method: "GET" })
         now,
         busy: live.some((t) => t.channelId === Number(r.channel_id) && t.parentId === Number(r.root_msg_id)),
         merge: r.status === "pr_review" ? mergeMode(r.merge_queued_by, r.merge_queued_auto, roomAuto && !blocksAutoMerge(r.task_ref)) : null,
+        escalationKind: (escKinds.get(Number(r.id)) as import("./factory-flow").EscalationKind | undefined) ?? null,
       },
     );
     return { column: v.column, label: v.label, turnSub: v.whoseTurn?.kind === "person" ? v.whoseTurn.sub : null };

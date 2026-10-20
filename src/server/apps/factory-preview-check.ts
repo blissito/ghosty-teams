@@ -42,7 +42,13 @@ export function previewCheckFrom(
       : done("neutral", "Este pedido no exige preview", `El plan del pedido #${run.id} no pide probarlo en la preview.${thread}`);
   // Sin preview todavía (recién abierto o «Reintentar») cuenta como construyéndose.
   const gate = previewGateBlock(run.preview.state === "none" ? { ...run.preview, state: "pending" } : run.preview, run.headSha);
-  if (gate?.waits) return { status: "in_progress", conclusion: null, title: "La preview se está construyendo", summary: `El merge espera a que esté lista en este commit.${thread}` };
+  if (gate?.waits)
+    return {
+      status: "in_progress",
+      conclusion: null,
+      title: run.preview.state === "waiting" ? "La preview espera lugar" : "La preview se está construyendo",
+      summary: `El merge espera a que esté lista en este commit.${run.preview.state === "waiting" && run.preview.error ? ` (${run.preview.error})` : ""}${thread}`,
+    };
   if (gate) {
     const env = run.preview.state === "needs_env" && run.envUrl ? ` [Guárdalas con datos de prueba](${run.envUrl}) y arranca sola.` : "";
     return done("failure", `La preview ${gate.reason.split(":")[0]}`, `El pedido #${run.id} exige la preview y ${gate.reason}.${env}${thread}`);

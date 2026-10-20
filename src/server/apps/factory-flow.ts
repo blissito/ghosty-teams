@@ -110,6 +110,75 @@ export function parseThreadDecision(text: string): { decision: "approve" } | { d
   return null;
 }
 
+// ── El escalado con tipo (easybits, 20-oct) ──────────────────────────────────
+//
+// «Te toca 8» y ocho tarjetas sin decir qué decidir: 5 eran la misma falla de la plataforma (la
+// preview nunca salió de `pending`) y 3 decisiones reales. Cada escalado lleva ahora un tipo, un
+// motivo de un renglón y los botones que lo resuelven. gs replica `needsYou` tal cual.
+
+/**
+ * - `env`: faltan variables o credenciales (las da una persona).
+ * - `fix`: @build lo puede arreglar en la rama (hermanos de un grupo de Dependabot, un tipo).
+ * - `skip`: no conviene este bump: cerrar el PR (y que Dependabot lo ignore).
+ * - `decision`: una persona elige entre caminos.
+ * - `platform`: falla nuestra (la preview no arrancó). Nunca la elige @check: la pone el sistema.
+ */
+export type EscalationKind = "env" | "fix" | "skip" | "decision" | "platform";
+export const ESCALATION_KINDS: readonly EscalationKind[] = ["env", "fix", "skip", "decision", "platform"];
+
+/** Lo que se le ofrece a la persona según el tipo (mismo orden que los botones). */
+export type EscalationAction = "env" | "recheck" | "fix" | "replan" | "close" | "close_ignore" | "advise" | "retry_preview";
+export const ESCALATION_ACTIONS: Record<EscalationKind, EscalationAction[]> = {
+  env: ["env", "recheck"],
+  fix: ["fix", "replan"],
+  skip: ["close", "close_ignore", "fix"],
+  decision: ["advise", "fix", "replan"],
+  platform: ["retry_preview", "recheck"],
+};
+
+export function isEscalationKind(v: unknown): v is EscalationKind {
+  return typeof v === "string" && (ESCALATION_KINDS as readonly string[]).includes(v);
+}
+
+// Variables que faltan: «faltan las variables», «DATABASE_URL no está», «.env.example»…
+const ENV_HINT =
+  /variables? de entorno|\benv(ironment)? ?var(iable)?s?\b|\.env(\.example)?\b|faltan? (las |unas |\d+ )?variables|missing (env|environment|secret)/i;
+// Un nombre de variable en mayúsculas que suena a credencial (`STRIPE_SECRET_KEY`, `DATABASE_URL`).
+const ENV_NAME_HINT = /\b[A-Z][A-Z0-9]*_[A-Z0-9_]*(KEY|SECRET|TOKEN|URL)\b/;
+// La preview que no llegó: «preview pending», «factory_preview sigue construyendo», «no arrancó»…
+const PLATFORM_HINT =
+  /factory_preview|preview[^.\n]{0,60}(pending|pendiente|constru|en camino|no (arranc|lleg|est[áa] lista|existe)|nunca)|(pending|pendiente)[^.\n]{0,40}preview/i;
+
+/** Escalados viejos (sin `kind`): se deduce con las señales que ya había en los hallazgos. */
+export function deduceEscalationKind(findings: string): EscalationKind {
+  const f = String(findings ?? "");
+  if (ENV_HINT.test(f) || ENV_NAME_HINT.test(f)) return "env";
+  if (PLATFORM_HINT.test(f)) return "platform";
+  return "decision";
+}
+
+/** Un renglón llano (≤140) para la tarjeta, el push y la Live Activity. */
+export function clipReason(text: string, max = 140): string {
+  const t = String(text ?? "").replace(/[*_`#>]/g, "").replace(/\s+/g, " ").trim();
+  return t.length <= max ? t : `${t.slice(0, max - 1).trimEnd()}…`;
+}
+
+/**
+ * ¿Le toca a una persona? La regla que gs y la app replican (una sola fuente de verdad):
+ * firmar un plan sí; un escalado sí salvo que sea falla de la plataforma; un PR listo sí salvo
+ * que vaya a entrar solo (automerge o merge en cola, igual que `viewState`); lo demás no.
+ */
+export function needsYou(
+  run: { status: RunStatus },
+  escalation: { kind: EscalationKind } | null | undefined,
+  opts: { merge?: "auto" | "queued" | null } = {},
+): boolean {
+  if (run.status === "plan_review") return true;
+  if (run.status === "escalated") return (escalation?.kind ?? "decision") !== "platform";
+  if (run.status === "pr_review") return !opts.merge;
+  return false;
+}
+
 // ── Lo que ve la persona (barra del hilo, panel y tablero) ───────────────────
 //
 // Lo CALCULA la plataforma con el estado y la última actividad; el modelo nunca declara
@@ -139,6 +208,8 @@ export function viewState(
     waitingOn?: string | null;
     /** PR aprobado que entra solo: `auto` = automerge del room, `queued` = alguien picó «Merge» con el CI corriendo. */
     merge?: "auto" | "queued" | null;
+    /** El tipo del último escalado (`escalationOf`): `platform` no le toca a nadie. */
+    escalationKind?: EscalationKind | null;
   },
 ): RunView {
   const open = !["done", "cancelled"].includes(run.status);
@@ -167,6 +238,8 @@ export function viewState(
       if (opts.merge) return { column: "ready", label: opts.merge === "auto" ? "Se mergea solo" : "Merge en cola", stale: false, whoseTurn: null, primary: null };
       return { column: "ready", label: "Listo para merge", stale: false, whoseTurn: reviewer, primary: "merge" };
     case "escalated":
+      // Falla de la plataforma (la preview no arrancó): nadie tiene que decidir; se reintenta sola.
+      if (opts.escalationKind === "platform") return { column: "checking", label: "Esperando preview", stale: false, whoseTurn: null, primary: null };
       return { column: "waiting", label: "Necesita tu decisión", stale: false, whoseTurn: owner, primary: "decide" };
     default:
       return { column: "closed", label: run.status === "done" ? "Terminado" : "Cancelado", stale: false, whoseTurn: open ? owner : null, primary: null };

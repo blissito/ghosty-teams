@@ -67,10 +67,52 @@ describe("previews por PR", () => {
     expect((await commitPreview("u", "acme/app", sha())).state).toBe("none");
   });
 
-  it("repoHasPreviews: deployments que no son de producción", async () => {
-    responses[`${D}?per_page=30`] = [{ environment: "production" }];
+  it("repoHasPreviews: un despliegue reciente que no es de producción, con status success y URL", async () => {
+    const recent = new Date().toISOString();
+    responses[`${D}?per_page=30`] = [{ id: 10, environment: "production", created_at: recent }];
     expect(await repoHasPreviews("u", "acme/app", "main")).toBe(false);
-    responses[`${D}?per_page=30`] = [{ environment: "production" }, { environment: "pr-12" }];
+    responses[`${D}?per_page=30`] = [{ id: 10, environment: "production", created_at: recent }, { id: 12, environment: "pr-12", created_at: recent }];
+    responses[`${D}/12/statuses?per_page=1`] = [{ state: "success", environment_url: "https://pr-12.fly.dev" }];
     expect(await repoHasPreviews("u", "acme/app", "main")).toBe(true);
+  });
+
+  // easybits (20-oct): un despliegue `preview-157` de 2025 (github-actions, ya `inactive`) hacía creer
+  // que el hosting publicaba previews; nunca se le pidió la caja a gs y cinco previews se quedaron
+  // `pending` para siempre. Fixture tal como lo devuelve GitHub.
+  it("repoHasPreviews: el preview-157 viejo de easybits NO cuenta (easybits, 20-oct)", async () => {
+    responses["/repos/blissito/easybits/deployments?per_page=30"] = [
+      {
+        id: 2732601918,
+        environment: "preview-157",
+        created_at: "2025-07-12T15:49:29Z",
+        creator: { login: "github-actions[bot]" },
+        description: "Preview deployment for PR #157",
+        production_environment: false,
+        transient_environment: true,
+      },
+    ];
+    responses["/repos/blissito/easybits/deployments/2732601918/statuses?per_page=1"] = [{ state: "inactive", environment_url: "", created_at: "2025-07-12T20:08:57Z" }];
+    responses["/repos/blissito/easybits/commits/main/statuses?per_page=30"] = [];
+    expect(await repoHasPreviews("u", "blissito/easybits", "main")).toBe(false);
+  });
+
+  it("repoHasPreviews: reciente pero inactivo o sin URL tampoco cuenta", async () => {
+    const recent = new Date().toISOString();
+    responses[`${D}?per_page=30`] = [{ id: 20, environment: "preview-3", created_at: recent }];
+    responses[`${D}/20/statuses?per_page=1`] = [{ state: "inactive", environment_url: "https://pr-3.fly.dev" }];
+    expect(await repoHasPreviews("u", "acme/app", "main")).toBe(false);
+    responses[`${D}/20/statuses?per_page=1`] = [{ state: "success", environment_url: "" }];
+    expect(await repoHasPreviews("u", "acme/app", "main")).toBe(false);
+  });
+
+  it("repoHasPreviews: los despliegues de la propia Ghosty (publishPreviewDeployment) no cuentan", async () => {
+    const recent = new Date().toISOString();
+    responses[`${D}?per_page=30`] = [
+      { id: 30, environment: "preview", created_at: recent, description: "Preview de Ghosty", creator: { login: "bliss" } },
+      { id: 31, environment: "preview", created_at: recent, creator: { login: "ghosty-studio[bot]" } },
+    ];
+    responses[`${D}/30/statuses?per_page=1`] = [{ state: "success", environment_url: "https://pr-9.preview.ghosty.studio" }];
+    responses[`${D}/31/statuses?per_page=1`] = [{ state: "success", environment_url: "https://pr-9.preview.ghosty.studio" }];
+    expect(await repoHasPreviews("u", "acme/app", "main")).toBe(false);
   });
 });

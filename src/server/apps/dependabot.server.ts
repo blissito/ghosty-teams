@@ -30,6 +30,23 @@ const LEVEL_TEXT: Record<BumpLevel, string> = {
 };
 
 /**
+ * Pedidos de Dependabot vivos por repo. En easybits (20-oct) llegaron ocho de golpe por el webhook
+ * (sin tope; sólo el barrido lo tenía) y cada uno despertó a @check y pidió su preview. Los demás
+ * esperan: el barrido los adopta cuando se libera un lugar.
+ */
+export const DEPENDABOT_LIVE_CAP = 4;
+
+/** ¿Cuántos pedidos de Dependabot siguen abiertos en este repo? */
+export async function liveDependabotRuns(repo: string): Promise<number> {
+  const { dbq } = await import("../../dbq.server");
+  const [r] = await dbq(
+    "SELECT COUNT(*) AS n FROM gt_factory_runs WHERE kind = 'dependabot' AND LOWER(repo) = LOWER(?) AND status NOT IN ('done','cancelled')",
+    [repo],
+  ).catch(() => [{ n: 0 }]);
+  return Number(r?.n ?? 0);
+}
+
+/**
  * Crea el pedido de revisión para un PR de Dependabot recién abierto, en el room que recibe los
  * avisos del repo (el primero con la fábrica). Devuelve los rooms que ya quedaron cubiertos para
  * que no reciban también el aviso suelto. Nunca lanza.
@@ -44,6 +61,12 @@ export async function adoptDependabotPr(ev: PrOpened, opts: { room?: number } = 
     const db = await import("../../db.server");
     const room = opts.room ?? (await db.notifyRoomsOfRepo(ev.repo))[0];
     if (!room) return [];
+    // Tope de vivos por repo (también por el webhook): éste queda en cola para el barrido. El room
+    // cuenta como cubierto para que no le llegue además el aviso suelto.
+    if ((await liveDependabotRuns(ev.repo)) >= DEPENDABOT_LIVE_CAP) {
+      console.log(`[dependabot] ${ev.repo}#${ev.number} en cola: ${DEPENDABOT_LIVE_CAP} pedidos de Dependabot vivos`);
+      return [room];
+    }
     // Con las credenciales de quien conectó el repo: es quien alcanza el PR en GitHub.
     const row = (await db.listRoomRepos(room)).find((r) => r.repo.toLowerCase() === ev.repo.toLowerCase());
     if (!row) return [];
@@ -84,13 +107,18 @@ export async function adoptDependabotPr(ev: PrOpened, opts: { room?: number } = 
           : // Un major rompe en EJECUCIÓN lo que el CI no ve: React Router 8 pasó lint, typecheck,
             // tests y build y tumbó toda acción en prod (#96 de Deník, 16-oct).
             `3. Es un salto ${level === "major" ? "mayor" : "sin versión clara"}: el CI no basta. Pide la preview con factory_preview (runId ${run.id}) y prueba AHÍ la acción principal de la app (un formulario que envíe datos, no sólo abrir páginas). ` +
-            `Para cada cambio que rompe de las notas de la versión di cómo lo descartaste; los de red o seguridad (CSRF, CORS, cookies, proxy, TLS) sólo se descartan en la preview. Sin preview lista no puedes aprobar: si falta algo para levantarla, pass=false y blocked=true.\n`) +
+            `Para cada cambio que rompe de las notas de la versión di cómo lo descartaste; los de red o seguridad (CSRF, CORS, cookies, proxy, TLS) sólo se descartan en la preview. Sin preview lista no puedes aprobar: si faltan variables para levantarla, pass=false con kind=env; si sólo sigue construyéndose, espera.\n`) +
         `Cierra con factory_check_verdict (runId ${run.id}):\n` +
         `- pass=true si se puede mergear: summary = qué cambia para el producto en 1 frase («nada visible: sólo parches de seguridad de X»); ` +
         (level === "patch" || level === "minor"
           ? `risk=low salvo que encuentres algo raro.\n`
           : `risk=high y en readFirst los archivos que usan lo que cambió, con por qué.\n`) +
-        `- pass=false con blocked=true si algo impide el merge (rompe, CI rojo por la subida): explica qué y qué haría falta (p. ej. subir juntos los paquetes hermanos). Si una persona lo manda a construir, @build lo arregla en la rama de este PR.\n` +
+        `- pass=false con blocked=true si algo impide el merge, con kind y reason (un renglón llano, ≤140, lo que lee la persona en su teléfono):\n` +
+        `  · kind=fix si @build lo arregla en la rama de este PR (subir juntos los paquetes hermanos del grupo, un arreglo de tipos de una línea);\n` +
+        `  · kind=skip si no conviene esta subida (p. ej. un major que el repo no puede adoptar hoy): la persona cierra el PR e ignora la versión;\n` +
+        `  · kind=env si faltan variables o credenciales para probarlo (nómbralas);\n` +
+        `  · kind=decision si una persona tiene que elegir entre caminos (di cuáles).\n` +
+        `  Nunca escales porque el CI o la preview siguen en camino: se espera.\n` +
         `NO edites ni empujes nada.`,
       // Llega por el webhook (sin request de una persona): como `noteFromGithub`, sin origin.
       "",
@@ -127,20 +155,26 @@ export async function adoptOpenDependabotPrs(ns: string): Promise<void> {
       const repo = String(row.repo);
       const key = `${ns}:${repo.toLowerCase()}`;
       if (Date.now() - (lastSweep.get(key) ?? 0) < 30 * 60_000) continue;
+      // Lleno: no se gasta la vuelta; en cuanto se libere un lugar, el siguiente tick adopta.
+      let live = await liveDependabotRuns(repo);
+      if (live >= DEPENDABOT_LIVE_CAP) continue;
       lastSweep.set(key, Date.now());
       const prs = (await githubApi(String(row.connected_by), `/repos/${repo}/pulls?state=open&per_page=50`).catch(() => null)) as any[] | null;
       if (!Array.isArray(prs)) continue;
-      // Tope de 5 por repo y vuelta: un repo con 20 PRs viejos no despierta 20 @check de golpe.
+      // Tope de 5 por repo y vuelta, y de DEPENDABOT_LIVE_CAP vivos: un repo con 20 PRs viejos no
+      // despierta 20 @check de golpe.
       let adopted = 0;
+      const room = Number(row.channel_id);
       for (const pr of prs) {
-        if (adopted >= 5) break;
+        if (adopted >= 5 || live >= DEPENDABOT_LIVE_CAP) break;
         if (pr?.draft || !isDependabot(pr?.user?.login)) continue;
         if ((await R.runsByPr(repo, Number(pr.number))).length) continue;
         await adoptDependabotPr(
           { repo, number: Number(pr.number), title: String(pr.title ?? ""), url: String(pr.html_url ?? ""), author: pr.user.login },
-          { room: Number(row.channel_id) },
+          { room },
         );
         adopted++;
+        live++;
       }
     }
   } catch (e) {

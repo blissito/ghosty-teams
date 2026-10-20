@@ -140,13 +140,13 @@ describe("factory_check_verdict: una vuelta cuenta sólo si el PR cambió", () =
   const dest = { channelId: 3, parentId: 99, handle: "check" };
   it("con la misma cabeza no suma vuelta", async () => {
     current = baseRun();
-    await (await tool("factory_check_verdict", dest)).handler("beto", { pass: false, findings: "falta X" });
+    await (await tool("factory_check_verdict", dest)).handler("beto", { pass: false, findings: "falta X", kind: "fix", reason: "falta X" });
     expect(applied[0]).toMatchObject({ event: "check_fail", patch: { loops: 1, checked_sha: "aaa" }, data: { counted: false } });
   });
   it("con una cabeza nueva sí", async () => {
     current = baseRun({ headSha: "bbb" });
     head = "bbb";
-    await (await tool("factory_check_verdict", dest)).handler("beto", { pass: false, findings: "falta X" });
+    await (await tool("factory_check_verdict", dest)).handler("beto", { pass: false, findings: "falta X", kind: "fix", reason: "falta X" });
     expect(applied[0]).toMatchObject({ patch: { loops: 2, checked_sha: "bbb" }, data: { counted: true } });
   });
 });
@@ -172,7 +172,7 @@ describe("alcance de @check", () => {
   });
   it("el veredicto lo borra", async () => {
     current = baseRun({ checkScope: "los 4 puntos" });
-    await (await tool("factory_check_verdict", { channelId: 3, parentId: 99, handle: "check" })).handler("beto", { pass: false, findings: "falta X" });
+    await (await tool("factory_check_verdict", { channelId: 3, parentId: 99, handle: "check" })).handler("beto", { pass: false, findings: "falta X", kind: "fix", reason: "falta X" });
     expect(applied[0].patch).toMatchObject({ check_scope: null });
   });
 });
@@ -184,7 +184,7 @@ describe("factory_check_verdict: la cabeza del PR se movió durante la revisión
   it("con hallazgos (pass=false) se acepta: siguen valiendo", async () => {
     current = baseRun({ headSha: "aaa" });
     head = "ccc";
-    const r: any = await (await tool("factory_check_verdict", dest)).handler("beto", { pass: false, findings: "falta X" });
+    const r: any = await (await tool("factory_check_verdict", dest)).handler("beto", { pass: false, findings: "falta X", kind: "fix", reason: "falta X" });
     expect(r.ok).not.toBe(false);
     expect(applied[0]).toMatchObject({ event: "check_fail" });
   });
@@ -208,7 +208,7 @@ describe("factory_check_verdict: puerta de la preview", () => {
     gate = { reason: "espera las variables del repo", waits: false };
     const r: any = await (await tool("factory_check_verdict", dest)).handler("beto", { pass: true, summary: "probado en la caja" });
     expect(r.ok).toBe(false);
-    expect(r.error).toContain("blocked=true");
+    expect(r.error).toContain("kind=env");
     expect(r.error).toContain("no la sustituye");
     expect(applied).toHaveLength(0);
   });
@@ -222,7 +222,7 @@ describe("factory_check_verdict: puerta de la preview", () => {
   it("pass=false con blocked sigue entrando aunque falte la preview", async () => {
     current = baseRun();
     gate = { reason: "espera las variables del repo", waits: false };
-    await (await tool("factory_check_verdict", dest)).handler("beto", { pass: false, blocked: true, findings: "faltan MONGO_URL y SESSION_SECRET" });
+    await (await tool("factory_check_verdict", dest)).handler("beto", { pass: false, blocked: true, findings: "faltan MONGO_URL y SESSION_SECRET", kind: "env", reason: "Faltan MONGO_URL y SESSION_SECRET" });
     expect(applied[0]).toMatchObject({ event: "check_blocked" });
   });
   it("preview lista pero el POST del smoke da 400: no hay pass", async () => {
@@ -424,5 +424,51 @@ describe("prMentions", () => {
       { repo: "o/r", number: 8 },
       { repo: null, number: 12 },
     ]);
+  });
+});
+
+// easybits (20-oct): cinco PRs de Dependabot escalaron «la preview no está lista» y la persona
+// decidió sobre nada. Escalar exige tipo y motivo, y no se vale mientras la preview viene en camino.
+describe("factory_check_verdict: escalado con tipo (easybits, 20-oct)", () => {
+  const dest = { channelId: 3, parentId: 99, handle: "check" };
+  const verdict = async (a: Record<string, unknown>) => (await tool("factory_check_verdict", dest)).handler("beto", a) as Promise<any>;
+
+  it("blocked con la preview construyéndose: se rechaza y el pedido sigue en revisión", async () => {
+    current = baseRun();
+    livePreview = { state: "pending", url: null, sha: null, error: null };
+    const r = await verdict({ pass: false, blocked: true, findings: "la preview no está lista", kind: "decision", reason: "La preview no llega" });
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("no es un bloqueo");
+    expect(applied).toHaveLength(0);
+  });
+
+  it("blocked con la preview esperando lugar: igual, espera", async () => {
+    current = baseRun();
+    livePreview = { state: "waiting", url: null, sha: null, error: "sin lugar: 2 pedidos en curso (#120, #121)" };
+    const r = await verdict({ pass: false, blocked: true, findings: "sin preview", kind: "env", reason: "x" });
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("#120");
+    expect(applied).toHaveLength(0);
+  });
+
+  it("sin kind o sin reason no hay veredicto negativo; platform no lo elige @check", async () => {
+    current = baseRun();
+    expect((await verdict({ pass: false, blocked: true, findings: "falta X" })).error).toContain("falta kind");
+    expect((await verdict({ pass: false, blocked: true, findings: "falta X", kind: "fix" })).error).toContain("falta reason");
+    expect((await verdict({ pass: false, blocked: true, findings: "falta X", kind: "platform", reason: "x" })).error).toContain("lo pone la plataforma");
+    expect(applied).toHaveLength(0);
+  });
+
+  it("kind=skip escala directo (sin blocked) y guarda kind y reason en el evento", async () => {
+    current = baseRun({ kind: "dependabot", taskRef: "dependabot:major" });
+    await verdict({ pass: false, findings: "- Vite 7 exige Node 20", kind: "skip", reason: "Vite 7 exige Node 20 y el deploy usa Node 18" });
+    expect(applied[0]).toMatchObject({ event: "check_blocked", data: { kind: "skip", reason: "Vite 7 exige Node 20 y el deploy usa Node 18" } });
+    expect(posted.at(-1)).toContain("No conviene este cambio");
+  });
+
+  it("kind=fix sin blocked se le regresa a @build (check_fail con kind y reason)", async () => {
+    current = baseRun();
+    await verdict({ pass: false, findings: "- tipo mal en a.ts:3", kind: "fix", reason: "Un tipo mal en a.ts" });
+    expect(applied[0]).toMatchObject({ event: "check_fail", data: { kind: "fix", reason: "Un tipo mal en a.ts" } });
   });
 });

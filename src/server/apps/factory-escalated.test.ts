@@ -89,3 +89,25 @@ describe("otra vuelta tras escalar", () => {
     expect(sqls.some((s) => s.sql.startsWith("INSERT INTO gt_factory_notes"))).toBe(false);
   });
 });
+
+// easybits #132 (20-oct): «Que @build lo arregle» desde un escalado de Dependabot perdía el encargo
+// (subir los paquetes hermanos del grupo y empujar a la rama del PR): @build no sabía qué hacer.
+describe("otra vuelta en un PR de Dependabot (easybits, 20-oct)", () => {
+  it("el encargo conserva lo de Dependabot: su rama, los hermanos y el grupo", async () => {
+    await decide({
+      run: run({ kind: "dependabot", prUrl: "https://github.com/blissito/easybits/pull/132", branch: "dependabot/npm/aws-sdk" }),
+      version: 2, decision: "approve", sub: "beto", who: "Beto", origin: "",
+    });
+    const text = handoffText();
+    expect(text).toContain("pidió otra vuelta");
+    expect(text).toContain("https://github.com/blissito/easybits/pull/132");
+    expect(text).toContain("SU rama (dependabot/npm/aws-sdk)");
+    expect(text).toContain("súbelos juntos");
+    expect(text).toContain(".github/dependabot.yml");
+  });
+
+  it("un pedido normal en otra vuelta no lleva el texto de Dependabot", async () => {
+    await decide({ run: run(), version: 2, decision: "approve", sub: "beto", who: "Beto", origin: "" });
+    expect(handoffText()).not.toContain("Dependabot");
+  });
+});

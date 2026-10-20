@@ -7,7 +7,7 @@
 import { notaNombres, type ConnectorTool, type ToolChannel } from "../connectors/impl";
 import type { ToolDest } from "../connectors/tool-token.server";
 import { isInstalled } from "./installed.server";
-import { countsLoop, stageLabel } from "./factory-flow";
+import { MAX_LOOPS, clipReason, countsLoop, isEscalationKind, stageLabel, type EscalationKind } from "./factory-flow";
 import type { EnvRiskEntry } from "./factory-preview-gate";
 
 export async function factoryTools(_sub: string, dest: ToolDest | null): Promise<ConnectorTool[]> {
@@ -19,6 +19,22 @@ export async function factoryTools(_sub: string, dest: ToolDest | null): Promise
 
 /** Tope de `factory_message` por pedido y por rol que escribe: evita el ping-pong entre agentes. */
 const MAX_ROLE_MESSAGES = 6;
+
+// Lo que dice @check al escalar, según el tipo (easybits, 20-oct: todo decía «Necesita una decisión»).
+const ESCALATION_TITLE: Record<EscalationKind, string> = {
+  env: "Faltan variables",
+  fix: "@build lo puede arreglar, pero lo decide una persona",
+  skip: "No conviene este cambio",
+  decision: "Necesita una decisión",
+  platform: "En pausa por la plataforma",
+};
+const ESCALATION_ASK: Record<EscalationKind, string> = {
+  env: "Guarda las variables (con datos de prueba) y luego «Que @check revise».",
+  fix: "Decide en la tarjeta de abajo: «Que @build lo arregle» o «Rehacer el plan».",
+  skip: "Decide en la tarjeta de abajo: «Cerrar PR», «Cerrar e ignorar esta versión» o «Que @build lo arregle».",
+  decision: "Decide en la tarjeta de abajo: «¿Qué hago?», «Que @build lo arregle» o «Rehacer el plan».",
+  platform: "Nadie tiene que decidir: se reintenta sola.",
+};
 
 const origin = async () => {
   const { reqOrigin } = await import("../../origin.server");
@@ -543,6 +559,23 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
               "true si lo que falta NO lo puede resolver @build con sus herramientas (falta una tool, un permiso o un acceso). " +
               "No se le regresa: pasa directo a una persona. Úsalo en vez de regresar lo mismo varias veces.",
           },
+          kind: {
+            type: "string",
+            enum: ["env", "fix", "skip", "decision"],
+            description:
+              "Obligatorio con pass=false: qué tiene que pasar para seguir. " +
+              "env = faltan variables o credenciales (las da una persona); " +
+              "fix = @build lo puede arreglar en la rama (incluye subir los paquetes hermanos de un grupo de Dependabot o un arreglo de tipos de una línea); " +
+              "skip = no conviene este cambio o esta subida (cerrar el PR e ignorar la versión); " +
+              "decision = una persona tiene que elegir entre caminos. " +
+              "Si la preview no arranca o sigue en camino NO escales: espera (la plataforma lo detecta sola).",
+          },
+          reason: {
+            type: "string",
+            description:
+              "Obligatorio con pass=false: el motivo en UN renglón de lenguaje llano (≤140 caracteres), sin rutas ni jerga. " +
+              "Es lo que lee la persona en el aviso del teléfono (p. ej. «Faltan 5 variables de la preview: DATABASE_URL y 4 más»).",
+          },
           risk: {
             type: "string",
             enum: ["low", "high"],
@@ -664,7 +697,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
             error: gate.waits
               ? `este pedido exige la preview y ${gate.reason}: espera a que esté lista (factory_preview) y pruébala ahí antes de aprobar.`
               : `este pedido exige la preview y ${gate.reason}: no puede pasar. Si es el código del PR, pass=false con el hallazgo; ` +
-                `si falta algo que @build no puede dar (variables, un servicio), pass=false y blocked=true diciendo qué falta. Probar en tu caja no la sustituye.`,
+                `si faltan variables, pass=false con kind=env diciendo cuáles; si es otra cosa que @build no puede dar, kind=decision. Probar en tu caja no la sustituye.`,
           };
         // Con la preview lista, un POST con el Origin real (smoke de acción): lo que el CI y el
         // localhost no ven. Si la rechaza o truena, no hay pass (#96, 16-oct).
@@ -742,18 +775,39 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           return { ok: true, status: next.status, note: "La plataforma ya avisó en el hilo y sacó el PR de borrador. Termina sin repetirlo." };
         }
         if (!findings) return { ok: false, error: "con pass=false los hallazgos son obligatorios" };
-        if (a.blocked === true) {
+        // El tipo y el motivo del escalado (easybits, 20-oct): sin ellos la persona veía «Te toca» sin
+        // saber qué decidir. `platform` no lo elige @check: lo pone la plataforma.
+        if (a.kind === "platform")
+          return { ok: false, error: "kind=platform lo pone la plataforma. Si la preview no arranca o sigue en camino, espera y vuelve a pedirla con factory_preview." };
+        if (!isEscalationKind(a.kind))
+          return { ok: false, error: "con pass=false falta kind: env (faltan variables), fix (@build lo arregla en la rama), skip (no conviene este cambio) o decision (una persona elige)." };
+        const reason = clipReason(String(a.reason ?? ""));
+        if (!reason) return { ok: false, error: "con pass=false falta reason: el motivo en un renglón llano (≤140), lo que lee la persona en su teléfono." };
+        const kind = a.kind;
+        // env/skip/decision no los arregla @build: regresárselo sólo gasta una vuelta. Escalan directo.
+        const blocked = a.blocked === true || kind !== "fix";
+        if (blocked) {
           // Un CI en fila o corriendo no es un bloqueo: se espera. @check escaló el #75 de business
           // (13-oct) por un run «queued» 16 min que luego corrió solo; la persona decidió sobre nada.
           const ci = run.prUrl ? await R.prCi(sub, run.prUrl) : null;
           if (ci?.state === "pending")
             return { ok: false, error: "el CI todavía está en fila o corriendo, y eso no es un bloqueo: usa github_watch_pr y da tu veredicto cuando termine." };
-          const next = await R.applyEvent(run, "check_blocked", checked, { actor: "check", data: { findings: findings.slice(0, 4000) } });
+          // Igual con la preview en camino o esperando lugar: cinco PRs de easybits escalaron «la
+          // preview no está lista» y la persona decidió sobre nada (20-oct). El pedido sigue en revisión;
+          // si no arranca en 15 min la plataforma lo marca sola.
+          const pv = await R.runPreview(run.id);
+          if (pv.state === "pending" || pv.state === "waiting")
+            return {
+              ok: false,
+              error:
+                `la preview ${pv.state === "waiting" ? `espera lugar (${pv.error ?? "sin lugar"})` : "se está construyendo"}, y eso no es un bloqueo: ` +
+                "espera y vuelve a pedirla con factory_preview. Si no arranca, la plataforma lo detecta sola y te avisa.",
+            };
+          const next = await R.applyEvent(run, "check_blocked", checked, { actor: "check", data: { findings: findings.slice(0, 4000), kind, reason } });
           await R.postInThread(
             next,
             "check",
-            `⚠️ **Necesita una decisión** — @build no puede resolver esto con sus herramientas, así que no se lo regresé:\n\n${findings}\n\n` +
-              "Decide en la tarjeta de abajo: lee los puntos y elige «Otra vuelta» o «Replanear».",
+            `⚠️ **${ESCALATION_TITLE[kind]}** — ${reason}\n\n${findings}\n\n${ESCALATION_ASK[kind]}`,
           );
           await R.postRunCard(next);
           return { ok: true, status: next.status, note: "Escalado a una persona. No lo repitas." };
@@ -764,14 +818,15 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           run,
           "check_fail",
           { loops: run.loops + (counted ? 1 : 0), ...checked },
-          { actor: "check", data: { findings: findings.slice(0, 4000), counted } },
+          // Vueltas agotadas: ya no es «@build lo arregla» sino una persona que elige.
+          { actor: "check", data: { findings: findings.slice(0, 4000), counted, kind: run.loops + (counted ? 1 : 0) >= MAX_LOOPS ? "decision" : kind, reason } },
         );
         if (next.status === "escalated") {
           await R.postInThread(
             next,
             "check",
             `⚠️ **Necesita una decisión** — ${next.loops} vueltas entre @build y @check sin cerrar. Lo último que encontré:\n\n${findings}\n\n` +
-              "Decide en la tarjeta de abajo: lee los puntos y elige «Otra vuelta» o «Replanear».",
+              "Decide en la tarjeta de abajo: lee los puntos y elige «Que @build lo arregle» o «Rehacer el plan».",
           );
           await R.postRunCard(next);
           return { ok: true, status: next.status };
@@ -1148,12 +1203,14 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           p.state === "ready"
             ? "Ábrela y prueba ahí los criterios de aceptación visibles."
             : p.state === "pending"
-              ? "Se está publicando: vuelve a preguntar en un minuto."
+              ? "Se está publicando: vuelve a preguntar en un minuto. No escales por esto: si no arranca en 15 min, la plataforma lo detecta sola."
+              : p.state === "waiting"
+                ? `Espera lugar para levantarse (${p.error ?? "sin lugar"}): arranca sola. Vuelve a preguntar en unos minutos; no escales por esto.`
               : p.state === "off"
                 ? "El dueño apagó la preview de este repo: revisa con el diff y las pruebas, sin mencionarla."
               : required && (p.state === "needs_env" || p.state === "failed")
                 ? `Este pedido EXIGE la preview y ${p.state === "needs_env" ? "espera las variables del repo" : "no arrancó (el motivo va en error)"}: no puedes aprobar. ` +
-                  "Si es el código del PR, pass=false con el hallazgo; si falta algo que @build no puede dar, pass=false y blocked=true diciendo qué falta. Probar en tu caja no la sustituye."
+                  "Si es el código del PR, pass=false con kind=fix y el hallazgo; si faltan variables, pass=false con kind=env diciendo cuáles. Probar en tu caja no la sustituye."
               : p.state === "needs_env"
                 ? "La preview espera que el dueño guarde sus variables: revisa con el diff y las pruebas."
                 : p.state === "failed"

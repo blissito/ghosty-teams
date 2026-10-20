@@ -5,7 +5,19 @@
 // con `enqueueWakeup` en el hilo del pedido. Ningún agente decide a quién le toca: así el
 // plan no se construye sin firma y @check no se salta.
 import { dbq } from "../../dbq.server";
-import { MAX_LOOPS, nextStatus, stageLabel, type RunEvent, type RunStatus } from "./factory-flow";
+import {
+  ESCALATION_ACTIONS,
+  MAX_LOOPS,
+  clipReason,
+  deduceEscalationKind,
+  isEscalationKind,
+  nextStatus,
+  stageLabel,
+  type EscalationAction,
+  type EscalationKind,
+  type RunEvent,
+  type RunStatus,
+} from "./factory-flow";
 import { classifyPrRisk, type PrFile } from "./factory-risk";
 
 export type Run = {
@@ -116,7 +128,7 @@ export async function applyEvent(
   if (!rows[0]) throw new Error(`el pedido #${run.id} cambió mientras tanto; vuelve a mirarla`);
   const updated = toRun(rows[0]);
   void logEvent(updated.id, event, meta.actor ?? null, { from: run.status, to: next, ...meta.data });
-  void notifyRunTurn(updated, run.status);
+  void notifyRunTurn(updated, run.status, meta.data);
   // Pedido de un sprint que llega a PR, merge o se cancela: puede destrabar el siguiente ticket.
   if (updated.status === "done" || updated.status === "cancelled" || updated.status === "pr_review")
     void import("./sprint.server").then((S) => S.onSprintRunChanged(updated.id)).catch(() => {});
@@ -324,14 +336,15 @@ export async function logEvent(runId: number, type: string, actor: string | null
  * Pedido cancelado: en qué etapa iba (el `from` del evento `cancel`) y por qué. La tarjeta lo usa
  * para dejar con ✓ lo que sí se hizo, como una corrida cancelada de GitHub Actions.
  */
-export async function cancelInfo(runId: number): Promise<{ from: string | null; reason: "pr_closed" | "manual"; actor: string | null } | null> {
+export async function cancelInfo(runId: number): Promise<{ from: string | null; reason: "pr_closed" | "closed_by_person" | "manual"; actor: string | null } | null> {
   const [row] = await dbq("SELECT actor, data_json FROM gt_factory_events WHERE run_id = ? AND type = 'cancel' ORDER BY id DESC LIMIT 1", [runId]).catch(() => []);
   if (!row) return null;
   let data: { from?: string; reason?: string } = {};
   try {
     data = row.data_json ? JSON.parse(String(row.data_json)) : {};
   } catch {}
-  return { from: data.from ?? null, reason: data.reason === "pr_closed" ? "pr_closed" : "manual", actor: row.actor ? String(row.actor) : null };
+  const reason = data.reason === "pr_closed" || data.reason === "closed_by_person" ? data.reason : "manual";
+  return { from: data.from ?? null, reason, actor: row.actor ? String(row.actor) : null };
 }
 
 /** ¿El último `check_fail` del pedido fue una vuelta NO contada? (bitácora, `counted: false`) */
@@ -444,23 +457,45 @@ async function sweepStaleCritiques(): Promise<void> {
   }
 }
 
+/** El escalado de un pedido: tipo, motivo de un renglón, los puntos y lo que se le ofrece a la persona. */
+export type Escalation = {
+  kind: EscalationKind;
+  reason: string;
+  points: string[];
+  findings: string;
+  at: number;
+  actions: EscalationAction[];
+};
+
 /**
  * Lo que @check dejó al escalar (bloqueo o vueltas agotadas), para pintarlo ARRIBA en la tarjeta:
  * quien aprueba tiene que ver qué está aprobando (mercadito #7: se aprobó en 2 min un cambio a CI
  * y una cifra doble que sólo estaban en un mensaje del hilo). null si no está escalado.
+ * Desde el 20-oct (easybits) lleva `kind` y `reason`; los escalados viejos se deducen.
  */
-export async function escalationOf(run: Run): Promise<{ findings: string; at: number } | null> {
+export async function escalationOf(run: Run): Promise<Escalation | null> {
   if (run.status !== "escalated") return null;
   const [row] = await dbq(
     "SELECT data_json, at FROM gt_factory_events WHERE run_id = ? AND type IN ('check_blocked', 'check_fail') ORDER BY id DESC LIMIT 1",
     [run.id],
   ).catch(() => []);
+  let data: Record<string, unknown> = {};
   try {
-    const findings = row?.data_json ? String(JSON.parse(String(row.data_json)).findings ?? "") : "";
-    return findings ? { findings, at: Number(row.at) } : null;
+    data = row?.data_json ? JSON.parse(String(row.data_json)) : {};
   } catch {
     return null;
   }
+  return escalationFromEvent(data, Number(row?.at ?? 0));
+}
+
+/** Pura: el escalado a partir del `data` de su evento (`check_blocked`/`check_fail`). */
+export function escalationFromEvent(data: Record<string, unknown>, at: number): Escalation | null {
+  const findings = String(data.findings ?? "");
+  if (!findings && !data.reason) return null;
+  const kind = isEscalationKind(data.kind) ? data.kind : deduceEscalationKind(findings);
+  const points = findings ? findingPoints(findings) : [];
+  const reason = clipReason(String(data.reason ?? "") || points[0] || "");
+  return { kind, reason, points, findings, at, actions: ESCALATION_ACTIONS[kind] };
 }
 
 /** Los hallazgos como viñetas (una por punto), para enseñar los primeros arriba. */
@@ -512,18 +547,31 @@ export async function takeNotes(runId: number): Promise<string> {
  * construir y revisar no avisan: sólo refrescan la tarjeta (patrón de Slack/Linear: editar
  * en silencio, timbrar cuando te toca).
  */
-export async function notifyRunTurn(run: Run, from: RunStatus | null): Promise<void> {
+export async function notifyRunTurn(run: Run, from: RunStatus | null, data?: Record<string, unknown>): Promise<void> {
   if (from === run.status) return;
-  const copy: Partial<Record<RunStatus, string>> = {
-    plan_review: "El plan está listo: falta tu firma.",
-    pr_review: "El PR está listo para que lo revises y le hagas merge.",
-    escalated: "La fábrica necesita que decidas cómo seguir.",
-    done: "Terminó.",
-  };
-  const body = copy[run.status];
+  const body = turnNoticeBody(run.status, data);
   if (!body) return;
   const to = new Set([run.requestedBy, run.status === "pr_review" || run.status === "done" ? run.approvedBy : null].filter(Boolean) as string[]);
   await notifyRun(run, [...to], body, `factory:${run.id}:${run.status}`);
+}
+
+/**
+ * El texto del aviso al cambiar de etapa (null = no se avisa). Un escalado dice su motivo, no un
+ * texto fijo: en easybits (20-oct) llegaron ocho «La fábrica necesita que decidas» sin decir qué.
+ * Una falla de la plataforma no timbra a nadie: se reintenta sola y se avisa una vez por repo.
+ */
+export function turnNoticeBody(status: RunStatus, data?: Record<string, unknown>): string | null {
+  if (status === "escalated") {
+    if (data?.kind === "platform") return null;
+    const reason = clipReason(String(data?.reason ?? ""));
+    return reason || "La fábrica necesita que decidas cómo seguir.";
+  }
+  const copy: Partial<Record<RunStatus, string>> = {
+    plan_review: "El plan está listo: falta tu firma.",
+    pr_review: "El PR está listo para que lo revises y le hagas merge.",
+    done: "Terminó.",
+  };
+  return copy[status] ?? null;
 }
 
 async function notifyRun(run: Run, subs: string[], body: string, tag: string): Promise<void> {
@@ -1147,12 +1195,85 @@ export async function recheck(opts: { run: Run; sub: string; who: string; note?:
         ? `Este pedido EXIGE la preview: pide la URL con factory_preview (runId ${run.id}); si se está reconstruyendo con las variables nuevas, ` +
           `espera a que esté lista. Comprueba AHÍ los criterios de aceptación (incluida una acción que envíe datos) y cita la URL en tu veredicto. `
         : `Si el repo publica previews, pide la URL con factory_preview (runId ${run.id}) y comprueba ahí lo que se ve en pantalla. `) +
-      `Si sigue faltando algo que @build no puede resolver, vuelve a usar blocked=true y di exactamente qué. NO edites ni empujes nada. ` +
+      `Si sigue faltando algo que @build no puede resolver, vuelve a usar pass=false con su kind (env, skip o decision) y reason, y di exactamente qué. NO edites ni empujes nada. ` +
       `Cierra con factory_check_verdict (runId ${run.id}).`,
     opts.origin,
     "",
   );
   return next;
+}
+
+/** El comentario que le pide a Dependabot ignorar la versión mayor o la dependencia. */
+export function dependabotIgnoreComment(ignore: "major" | "dependency"): string {
+  return ignore === "major" ? "@dependabot ignore this major version" : "@dependabot ignore this dependency";
+}
+
+/**
+ * «Cerrar PR» / «Cerrar e ignorar esta versión» de un escalado `skip` (easybits #129, 20-oct: un
+ * major que el repo no puede adoptar). Con las credenciales de quien conectó el repo (las mismas
+ * con que se adoptó el PR); si no hay, las de quien aprobó o pidió. Con `ignore`, primero el
+ * comentario a Dependabot (con el PR abierto, o no lo lee) y luego se cierra. El pedido se cancela
+ * ANTES, con motivo `closed_by_person`: el webhook del cierre lo encontraría vivo y lo marcaría
+ * `pr_closed` (que se reabre solo si alguien reabre el PR).
+ */
+export async function closeRunPr(run: Run, opts: { ignore: "major" | "dependency" | null; who: string }): Promise<Run> {
+  if (run.status === "done" || run.status === "cancelled") throw new Error(`el pedido ya está ${run.status === "done" ? "terminado" : "cancelado"}`);
+  const pr = run.prUrl ? parsePrUrl(run.prUrl) : null;
+  if (!pr) throw new Error("el pedido no tiene PR que cerrar");
+  const db = await import("../../db.server");
+  const repoRow = (await db.listRoomRepos(run.channelId).catch(() => [])).find((r) => r.repo.toLowerCase() === pr.repo.toLowerCase());
+  const sub = repoRow?.connectedBy ?? run.approvedBy ?? run.requestedBy;
+  const next = await applyEvent(run, "cancel", {}, { actor: opts.who, data: { reason: "closed_by_person", ...(opts.ignore ? { ignore: opts.ignore } : {}) } });
+  const { githubApi } = await import("../connectors/github.server");
+  if (opts.ignore) {
+    // Con la cuenta de la persona (no el bot): Dependabot sólo obedece a quien tiene escritura.
+    const c = await githubApi(sub, `/repos/${pr.repo}/issues/${pr.number}/comments`, {
+      method: "POST",
+      body: JSON.stringify({ body: dependabotIgnoreComment(opts.ignore) }),
+    }).catch((e) => ({ error: (e as Error).message }));
+    if (c?.error) throw new Error(`el pedido quedó cancelado, pero no pude comentarle a Dependabot: ${c.error}`);
+  }
+  // Dependabot cierra solo al leer «ignore»; cerrar otra vez un PR cerrado no falla.
+  const r = await githubApi(sub, `/repos/${pr.repo}/pulls/${pr.number}`, { method: "PATCH", body: JSON.stringify({ state: "closed" }) }).catch((e) => ({
+    error: (e as Error).message,
+  }));
+  if (r?.error) throw new Error(`el pedido quedó cancelado, pero GitHub no cerró el PR: ${r.error}`);
+  await postInThread(
+    next,
+    "check",
+    `⏹️ ${opts.who} cerró el PR${opts.ignore ? ` y le pidió a Dependabot ignorar ${opts.ignore === "major" ? "esta versión mayor" : "esta dependencia"}` : ""}. Pedido cancelado. ${run.prUrl}`,
+  ).catch(() => {});
+  return next;
+}
+
+/** El encargo a @build sobre un PR de Dependabot (también en «otra vuelta»: antes se perdía, easybits 20-oct). */
+export function dependabotBuildHint(run: Pick<Run, "kind">): string {
+  return run.kind === "dependabot"
+    ? ` Es una subida de Dependabot: si un paquete exige a sus hermanos en la misma versión (peer dependencies, p. ej. \`@scope/*\`), súbelos juntos ` +
+        `y regenera el lockfile con el gestor del repo. En el mismo PR agrega a .github/dependabot.yml un grupo (\`groups\` con \`patterns\`) ` +
+        `para esa familia, así la próxima subida llega completa. Tu push detiene los rebases de Dependabot en esa rama: es lo esperado.`
+    : "";
+}
+
+/**
+ * El arranque del encargo a @build al aprobar. Pura para probarla. Desde `escalated` («otra vuelta»)
+ * un PR que ya existe (Dependabot, adoptado) también se arregla EN su rama y con el encargo de
+ * Dependabot: el 20-oct «Que @build lo arregle» en easybits #132 perdía lo de subir los hermanos.
+ */
+export function approveBriefLead(run: Pick<Run, "prUrl" | "branch" | "kind">, o: { who: string; version: number; again: boolean }): string {
+  const onPr = run.prUrl
+    ? `trabaja y empuja en SU rama${run.branch ? ` (${run.branch})` : ""} con factory_git_remote, no abras otro PR, y cierra con factory_build_done.`
+    : "";
+  if (o.again)
+    return (
+      `${o.who} pidió otra vuelta. Revisa lo que pide (abajo, en las notas) y los últimos hallazgos de @check en este hilo, corrige en la misma rama y cierra con factory_build_done.` +
+      (run.prUrl && run.kind === "dependabot" ? ` El PR es ${run.prUrl}: ${onPr}${dependabotBuildHint(run)}` : "")
+    );
+  if (run.prUrl)
+    // El PR ya existe (Dependabot, PR adoptado): se arregla EN su rama, o su CI y su preview
+    // se quedan rojos para siempre mientras el arreglo vive en otro PR.
+    return `${o.who} aprobó el plan v${o.version}. Constrúyelo sobre el PR que ya existe (${run.prUrl}): ${onPr}${dependabotBuildHint(run)}`;
+  return `${o.who} aprobó el plan v${o.version}. Constrúyelo: rama nueva, código, pruebas, PR en BORRADOR, y cierra con factory_build_done.`;
 }
 
 export async function decide(opts: {
@@ -1205,19 +1326,7 @@ export async function decide(opts: {
     if (again && note) await addNote(run.id, who, note);
     const why = again ? "otra vuelta tras escalar" : "construir el plan aprobado";
     const text =
-      (again
-        ? `${who} pidió otra vuelta. Revisa lo que pide (abajo, en las notas) y los últimos hallazgos de @check en este hilo, corrige en la misma rama y cierra con factory_build_done.`
-        : run.prUrl
-          ? // El PR ya existe (Dependabot, PR adoptado): se arregla EN su rama, o su CI y su preview
-            // se quedan rojos para siempre mientras el arreglo vive en otro PR.
-            `${who} aprobó el plan v${version}. Constrúyelo sobre el PR que ya existe (${run.prUrl}): ` +
-            `trabaja y empuja en SU rama${run.branch ? ` (${run.branch})` : ""} con factory_git_remote, no abras otro PR, y cierra con factory_build_done.` +
-            (run.kind === "dependabot"
-              ? ` Es una subida de Dependabot: si un paquete exige a sus hermanos en la misma versión (peer dependencies, p. ej. \`@scope/*\`), súbelos juntos ` +
-                `y regenera el lockfile con el gestor del repo. En el mismo PR agrega a .github/dependabot.yml un grupo (\`groups\` con \`patterns\`) ` +
-                `para esa familia, así la próxima subida llega completa. Tu push detiene los rebases de Dependabot en esa rama: es lo esperado.`
-              : "")
-          : `${who} aprobó el plan v${version}. Constrúyelo: rama nueva, código, pruebas, PR en BORRADOR, y cierra con factory_build_done.`) +
+      approveBriefLead(run, { who, version, again }) +
       (await takeNotes(run.id)) +
       (again ? "" : await critiqueSuggestions(run.id, version)) +
       `\n\n## Plan aprobado (v${version})\n${plan?.planMd ?? ""}`;
@@ -1881,158 +1990,385 @@ export async function runsByPr(repo: string, number: number): Promise<Run[]> {
 
 const lastPreviewCheck = new Map<number, number>();
 
+// ── Vigilante de la preview (easybits, 20-oct) ───────────────────────────────
+//
+// Cinco PRs de Dependabot se quedaron 24 h con la preview en `pending`: el hosting «publicaba
+// previews» por un despliegue de 2025, gs nunca recibió el `up` y nadie lo supo. Ahora ninguna
+// preview se queda muda: lo que espera lugar dice por qué (`waiting`), lo que no avanza en 15 min
+// queda `failed` con el motivo, y el hosting que no dice nada en 5 min cede a la caja de gs.
+
+/** Pedidos mirados por vuelta del tick y cuántos a la vez (antes: `LIMIT 10 ORDER BY updated_at`, y los viejos nunca llegaban). */
+export const PREVIEW_TICK_MAX = 24;
+const PREVIEW_CONCURRENCY = 4;
+/** Una preview `pending` sin cambiar de fase en este tiempo queda `failed`. */
+export const PREVIEW_STUCK_S = 15 * 60;
+/** El hosting no dice nada del commit en este tiempo: se le pide la caja a gs. */
+export const HOSTING_SILENT_S = 5 * 60;
+/** Reintentos solos de una preview que falló por la plataforma, y cada cuánto. */
+const PLATFORM_RETRIES = 3;
+const PLATFORM_RETRY_S = 30 * 60;
+
+/** Cada cuánto se mira un pedido según su preview (ms). */
+export function previewCheckEvery(state: unknown): number {
+  if (state === "pending") return 20_000;
+  if (state === "waiting") return 60_000;
+  return 120_000;
+}
+
+/** Los pedidos que ya toca mirar, el que lleva más tiempo sin mirarse primero. Pura. */
+export function previewDue<T extends Record<string, any>>(rows: T[], last: Map<number, number>, now: number, max: number): T[] {
+  const seen = (r: T) => last.get(Number(r.id)) ?? 0;
+  return rows
+    .filter((r) => now - seen(r) >= previewCheckEvery(r.preview_state))
+    .sort((a, b) => seen(a) - seen(b))
+    .slice(0, max);
+}
+
+/** ¿gs no tiene lugar ahora? (409 `no_slot` o 503 de capacidad): el motivo para `waiting`. Puro. */
+export function waitingFromGsError(e: unknown): string | null {
+  const err = e as { status?: number; body?: any; message?: string };
+  if (err?.status === 409 && err.body?.error === "no_slot") {
+    const busy: number[] = Array.isArray(err.body?.busy) ? err.body.busy.map(Number).filter((n: number) => n > 0) : [];
+    return `sin lugar: ${busy.length || "todos los"} pedidos en curso${busy.length ? ` (${busy.map((n) => `#${n}`).join(", ")})` : ""}; arranca sola al liberarse uno`;
+  }
+  if (err?.status === 503) return String(err.body?.error ?? "no hay capacidad para otra caja ahora mismo; se reintenta sola");
+  return null;
+}
+
+type BoxStatus = { phase?: string; sha?: string | null; url?: string | null; error?: string | null } | null | undefined;
+
+/** ¿Hay que volver a pedir `up`? Sin caja, otro commit, o gs olvidó el commit (tras reiniciar sale `sha: null`). Puro. */
+export function boxNeedsUp(b: BoxStatus, sha: string): boolean {
+  if (!b) return true;
+  // Creándose, gs todavía no sabe el commit: no es olvido.
+  if (b.phase === "creating") return false;
+  return b.sha !== sha;
+}
+
+type NextPreview = { state: "pending" | "ready" | "failed" | "needs_env" | "waiting"; url: string | null; provider: string | null; error: string | null };
+
+/** El estado del pedido a partir de la caja de gs. Puro. */
+export function boxPreviewNext(b: BoxStatus, sha: string): NextPreview {
+  if (b && b.sha === sha && b.phase === "ready") return { state: "ready", url: b.url ?? null, provider: null, error: null };
+  if (b && b.sha === sha && b.phase === "failed") return { state: "failed", url: null, provider: null, error: b.error ?? null };
+  return { state: "pending", url: null, provider: null, error: null };
+}
+
+/**
+ * El vigilante: null si la preview sigue a tiempo; si lleva `PREVIEW_STUCK_S` en `pending` sin
+ * avanzar, el motivo con el que queda `failed` («la preview no arrancó: …»). Puro.
+ */
+export function stuckPreviewReason(
+  p: { since: number | null; phase: string | null; provider: string | null; lastError: string | null },
+  now: number,
+): string | null {
+  if (!p.since || now - p.since < PREVIEW_STUCK_S) return null;
+  const min = Math.round((now - p.since) / 60);
+  const why = p.lastError
+    ? `gs no respondió en ${min} min (${p.lastError.slice(0, 80)})`
+    : p.phase
+      ? `la caja se quedó en «${p.phase}» ${min} min`
+      : p.provider
+        ? `${p.provider} no la publicó en ${min} min`
+        : `nadie empezó a construirla en ${min} min`;
+  return `la preview no arrancó: ${why}`;
+}
+
+/** Corre `fn` sobre `items` con a lo más `n` a la vez. */
+async function inPool<T>(items: T[], n: number, fn: (x: T) => Promise<void>): Promise<void> {
+  let i = 0;
+  const worker = async () => {
+    while (i < items.length) await fn(items[i++]);
+  };
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, worker));
+}
+
 /**
  * La preview del PR de cada pedido vivo: la del hosting si la publica (Vercel, Netlify…) y,
  * si no, la de NUESTRA caja (gs la construye). Se guarda en la fila (`preview_*`) para la
  * tarjeta y @check, y se avisa UNA vez por commit en el hilo: lista o por qué no arrancó.
  * Lo llama el mismo tick que `closeFinishedRuns`.
  */
-export async function announcePreviews(): Promise<void> {
+export async function announcePreviews(opts: { concurrency?: number } = {}): Promise<void> {
   const rows = await dbq(
     // También construyendo y escalado: con cada commit nuevo del PR la preview se rehace, para
     // que la persona vea el cambio antes de decidir (antes se quedaba en el commit viejo hasta
-    // la siguiente revisión — pedido #10, 01-oct).
-    `SELECT * FROM gt_factory_runs WHERE status IN ('building','checking','escalated','pr_review') AND pr_url IS NOT NULL ORDER BY updated_at DESC LIMIT 10`,
+    // la siguiente revisión — pedido #10, 01-oct). Todos los elegibles: el orden lo pone `previewDue`.
+    `SELECT * FROM gt_factory_runs WHERE status IN ('building','checking','escalated','pr_review') AND pr_url IS NOT NULL`,
     [],
   ).catch(() => []);
   const P = await import("./preview.server");
   // PRs mirados en esta vuelta: al final se publica su check «Ghosty · Preview» en GitHub.
   const touched: { repo: string; number: number; sha: string }[] = [];
-  for (const row of rows) {
-    const run = toRun(row);
-    // Construyendo se mira cada 20 s; lista o fallida, cada 2 min (por si hubo push nuevo).
-    const every = row.preview_state === "pending" ? 20_000 : 120_000;
-    if (Date.now() - (lastPreviewCheck.get(run.id) ?? 0) < every) continue;
-    lastPreviewCheck.set(run.id, Date.now());
-    const sub = run.approvedBy ?? run.requestedBy;
-    const pr = parsePrUrl(run.prUrl!);
-    const head = await prHead(sub, run.prUrl!);
-    if (!pr || !head) continue;
-    touched.push({ ...pr, sha: head.sha });
-    // Preview apagada para el repo: gris y sin avisos en el hilo.
-    if (await repoPreviewOff(pr.repo)) {
-      if (row.preview_state !== "off") {
-        await dbq("UPDATE gt_factory_runs SET preview_state = 'off', preview_url = NULL, preview_error = NULL WHERE id = ?", [run.id]).catch(() => {});
-        void refreshRoom(run.channelId);
-      }
-      continue;
-    }
-    // Sin estado (nuevo o «Reintentar») cuenta como commit nuevo: se vuelve a pedir `up`.
-    const sameSha = row.preview_sha === head.sha && !!row.preview_state;
-    // Una preview «lista» de NUESTRA caja puede morir (la caja se recicla o caduca) y la tarjeta
-    // seguía en verde con un 404 (MailMask #10, 4-oct). Se pregunta a gs si la caja sigue; si no,
-    // se borra el estado y el siguiente tick la reconstruye.
-    if (sameSha && row.preview_state === "ready" && !(await P.hostingHasPreviews(sub, pr.repo))) {
-      // Con caja por pedido la preview vive en la caja del pedido: sin `runId` gs buscaba una caja de
-      // preview suelta, no la hallaba, se borraba el estado y el siguiente tick la «actualizaba» —
-      // un aviso cada 2 min (pedido #17, 7-oct).
-      const st = await P.gsPreview("status", { repo: pr.repo, pr: pr.number, ...(row.box_id ? { runId: Number(row.id) } : {}) }).catch(() => undefined);
-      if (st !== undefined && (!st?.status || st.status.phase !== "ready" || st.status.sha !== head.sha)) {
-        await dbq("UPDATE gt_factory_runs SET preview_state = NULL, preview_url = NULL WHERE id = ?", [run.id]).catch(() => {});
-        lastPreviewCheck.delete(run.id);
-        void refreshRoom(run.channelId);
-      }
-      continue;
-    }
-    if (sameSha && (row.preview_state === "failed" || row.preview_state === "needs_env")) {
-      await warnPreviewBlocking(run, row.preview_state, pr.repo);
-      continue;
-    }
-    if (sameSha && row.preview_state === "ready") continue;
-    // Commit nuevo: la liga vieja ya no muestra el PR de hoy. Se quita YA (pendiente), aunque
-    // pedir la nueva falle; antes, si `up` fallaba, la tarjeta seguía en verde con la vieja.
-    if (!sameSha && row.preview_state === "ready") {
-      await dbq("UPDATE gt_factory_runs SET preview_state = 'pending', preview_url = NULL, preview_sha = ? WHERE id = ?", [head.sha, run.id]).catch(() => {});
+  const due = previewDue(rows, lastPreviewCheck, Date.now(), PREVIEW_TICK_MAX);
+  for (const row of due) lastPreviewCheck.set(Number(row.id), Date.now());
+  await inPool(due, opts.concurrency ?? PREVIEW_CONCURRENCY, (row) =>
+    announceRunPreview(row, P, touched).catch((e) => console.warn(`[factory] preview #${row.id}: ${(e as Error).message}`)),
+  );
+  if (touched.length) {
+    const C = await import("./factory-preview-check.server");
+    for (const t of touched) await C.syncPrCheck(t.repo, t.number, t.sha);
+  }
+}
+
+async function announceRunPreview(row: Record<string, any>, P: typeof import("./preview.server"), touched: { repo: string; number: number; sha: string }[]): Promise<void> {
+  const run = toRun(row);
+  const sub = run.approvedBy ?? run.requestedBy;
+  const pr = parsePrUrl(run.prUrl!);
+  const head = await prHead(sub, run.prUrl!);
+  if (!pr || !head) return;
+  touched.push({ ...pr, sha: head.sha });
+  // Preview apagada para el repo: gris y sin avisos en el hilo.
+  if (await repoPreviewOff(pr.repo)) {
+    if (row.preview_state !== "off") {
+      await dbq("UPDATE gt_factory_runs SET preview_state = 'off', preview_url = NULL, preview_error = NULL WHERE id = ?", [run.id]).catch(() => {});
       void refreshRoom(run.channelId);
     }
+    return;
+  }
+  // Sin estado (nuevo o «Reintentar») cuenta como commit nuevo: se vuelve a pedir `up`.
+  const sameSha = row.preview_sha === head.sha && !!row.preview_state;
+  const boxOpts = { repo: pr.repo, pr: pr.number, ...(row.box_id ? { runId: Number(row.id) } : {}) };
+  // Una preview «lista» de NUESTRA caja puede morir (la caja se recicla o caduca) y la tarjeta
+  // seguía en verde con un 404 (MailMask #10, 4-oct). Se pregunta a gs si la caja sigue; si no,
+  // se borra el estado y el siguiente tick la reconstruye.
+  if (sameSha && row.preview_state === "ready" && !(await P.hostingHasPreviews(sub, pr.repo))) {
+    // Con caja por pedido la preview vive en la caja del pedido: sin `runId` gs buscaba una caja de
+    // preview suelta, no la hallaba, se borraba el estado y el siguiente tick la «actualizaba» —
+    // un aviso cada 2 min (pedido #17, 7-oct).
+    const st = await P.gsPreview("status", boxOpts).catch(() => undefined);
+    if (st !== undefined && (!st?.status || st.status.phase !== "ready" || st.status.sha !== head.sha)) {
+      await dbq("UPDATE gt_factory_runs SET preview_state = NULL, preview_url = NULL WHERE id = ?", [run.id]).catch(() => {});
+      lastPreviewCheck.delete(run.id);
+      void refreshRoom(run.channelId);
+    }
+    return;
+  }
+  if (sameSha && (row.preview_state === "failed" || row.preview_state === "needs_env")) {
+    if (row.preview_state === "failed" && (await retryPlatformPreview(run, row))) return;
+    await warnPreviewBlocking(run, row.preview_state, pr.repo);
+    return;
+  }
+  if (sameSha && row.preview_state === "ready") return;
+  // Commit nuevo: la liga vieja ya no muestra el PR de hoy. Se quita YA (pendiente), aunque
+  // pedir la nueva falle; antes, si `up` fallaba, la tarjeta seguía en verde con la vieja.
+  if (!sameSha && row.preview_state === "ready") {
+    await dbq("UPDATE gt_factory_runs SET preview_state = 'pending', preview_url = NULL, preview_sha = ?, preview_since = unixepoch(), preview_phase = NULL WHERE id = ?", [
+      head.sha,
+      run.id,
+    ]).catch(() => {});
+    void refreshRoom(run.channelId);
+  }
 
-    let next: { state: "pending" | "ready" | "failed" | "needs_env"; url: string | null; provider: string | null; error: string | null } | null = null;
-    if (await P.hostingHasPreviews(sub, pr.repo)) {
-      const p = await P.commitPreview(sub, pr.repo, head.sha);
-      if (p.state === "ready") next = { state: "ready", url: p.url, provider: p.provider, error: null };
-      else if (p.state === "failed") next = { state: "failed", url: null, provider: p.provider, error: "el hosting no pudo publicar la preview" };
-      else next = { state: "pending", url: null, provider: p.provider, error: null };
-    } else if (await missingPreviewEnv(sub, pr.repo)) {
+  // Desde cuándo está pendiente este commit (para el vigilante y el respaldo del hosting). Las
+  // filas de antes del vigilante no lo tienen: el reloj empieza ahora.
+  const nowS = Math.floor(Date.now() / 1000);
+  const stillPending = sameSha && row.preview_state === "pending";
+  let since = row.preview_since != null ? Number(row.preview_since) : null;
+  if (stillPending && since == null) {
+    since = nowS;
+    await dbq("UPDATE gt_factory_runs SET preview_since = ? WHERE id = ? AND preview_since IS NULL", [nowS, run.id]).catch(() => {});
+  }
+  const pendingFor = stillPending && since ? nowS - since : 0;
+
+  let next: NextPreview | null = null;
+  let phase: string | null = null;
+  let lastError: string | null = null;
+  let hosting = await P.hostingHasPreviews(sub, pr.repo);
+  if (hosting) {
+    const p = await P.commitPreview(sub, pr.repo, head.sha);
+    if (p.state === "ready") next = { state: "ready", url: p.url, provider: p.provider, error: null };
+    else if (p.state === "failed") next = { state: "failed", url: null, provider: p.provider, error: "el hosting no pudo publicar la preview" };
+    else if (p.state === "pending") next = { state: "pending", url: null, provider: p.provider, error: null };
+    else if (pendingFor >= HOSTING_SILENT_S) {
+      // El hosting no dijo NADA de este commit en 5 min: no publica previews (o dejó de hacerlo).
+      // Se le pide la caja a gs en esta misma vuelta.
+      P.markHostingSilent(pr.repo);
+      hosting = false;
+      await logEvent(run.id, "preview_fallback", null, { repo: pr.repo, after: pendingFor });
+    } else next = { state: "pending", url: null, provider: null, error: null };
+  }
+  if (!next && !hosting) {
+    if (await missingPreviewEnv(sub, pr.repo)) {
       // Con .env.example y sin variables guardadas, la app no arrancaría: no se gasta una caja,
       // se piden en el hilo (guardarlas la reintenta sola).
       next = { state: "needs_env", url: null, provider: null, error: null };
     } else {
       try {
-        // Pendiente del mismo commit: se pregunta cómo va; si la caja ya no existe, se vuelve a pedir.
-        let b: import("./preview.server").BoxPreview | null =
-          sameSha && row.preview_state === "pending" ? (await P.gsPreview("status", { repo: pr.repo, pr: pr.number, ...(row.box_id ? { runId: Number(row.id) } : {}) })).status : null;
-        if (!b) b = await P.gsPreview("up", { repo: pr.repo, pr: pr.number, sha: head.sha, ...(row.box_id ? { runId: Number(row.id) } : {}) });
-        if (!b || b.sha !== head.sha) next = { state: "pending", url: null, provider: null, error: null };
-        else if (b.phase === "ready") next = { state: "ready", url: b.url, provider: null, error: null };
-        else if (b.phase === "failed") next = { state: "failed", url: null, provider: null, error: b.error };
-        else next = { state: "pending", url: null, provider: null, error: null };
+        // Pendiente del mismo commit: se pregunta cómo va. Si la caja ya no existe, va por otro
+        // commit o gs olvidó cuál era (reinicio: `sha: null`), se vuelve a pedir.
+        let b: BoxStatus = stillPending ? (await P.gsPreview("status", boxOpts))?.status : null;
+        if (boxNeedsUp(b, head.sha)) {
+          const out = await P.gsPreview("up", { ...boxOpts, sha: head.sha });
+          // gs soltó previews sueltas para darle lugar a ésta: su botón dirá por qué ya no están.
+          if (Array.isArray(out?.evicted) && out.evicted.length)
+            await (await import("./pr-preview.server")).recordEvictedPreviews(out.evicted).catch(() => {});
+          b = out;
+        }
+        phase = b?.phase ?? null;
+        next = boxPreviewNext(b, head.sha);
       } catch (e) {
-        // Sin capacidad o gs caído: se reintenta en el siguiente tick. Con la preview exigida eso
-        // ya no deja pasar nada: el merge espera en «pendiente».
-        console.warn(`[factory] preview #${run.id}: ${(e as Error).message}`);
-        continue;
+        // Sin lugar o sin capacidad: `waiting` con el motivo, visible en la tarjeta (antes era un
+        // console.warn y la preview se quedaba «en camino» para siempre). Lo demás (gs caído) sigue
+        // pendiente y lo vence el vigilante.
+        const waiting = waitingFromGsError(e);
+        if (waiting) next = { state: "waiting", url: null, provider: null, error: waiting };
+        else {
+          lastError = (e as Error).message;
+          console.warn(`[factory] preview #${run.id}: ${lastError}`);
+          next = { state: "pending", url: null, provider: null, error: null };
+        }
       }
     }
-    const changed = await dbq(
-      `UPDATE gt_factory_runs SET preview_state = ?, preview_url = ?, preview_sha = ?, preview_error = ?
-       WHERE id = ? AND NOT (COALESCE(preview_state,'') = ? AND COALESCE(preview_sha,'') = ?) RETURNING id`,
-      [next.state, next.url, head.sha, next.error, run.id, next.state, head.sha],
-    );
-    if (!changed.length) continue;
-    void refreshRoom(run.channelId);
-    if (next.state === "ready")
-      // Mientras Build sigue empujando commits no se anuncia cada uno (sería ruido): la tarjeta
-      // ya muestra la liga vigente. Se anuncia al llegar a revisión, escalado o PR listo.
-      {
-        // En el PR de GitHub también (Deployment `preview` del commit), una vez por commit: el
-        // UPDATE de arriba sólo pasa cuando cambian estado o sha. Una preview de hosting externo
-        // (Vercel…) ya la registró su proveedor.
-        if (!next.provider && next.url)
-          void import("../connectors/github.server")
-            .then((G) => G.publishPreviewDeployment(sub, pr.repo, head.sha, next.url!))
-            .then((r) => { if ("error" in r) console.warn(`[factory] preview #${run.id} en el PR: ${r.error}`); })
-            .catch(() => {});
-        if (run.status !== "building") {
-          // Con variables de producción se dice en el mismo aviso: probarla escribe en lo real (#96).
-          const risks = next.provider ? [] : await P.gsPreview("env-keys", { repo: pr.repo }).then((r) => (Array.isArray(r?.risks) ? r.risks : [])).catch(() => []);
-          const { envRisksText } = await import("./factory-preview-gate");
-          const prod = risks.length ? ` · ⚠ usa prod: ${envRisksText(risks, 3)}` : "";
-          await postInThread(run, "build", `🔎 **Preview ${row.preview_sha && !sameSha ? "actualizada" : "lista"}**${next.provider ? ` (${next.provider})` : ""} · [Abrir](${next.url})${prod}`);
-        }
-        // Smoke de acción en cada preview nueva (también tras un push con el PR ya aprobado): un
-        // POST con el Origin real. Sólo se avisa si falla (#96, 16-oct).
-        if (next.url) {
-          const S = await import("./factory-smoke.server");
-          const fails = S.smokeFailures(await S.runActionSmoke(next.url, pr.repo, sub));
-          if (fails) {
-            await logEvent(run.id, "smoke_fail", null, { sha: head.sha, fails: fails.slice(0, 800) });
-            await postInThread(run, "build", `⛔ **La preview rechaza envíos** (POST con el Origin real, como el navegador):\n${fails}\nNo lo mezcles así.`);
-          }
-        }
-        // Si @check ya dio su veredicto con otra versión (o sin preview), las capturas de su
-        // tarjeta se rehacen con ésta: la tarjeta se corrige sola aunque @check se adelantara.
-        let verdict: { shotSha?: string; shotPath?: string | null; evidencePath?: string | null } | null = null;
-        try {
-          verdict = row.verdict_json ? JSON.parse(String(row.verdict_json)) : null;
-        } catch { /* veredicto ilegible: sin capturas */ }
-        if (verdict && verdict.shotSha !== head.sha)
-          void import("./factory-shots.server").then((S) => S.captureVerdictShots(run.id, verdict.shotPath ?? verdict.evidencePath ?? null));
+  }
+  if (!next) return;
+
+  // Vigilante: pendiente del mismo commit y sin cambiar de fase en 15 min → falla con motivo.
+  let stuck = false;
+  if (next.state === "pending" && stillPending) {
+    if (phase && phase !== (row.preview_phase ?? null)) {
+      // Cambió de fase (installing → building…): eso es avance, el reloj vuelve a empezar.
+      await dbq("UPDATE gt_factory_runs SET preview_phase = ?, preview_since = unixepoch() WHERE id = ?", [phase, run.id]).catch(() => {});
+    } else {
+      const why = stuckPreviewReason({ since, phase: phase ?? row.preview_phase ?? null, provider: next.provider, lastError }, nowS);
+      if (why) {
+        next = { state: "failed", url: null, provider: next.provider, error: why };
+        stuck = true;
       }
-    else if (next.state === "needs_env")
-      await postInThread(
-        run,
-        "build",
-        `🔑 **La preview necesita las variables de \`${pr.repo}\`.** Guárdalas con datos de prueba y arranca sola: ` +
-          `[Guardar variables](/factory?repo=${encodeURIComponent(pr.repo)})`,
-      );
-    else if (next.state === "failed")
-      // Tarjeta con paso, causa, qué hacer y el log plegado (ver lib/preview-errors.ts).
-      await postInThread(run, "build", "```gt-preview-error\n" + JSON.stringify({ runId: run.id }) + "\n```\n⚠️ La preview no arrancó.");
+    }
   }
-  if (touched.length) {
-    const C = await import("./factory-preview-check.server");
-    for (const t of touched) await C.syncPrCheck(t.repo, t.number, t.sha);
+
+  const changed = await dbq(
+    `UPDATE gt_factory_runs SET preview_state = ?, preview_url = ?, preview_sha = ?, preview_error = ?, preview_since = unixepoch(), preview_phase = ?
+     WHERE id = ? AND NOT (COALESCE(preview_state,'') = ? AND COALESCE(preview_sha,'') = ?) RETURNING id`,
+    [next.state, next.url, head.sha, next.error, phase, run.id, next.state, head.sha],
+  );
+  if (!changed.length) {
+    // Sigue esperando lugar: el motivo puede cambiar (otros pedidos en curso) aunque el estado no.
+    if (next.state === "waiting")
+      await dbq("UPDATE gt_factory_runs SET preview_error = ? WHERE id = ? AND COALESCE(preview_error,'') <> ?", [next.error, run.id, next.error ?? ""]).catch(() => {});
+    return;
   }
+  void refreshRoom(run.channelId);
+  if (next.state === "ready")
+    // Mientras Build sigue empujando commits no se anuncia cada uno (sería ruido): la tarjeta
+    // ya muestra la liga vigente. Se anuncia al llegar a revisión, escalado o PR listo.
+    {
+      const url = next.url;
+      // En el PR de GitHub también (Deployment `preview` del commit), una vez por commit: el
+      // UPDATE de arriba sólo pasa cuando cambian estado o sha. Una preview de hosting externo
+      // (Vercel…) ya la registró su proveedor.
+      if (!next.provider && url)
+        void import("../connectors/github.server")
+          .then((G) => G.publishPreviewDeployment(sub, pr.repo, head.sha, url))
+          .then((r) => { if ("error" in r) console.warn(`[factory] preview #${run.id} en el PR: ${r.error}`); })
+          .catch(() => {});
+      if (run.status !== "building") {
+        // Con variables de producción se dice en el mismo aviso: probarla escribe en lo real (#96).
+        const risks = next.provider ? [] : await P.gsPreview("env-keys", { repo: pr.repo }).then((r) => (Array.isArray(r?.risks) ? r.risks : [])).catch(() => []);
+        const { envRisksText } = await import("./factory-preview-gate");
+        const prod = risks.length ? ` · ⚠ usa prod: ${envRisksText(risks, 3)}` : "";
+        await postInThread(run, "build", `🔎 **Preview ${row.preview_sha && !sameSha ? "actualizada" : "lista"}**${next.provider ? ` (${next.provider})` : ""} · [Abrir](${url})${prod}`);
+      }
+      // Smoke de acción en cada preview nueva (también tras un push con el PR ya aprobado): un
+      // POST con el Origin real. Sólo se avisa si falla (#96, 16-oct).
+      if (url) {
+        const S = await import("./factory-smoke.server");
+        const fails = S.smokeFailures(await S.runActionSmoke(url, pr.repo, sub));
+        if (fails) {
+          await logEvent(run.id, "smoke_fail", null, { sha: head.sha, fails: fails.slice(0, 800) });
+          await postInThread(run, "build", `⛔ **La preview rechaza envíos** (POST con el Origin real, como el navegador):\n${fails}\nNo lo mezcles así.`);
+        }
+      }
+      // Si @check ya dio su veredicto con otra versión (o sin preview), las capturas de su
+      // tarjeta se rehacen con ésta: la tarjeta se corrige sola aunque @check se adelantara.
+      let verdict: { shotSha?: string; shotPath?: string | null; evidencePath?: string | null } | null = null;
+      try {
+        verdict = row.verdict_json ? JSON.parse(String(row.verdict_json)) : null;
+      } catch { /* veredicto ilegible: sin capturas */ }
+      if (verdict && verdict.shotSha !== head.sha)
+        void import("./factory-shots.server").then((S) => S.captureVerdictShots(run.id, verdict.shotPath ?? verdict.evidencePath ?? null));
+      // Escalado SÓLO porque la preview no llegaba: ya llegó, @check revisa otra vez solo.
+      if (run.status === "escalated" && (await escalationOf(run))?.kind === "platform")
+        await recheck({ run, sub, who: "La plataforma", note: "la preview ya está lista", origin: "" }).catch((e) =>
+          console.warn(`[factory] recheck #${run.id}: ${(e as Error).message}`),
+        );
+    }
+  else if (next.state === "needs_env")
+    await postInThread(
+      run,
+      "build",
+      `🔑 **La preview necesita las variables de \`${pr.repo}\`.** Guárdalas con datos de prueba y arranca sola: ` +
+        `[Guardar variables](/factory?repo=${encodeURIComponent(pr.repo)})`,
+    );
+  else if (next.state === "failed") {
+    // Tarjeta con paso, causa, qué hacer y el log plegado (ver lib/preview-errors.ts).
+    await postInThread(run, "build", "```gt-preview-error\n" + JSON.stringify({ runId: run.id }) + "\n```\n⚠️ La preview no arrancó.");
+    // No arrancó por la plataforma (el vigilante): @check no puede hacer nada y una persona tampoco.
+    if (stuck) await escalatePlatform(run, next.error ?? "la preview no arrancó", pr.repo);
+  }
+}
+
+/**
+ * La preview que @check necesita no arrancó por la plataforma: el pedido escala con tipo
+ * `platform` (no cuenta en «Te toca», no timbra), se avisa UNA vez por repo y, en cuanto la
+ * preview quede lista, @check revisa solo. Sólo si @check está revisando y la preview se exige.
+ */
+export async function escalatePlatform(run: Run, why: string, repo: string): Promise<Run | null> {
+  if (run.status !== "checking") return null;
+  if (!(await previewRequired(run))) return null;
+  const reason = clipReason(why);
+  const next = await applyEvent(run, "check_blocked", {}, {
+    actor: null,
+    data: { kind: "platform", reason, findings: `- ${why}\n- La plataforma la reintenta sola; en cuanto esté lista, @check revisa otra vez.` },
+  }).catch(() => null);
+  if (!next) return null;
+  await postInThread(
+    next,
+    "check",
+    `⏸️ **En pausa por la plataforma:** ${reason}. Nadie tiene que decidir nada: la reintento sola y, en cuanto esté lista, reviso otra vez.`,
+  ).catch(() => {});
+  await noticePlatformOnce(next, repo, reason);
+  return next;
+}
+
+/** Un solo aviso por repo (cada 6 h a lo más) en el room del pedido, no uno por pedido. */
+async function noticePlatformOnce(run: Run, repo: string, reason: string): Promise<void> {
+  const claimed = await dbq(
+    `INSERT INTO gt_factory_repo_prefs (repo, platform_notice_at) VALUES (?, unixepoch())
+     ON CONFLICT(repo) DO UPDATE SET platform_notice_at = excluded.platform_notice_at
+     WHERE COALESCE(gt_factory_repo_prefs.platform_notice_at, 0) < unixepoch() - 21600 RETURNING repo`,
+    [repo.toLowerCase()],
+  ).catch(() => []);
+  if (!claimed.length) return;
+  try {
+    const db = await import("../../db.server");
+    const bus = await import("../bus.server");
+    const { currentNamespace } = await import("../tenant.server");
+    const body =
+      `⚠️ **Las previews de \`${repo}\` no están arrancando** (${reason}). Es una falla de la plataforma, no de los PRs: ` +
+      `los pedidos que la esperan quedan en pausa sin pedirte nada y se reanudan solos en cuanto arranque.`;
+    const { id } = await db.postAgent(run.channelId, null, body, "msg", "check", "Check", "general", "");
+    const msg = await db.getMessage(id);
+    if (msg) bus.publish(bus.ch.room(await currentNamespace(), run.channelId), { t: "message:new", msg });
+  } catch (e) {
+    console.warn(`[factory] aviso de plataforma ${repo}: ${(e as Error).message}`);
+  }
+}
+
+/**
+ * Escalado por la plataforma con la preview caída: se reintenta sola cada 30 min, hasta 3 veces
+ * (luego queda «Reintentar preview» en la tarjeta). true = se reintentó.
+ */
+async function retryPlatformPreview(run: Run, row: Record<string, any>): Promise<boolean> {
+  if (run.status !== "escalated") return false;
+  const since = Number(row.preview_since ?? 0);
+  if (since && Math.floor(Date.now() / 1000) - since < PLATFORM_RETRY_S) return false;
+  if ((await escalationOf(run))?.kind !== "platform") return false;
+  const [n] = await dbq("SELECT COUNT(*) AS n FROM gt_factory_events WHERE run_id = ? AND type = 'preview_retry'", [run.id]).catch(() => [{ n: PLATFORM_RETRIES }]);
+  if (Number(n?.n ?? 0) >= PLATFORM_RETRIES) return false;
+  await logEvent(run.id, "preview_retry", null, { auto: true });
+  return (await retryPreviews({ runId: run.id, force: true })) > 0;
 }
 
 /**
@@ -2066,16 +2402,22 @@ async function warnPreviewBlocking(run: Run, state: "failed" | "needs_env", repo
  * olvida el estado y el siguiente tick las levanta otra vez. Lo usan «Reintentar» en la
  * tarjeta y guardar variables.
  */
-export async function retryPreviews(by: { runId?: number; repo?: string; envChanged?: boolean }): Promise<number> {
+export async function retryPreviews(by: { runId?: number; repo?: string; envChanged?: boolean; force?: boolean }): Promise<number> {
   // Variables nuevas: también las previews vivas (lista o construyéndose) de los pedidos abiertos,
   // que seguían con el `.env` viejo (#106, 16-oct). Sin sha, el tick vuelve a pedir `up` y gs
-  // reconstruye el mismo commit con el `.env` nuevo.
-  const states = by.envChanged ? "('failed','needs_env','ready','pending')" : "('failed','needs_env')";
-  const open = by.envChanged ? " AND status NOT IN ('done','cancelled')" : "";
+  // reconstruye el mismo commit con el `.env` nuevo. `force` («Reintentar preview» de un escalado
+  // por la plataforma): cualquier estado salvo apagada, también la que espera o sigue «en camino».
+  const which = by.force
+    ? "COALESCE(preview_state, 'none') <> 'off'"
+    : by.envChanged
+      ? "preview_state IN ('failed','needs_env','ready','pending','waiting')"
+      : "preview_state IN ('failed','needs_env')";
+  const open = by.envChanged || by.force ? " AND status NOT IN ('done','cancelled')" : "";
+  const reset = "preview_state = 'pending', preview_sha = NULL, preview_error = NULL, preview_since = unixepoch(), preview_phase = NULL";
   const rows = await dbq(
     by.runId
-      ? `UPDATE gt_factory_runs SET preview_state = 'pending', preview_sha = NULL, preview_error = NULL WHERE id = ? AND preview_state IN ${states}${open} RETURNING *`
-      : `UPDATE gt_factory_runs SET preview_state = 'pending', preview_sha = NULL, preview_error = NULL WHERE repo = ? AND preview_state IN ${states}${open} RETURNING *`,
+      ? `UPDATE gt_factory_runs SET ${reset} WHERE id = ? AND ${which}${open} RETURNING *`
+      : `UPDATE gt_factory_runs SET ${reset} WHERE repo = ? AND ${which}${open} RETURNING *`,
     [by.runId ?? by.repo ?? ""],
   ).catch(() => []);
   for (const r of rows) {
@@ -2129,7 +2471,7 @@ async function missingPreviewEnv(sub: string, repo: string): Promise<boolean> {
   return r.facts.envExampleKeys.length > 0 && !r.facts.envSavedKeys;
 }
 
-export type RunPreviewState = "none" | "pending" | "ready" | "failed" | "needs_env" | "off";
+export type RunPreviewState = "none" | "pending" | "ready" | "failed" | "needs_env" | "off" | "waiting";
 
 /** ¿El pedido exige la preview para aprobarse y mezclarse? Regla en `factory-preview-gate.ts`. */
 export async function previewRequired(run: Run): Promise<boolean> {
@@ -2183,7 +2525,8 @@ export async function runPreview(
   return {
     state,
     url: state === "ready" ? (r?.preview_url ?? null) : null,
-    error: state === "failed" ? (r?.preview_error ?? null) : null,
+    // `waiting` también lleva su motivo («sin lugar: 2 pedidos en curso…»).
+    error: state === "failed" || state === "waiting" ? (r?.preview_error ?? null) : null,
     sha: state === "ready" ? (r?.preview_sha ?? null) : null,
   };
 }

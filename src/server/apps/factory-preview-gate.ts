@@ -5,7 +5,7 @@
 // lo que falla. Aquí vive la regla pura; la aplican `factory_check_verdict` y `mergeRun`.
 import type { BumpLevel } from "../../lib/dependabot";
 
-export type PreviewGateState = "none" | "pending" | "ready" | "failed" | "needs_env" | "off";
+export type PreviewGateState = "none" | "pending" | "ready" | "failed" | "needs_env" | "off" | "waiting";
 
 /** La sección «Criterios de aceptación» del plan (hasta el siguiente encabezado ##). */
 export function acceptanceSection(planMd: string): string {
@@ -44,16 +44,17 @@ const STATE_TEXT: Record<PreviewGateState, string> = {
   failed: "falló",
   needs_env: "espera las variables del repo",
   off: "apagada",
+  waiting: "espera lugar para levantarse",
 };
 
 /** El estado en palabras para la tarjeta y los errores («falló: <motivo>»). */
 export function previewStateText(p: { state: PreviewGateState; error?: string | null }): string {
-  return STATE_TEXT[p.state] + (p.state === "failed" && p.error ? `: ${String(p.error).slice(0, 200)}` : "");
+  return STATE_TEXT[p.state] + ((p.state === "failed" || p.state === "waiting") && p.error ? `: ${String(p.error).slice(0, 200)}` : "");
 }
 
 /**
- * null = la preview exigida está lista en la cabeza del PR. Si no, el motivo. `pending` es lo
- * único que se resuelve solo (un merge en cola puede esperarlo); `needs_env` y `failed` piden a
+ * null = la preview exigida está lista en la cabeza del PR. Si no, el motivo. `pending` y
+ * `waiting` son lo único que se resuelve solo (un merge en cola puede esperarlo); `needs_env` y `failed` piden a
  * una persona.
  */
 export function previewGateBlock(
@@ -62,7 +63,8 @@ export function previewGateBlock(
 ): { reason: string; waits: boolean } | null {
   if (p.state === "ready" && (!headSha || p.sha === headSha)) return null;
   const state = p.state === "ready" ? "pending" : p.state; // lista, pero de un commit viejo
-  return { reason: previewStateText({ state, error: p.error }), waits: state === "pending" };
+  // Esperar lugar también se resuelve solo (el tick la levanta al liberarse uno).
+  return { reason: previewStateText({ state, error: p.error }), waits: state === "pending" || state === "waiting" };
 }
 
 /** Variable del `.env` de la preview que toca producción (la clasifica gs: sólo viaja el nombre). */

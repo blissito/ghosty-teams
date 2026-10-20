@@ -9,7 +9,7 @@ let ciYml = CI_FULL;
 let contents: Record<string, string> = {};
 let rulesets: { name: string }[] = [];
 let branchProtected = false;
-let deployments: { environment: string; production_environment?: boolean }[] = [];
+let deployments: { id?: number; environment: string; production_environment?: boolean; created_at?: string }[] = [];
 let calls = 0;
 
 const b64 = (s: string) => Buffer.from(s).toString("base64");
@@ -24,6 +24,8 @@ vi.mock("../connectors/github.server", () => ({
     if (path === "/repos/acme/app/contents/.github/workflows") return workflows.length ? workflows.map((name) => ({ name, path: `.github/workflows/${name}` })) : { error: "404" };
     if (path === "/repos/acme/app/branches/main") return { protected: branchProtected };
     if (path.endsWith("/rulesets")) return rulesets;
+    // Desde el 20-oct (easybits) cuenta sólo un despliegue reciente con status `success` y URL de app.
+    if (/\/deployments\/\d+\/statuses/.test(path)) return [{ state: "success", environment_url: "https://app-pr-1.vercel.app" }];
     if (path.startsWith("/repos/acme/app/deployments")) return deployments;
     if (/\/commits\/[^/]+\/statuses/.test(path)) return [];
     const f = path.replace("/repos/acme/app/contents/", "");
@@ -72,7 +74,7 @@ function complete() {
     ".github/CODEOWNERS": "/.github/ @acme\n",
   };
   rulesets = [{ name: "Ghosty Factory" }];
-  deployments = [{ environment: "Preview" }, { environment: "Production", production_environment: true }];
+  deployments = [{ id: 1, environment: "Preview", created_at: new Date().toISOString() }, { environment: "Production", production_environment: true }];
 }
 
 async function check(): Promise<Readiness> {

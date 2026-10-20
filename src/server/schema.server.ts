@@ -945,6 +945,11 @@ async function migrate(): Promise<void> {
   // Estado de la preview del PR: pending | ready | failed (y por qué falló).
   await addColumn("gt_factory_runs", "preview_state", "TEXT");
   await addColumn("gt_factory_runs", "preview_error", "TEXT");
+  // Vigilante de la preview (easybits, 20-oct: cinco previews 24 h en `pending` sin que nadie lo
+  // supiera). `preview_since` = desde cuándo está en su estado/fase actual; `preview_phase` = la
+  // última fase de la caja de gs (creating, installing…): cambiar de fase cuenta como avance.
+  await addColumn("gt_factory_runs", "preview_since", "INTEGER");
+  await addColumn("gt_factory_runs", "preview_phase", "TEXT");
   // Veredicto de @check para su tarjeta (diff, CI, hallazgos) y cuándo quedó listo el PR
   // (mide el tiempo pedido→PR en la página de la Fábrica).
   await addColumn("gt_factory_runs", "verdict_json", "TEXT");
@@ -1069,6 +1074,8 @@ async function migrate(): Promise<void> {
     updated_by  TEXT,
     updated_at  INTEGER NOT NULL DEFAULT (unixepoch())
   )`);
+  // Una falla de la plataforma (la preview no arrancó) se avisa UNA vez por repo, no una por pedido.
+  await addColumn("gt_factory_repo_prefs", "platform_notice_at", "INTEGER");
   // Automerge del room (10-oct): ENCENDIDO por default en todo room; la fila sólo existe cuando
   // alguien lo tocó desde el encabezado. Lo que @check aprueba entra solo en cuanto el CI pasa,
   // con las credenciales de quien firmó el plan.

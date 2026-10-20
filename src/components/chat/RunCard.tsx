@@ -616,7 +616,8 @@ function RunCardBody({ card, channelId, inPanel, msgId }: { card: RunCardData; c
         </p>
         {st.status === "escalated" && st.escalation?.points.length ? (
           <div className="mt-2 rounded-lg border border-amber-600/40 bg-amber-500/5 px-3 py-2 text-xs" role="note">
-            <p className="font-semibold text-ink">{t("Lo que @check pide decidir:")}</p>
+            {st.escalation.reason ? <p className="font-semibold text-ink">{st.escalation.reason}</p> : null}
+            <p className={st.escalation.reason ? "mt-1 text-muted" : "font-semibold text-ink"}>{t("Lo que @check pide decidir:")}</p>
             <ol className="mt-1 list-decimal space-y-1 pl-4 text-ink">
               {(allPoints || confirming ? st.escalation.points : st.escalation.points.slice(0, 3)).map((p, i) => (
                 <li key={i} className="break-words">{allPoints || confirming || p.length <= 240 ? p : `${p.slice(0, 240)}…`}</li>
@@ -748,6 +749,12 @@ function RunCardBody({ card, channelId, inPanel, msgId }: { card: RunCardData; c
             <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-3 px-3 py-1 text-xs text-muted">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500 motion-reduce:animate-none" />
               {t("Preview en camino…")}
+            </span>
+          )}
+          {st.preview?.state === "waiting" && (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-3 px-3 py-1 text-xs text-muted" title={st.preview.error ?? undefined}>
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-500/40" />
+              {t("Preview esperando lugar…")}
             </span>
           )}
           {st.preview?.state === "needs_env" && st.repo && (

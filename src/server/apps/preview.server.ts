@@ -126,15 +126,50 @@ export async function prPreview(sub: string, prUrl: string): Promise<Preview> {
   return sha ? commitPreview(sub, pr.repo, sha) : NONE;
 }
 
+/** Antigüedad máxima de un despliegue para creer que el hosting publica previews HOY. */
+const RECENT_MS = 30 * 24 * 3600_000;
+const APP_SLUG = process.env.GITHUB_APP_SLUG ?? "ghosty-studio";
+
 /**
- * ¿El repo publica previews? Para «Listo para agentes»: alguna deployment reciente que no
- * sea de producción, o un commit status de preview en la cabeza de la rama principal.
+ * ¿Este despliegue lo creó Ghosty (`publishPreviewDeployment`)? Ésos son NUESTRA caja anunciada en
+ * el PR: contarlos haría creer que el hosting publica previews y nunca se volvería a pedir la caja.
+ */
+export function isGhostyDeployment(d: { description?: unknown; creator?: { login?: unknown } | null }): boolean {
+  if (String(d?.description ?? "") === "Preview de Ghosty") return true;
+  return String(d?.creator?.login ?? "").toLowerCase() === `${APP_SLUG}[bot]`.toLowerCase();
+}
+
+/** Candidato a «el hosting publica previews»: no es producción, no es nuestro y es de los últimos 30 días. Puro. */
+export function hostingDeploymentCandidate(d: any, now = Date.now()): boolean {
+  if (!d || isProduction(d) || isGhostyDeployment(d)) return false;
+  const at = Date.parse(String(d.created_at ?? ""));
+  return Number.isFinite(at) && now - at <= RECENT_MS;
+}
+
+/**
+ * ¿El repo publica previews? Para «Listo para agentes» y para decidir la capa (hosting o caja):
+ * un despliegue que no sea de producción ni de Ghosty, de los últimos 30 días, cuyo último status
+ * sea `success` con una URL de app; o un commit status de preview en la cabeza de la principal.
+ *
+ * Antes bastaba con CUALQUIER despliegue no productivo: en easybits uno de 2025 (`preview-157`,
+ * de github-actions, ya `inactive`) hizo que nunca se pidiera la caja y cinco PRs de Dependabot
+ * se quedaron con la preview `pending` para siempre (20-oct).
  */
 export async function repoHasPreviews(sub: string, repo: string, defaultBranch: string): Promise<boolean> {
   const deployments = await githubApi(sub, `/repos/${repo}/deployments?per_page=30`).catch(() => null);
-  if (Array.isArray(deployments) && deployments.some((d: any) => !isProduction(d))) return true;
+  if (Array.isArray(deployments)) {
+    // Del más nuevo al más viejo (así los da GitHub); con 5 basta para saber si publica hoy.
+    for (const d of deployments.filter((x: any) => hostingDeploymentCandidate(x)).slice(0, 5)) {
+      const statuses = await githubApi(sub, `/repos/${repo}/deployments/${d.id}/statuses?per_page=1`).catch(() => null);
+      const st = Array.isArray(statuses) ? statuses[0] : null;
+      if (st && String(st.state) === "success" && isAppUrl(st.environment_url)) return true;
+    }
+  }
   const statuses = await githubApi(sub, `/repos/${repo}/commits/${encodeURIComponent(defaultBranch)}/statuses?per_page=30`).catch(() => null);
-  return Array.isArray(statuses) && statuses.some((s: any) => STATUS_CONTEXT.test(String(s?.context ?? "")) && isAppUrl(s?.target_url));
+  return (
+    Array.isArray(statuses) &&
+    statuses.some((s: any) => STATUS_CONTEXT.test(String(s?.context ?? "")) && !/^ghosty/i.test(String(s?.context ?? "")) && isAppUrl(s?.target_url))
+  );
 }
 
 // ── Capa 2: la preview en NUESTRA caja (gs `internal/workspace-preview`) ───────
@@ -165,6 +200,8 @@ export async function gsPreview(op: "up" | "status" | "down" | "env-set" | "env-
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: raw,
+    // Como `gsRunBox`: sin tope, un gs colgado dejaba el tick entero esperando.
+    signal: AbortSignal.timeout(90_000),
   });
   const out = await res.json().catch(() => null);
   if (!res.ok) {
@@ -180,7 +217,17 @@ export async function gsPreview(op: "up" | "status" | "down" | "env-set" | "env-
 
 // ¿El hosting del repo publica previews? Decide la capa: con hosting no se gasta una caja.
 const hostingCache = new Map<string, { at: number; value: boolean }>();
+/** Repos cuyo hosting no dijo nada de un commit en 5 min: hasta esta hora se usa la caja de gs. */
+const hostingSilent = new Map<string, number>();
+const HOSTING_SILENT_MS = 6 * 3600_000;
+
+/** El hosting no publicó la preview de un commit: por un rato este repo va con la caja de gs. */
+export function markHostingSilent(repo: string): void {
+  hostingSilent.set(repo.toLowerCase(), Date.now() + HOSTING_SILENT_MS);
+}
+
 export async function hostingHasPreviews(sub: string, repo: string): Promise<boolean> {
+  if ((hostingSilent.get(repo.toLowerCase()) ?? 0) > Date.now()) return false;
   const hit = hostingCache.get(repo);
   if (hit && Date.now() - hit.at < 10 * 60_000) return hit.value;
   const info = await githubApi(sub, `/repos/${repo}`).catch(() => null);

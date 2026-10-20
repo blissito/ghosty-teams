@@ -3,7 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 // ── Endpoint interno: decidir un pedido de la fábrica desde la terminal ──────────
 //
 // Lo que hace la tarjeta (`factoryDecisionFn`, `factoryMergeFn`) pero a nombre de una persona que
-// llega por gs (`ghosty factory runs approve|changes|merge|card`, 19-oct; `resume|stop|cancel` desde la app, 20-oct): la fábrica como
+// llega por gs (`ghosty factory runs approve|changes|merge|card`, 19-oct; `resume|stop|cancel|close|retry_preview` desde la app, 20-oct): la fábrica como
 // complemento de un agente de terminal. Firma QUIEN manda el comando (`sub`), con el mismo permiso
 // que la tarjeta: ser miembro del espacio y ver el room del pedido.
 //
@@ -25,7 +25,18 @@ async function verify(ts: string, sig: string, rawBody: string): Promise<boolean
 
 const bad = (error: string, status = 400) => Response.json({ error }, { status });
 
-type Body = { runId?: number; action?: string; version?: number; note?: string; checkScope?: string; skipPreview?: boolean; dotenv?: string; sub?: string };
+type Body = {
+  runId?: number;
+  action?: string;
+  version?: number;
+  note?: string;
+  checkScope?: string;
+  skipPreview?: boolean;
+  dotenv?: string;
+  sub?: string;
+  /** `close`: además de cerrar, que Dependabot ignore la versión mayor o la dependencia. */
+  ignore?: "major" | "dependency" | null;
+};
 
 export const Route = createFileRoute("/api/internal/factory-act")({
   server: {
@@ -120,7 +131,24 @@ export const Route = createFileRoute("/api/internal/factory-act")({
             const { runPersonAction } = await import("../server/apps/factory");
             return Response.json(await runPersonAction(run, body.action, { sub: member.sub, name: member.name, isOwner }));
           }
-          return bad("action: approve | changes | recheck | env | merge | card | resume | stop | cancel");
+          // Escalado `skip` (easybits #129, 20-oct): cerrar el PR, y si se pide, que Dependabot ignore
+          // la versión mayor o la dependencia. Con el GitHub de quien conectó el repo.
+          if (body.action === "close") {
+            const ignore = body.ignore ?? null;
+            if (ignore !== null && ignore !== "major" && ignore !== "dependency") return bad("ignore: major | dependency | null");
+            const next = await R.closeRunPr(run, { ignore, who: member.name || "alguien" });
+            return Response.json({ ok: true, status: next.status });
+          }
+          // Escalado `platform`: la preview se pide otra vez desde cero (el tick la levanta).
+          if (body.action === "retry_preview") {
+            if (run.status === "done" || run.status === "cancelled") return bad(`el pedido está en «${run.status}»`, 409);
+            if (!run.prUrl) return bad("el pedido todavía no tiene PR", 409);
+            const retried = await R.retryPreviews({ runId: run.id, force: true });
+            if (!retried) return bad("la preview de este repo está apagada («Sin preview»)", 409);
+            await R.logEvent(run.id, "preview_retried", member.name || member.sub);
+            return Response.json({ ok: true, status: run.status, retried });
+          }
+          return bad("action: approve | changes | recheck | env | merge | card | resume | stop | cancel | close | retry_preview");
         } catch (e) {
           return bad((e as Error).message, 409);
         }
