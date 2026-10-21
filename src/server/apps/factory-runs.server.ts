@@ -844,16 +844,28 @@ export async function ensureRunBox(run: Run): Promise<"ready" | "waiting" | "off
       const [prev] = await dbq("SELECT box_state FROM gt_factory_runs WHERE id = ?", [run.id]).catch(() => []);
       await dbq("UPDATE gt_factory_runs SET box_id = ?, box_state = 'ready' WHERE id = ?", [String(r.json.boxId), run.id]);
       if (prev?.box_state === "waiting") await logEvent(run.id, "box_ready", null, { box: r.json.boxId });
+      // Cortesía de lugar (gs, 21-oct): no cabía y gs le prestó lugar este mes. La nota va al hilo UNA vez
+      // por pedido (si la caja se rehace con la misma cortesía, no se repite).
+      const c = r.json.courtesy;
+      if (c?.note) {
+        const seen = await dbq("SELECT 1 FROM gt_factory_events WHERE run_id = ? AND type = 'box_courtesy' LIMIT 1", [run.id]).catch(() => []);
+        if (!seen.length) {
+          await logEvent(run.id, "box_courtesy", null, { slots: c.slots, month: c.month });
+          await postInThread(run, "build", courtesyText(String(c.note), await plansLink())).catch(() => null);
+        }
+      }
       return "ready";
     }
     if (r.status === 409 && r.json?.error === "no_slot") {
       const [prev] = await dbq("SELECT box_state FROM gt_factory_runs WHERE id = ?", [run.id]).catch(() => []);
       if (prev?.box_state !== "waiting") {
         await dbq("UPDATE gt_factory_runs SET box_state = 'waiting' WHERE id = ?", [run.id]);
-        await logEvent(run.id, "box_waiting", null, { tier: r.json.tier, busy: r.json.busy });
+        await logEvent(run.id, "box_waiting", null, { tier: r.json.tier, busy: r.json.busy, courtesyUsed: !!r.json.courtesyUsed });
         void syncRunTask({ ...run, boxWaiting: true }, "waiting").catch(() => {});
         void import("./sprint.server").then((S) => S.onSprintRunChanged(run.id)).catch(() => {});
-        await postInThread(run, "build", waitingForSlotText(r.json.tier, Number(r.json.max), r.json.busy ?? [])).catch(() => null);
+        // gs manda su nota (quién ocupa cada lugar, cortesía usada y cuándo se renueva) desde el 21-oct.
+        const text = typeof r.json.note === "string" && r.json.note ? queuedText(r.json.note, await plansLink()) : waitingForSlotText(r.json.tier, Number(r.json.max), r.json.busy ?? []);
+        await postInThread(run, "build", text).catch(() => null);
         void refreshRoom(run.channelId);
       }
       return "waiting";
@@ -2803,6 +2815,23 @@ export async function ensurePrClosesIssue(runId: number, sub: string, url: strin
 /** El aviso de «en espera de lugar»: qué es un lugar (pedidos a la vez), quién lo ocupa y cómo
  *  tener más. Sólo el tier da lugares (F1 2 · F2 4 · F3 6, `FACTORY_TIERS` de gs); la CI extra no. */
 const NEXT_TIER: Record<string, { tier: string; slots: number }> = { F1: { tier: "F2", slots: 4 }, F2: { tier: "F3", slots: 6 } };
+/** Dónde se agrega un lugar o se ve el plan (mientras «Agregar 1 lugar» no tenga precio, lleva al plan). */
+const plansLink = async () => {
+  const { currentSlug } = await import("../tenant.server");
+  const slug = await currentSlug().catch(() => null);
+  return slug ? `https://www.ghosty.studio/app/workspaces/${encodeURIComponent(slug)}/plan` : "https://www.ghosty.studio/planes?factory=F2#a-tu-medida";
+};
+
+/** La nota de la cortesía de lugar (texto de gs) con sus ligas. Puro salvo la liga. */
+export function courtesyText(note: string, link = "https://www.ghosty.studio/planes"): string {
+  return `🎁 **Cortesía de lugar.** ${note} [Agregar 1 lugar](${link}) · [Ver planes](${link})`;
+}
+
+/** La fila tras usar la cortesía del mes (texto de gs). Sin tono de error. */
+export function queuedText(note: string, link = "https://www.ghosty.studio/planes"): string {
+  return `⏳ **En la fila.** ${note} [Agregar 1 lugar](${link}) · [Ver planes](${link})`;
+}
+
 export function waitingForSlotText(tier: string, max: number, busy: number[]): string {
   const ids = busy.map((n) => `#${n}`);
   const list = ids.length > 1 ? `${ids.slice(0, -1).join(", ")} y ${ids[ids.length - 1]}` : ids[0] ?? "";

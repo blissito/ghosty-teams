@@ -69,6 +69,23 @@ describe("ensureRunBox", () => {
     expect(posts[0]).toMatch(/Tu plan F1 deja construir \*\*2 pedidos a la vez\*\* y ya van #15 y #14/);
   });
 
+  it("cortesía de lugar: la nota de gs va al hilo con las ligas al plan del espacio", async () => {
+    gs = { status: 200, json: { ok: true, boxId: "sb_2", courtesy: { slots: 2, month: "2026-10", note: "Tu plan tiene 4 lugares, ocupados por #121, #130 y PR #133. Esta vez te prestamos 2 lugares para que #16 no espere: es tu cortesía de octubre." } } };
+    expect(await ensureRunBox(run())).toBe("ready");
+    expect(posts).toHaveLength(1);
+    expect(posts[0]).toMatch(/Cortesía de lugar.*ocupados por #121, #130 y PR #133/);
+    expect(posts[0]).toContain("[Ver planes](https://www.ghosty.studio/app/workspaces/business/plan)");
+    expect(sqls.some((q) => q.sql.startsWith("INSERT INTO gt_factory_events") && q.args.includes("box_courtesy"))).toBe(true);
+  });
+
+  it("fila tras usar la cortesía: pone la nota de gs, sin tono de error", async () => {
+    gs = { status: 409, json: { error: "no_slot", tier: "F1", max: 4, busy: [121, 130], note: "#16 va en la fila y arranca solo en cuanto se libere uno. La cortesía de octubre ya se usó (se renueva el 1-nov).", courtesyUsed: true } };
+    expect(await ensureRunBox(run())).toBe("waiting");
+    expect(posts).toHaveLength(1);
+    expect(posts[0]).toMatch(/En la fila.*se renueva el 1-nov/);
+    expect(posts[0]).not.toMatch(/error/i);
+  });
+
   it("sin repo o con gs caído sigue el camino viejo", async () => {
     expect(await ensureRunBox(run(null))).toBe("off");
     gs = { status: 502, json: { error: "boom" } };
