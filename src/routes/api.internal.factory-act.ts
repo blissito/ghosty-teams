@@ -139,14 +139,16 @@ export const Route = createFileRoute("/api/internal/factory-act")({
             const next = await R.closeRunPr(run, { ignore, who: member.name || "alguien" });
             return Response.json({ ok: true, status: next.status });
           }
-          // Escalado `platform`: la preview se pide otra vez desde cero (el tick la levanta).
+          // La preview se pide otra vez desde cero, en cualquier etapa con PR (escalado `platform` o
+          // una preview atorada en revisión, #131 de easybits): contesta cómo quedó; la etapa no cambia.
           if (body.action === "retry_preview") {
             if (run.status === "done" || run.status === "cancelled") return bad(`el pedido está en «${run.status}»`, 409);
             if (!run.prUrl) return bad("el pedido todavía no tiene PR", 409);
-            const retried = await R.retryPreviews({ runId: run.id, force: true });
-            if (!retried) return bad("la preview de este repo está apagada («Sin preview»)", 409);
-            await R.logEvent(run.id, "preview_retried", member.name || member.sub);
-            return Response.json({ ok: true, status: run.status, retried });
+            const preview = await R.retryRunPreviewNow(run);
+            if (!preview) return bad("la preview de este repo está apagada («Sin preview»)", 409);
+            await R.logEvent(run.id, "preview_retried", member.name || member.sub, { stage: run.status, state: preview.state });
+            const now = await R.getRun(run.id);
+            return Response.json({ ok: true, status: now?.status ?? run.status, retried: 1, preview });
           }
           return bad("action: approve | changes | recheck | env | merge | card | resume | stop | cancel | close | retry_preview");
         } catch (e) {

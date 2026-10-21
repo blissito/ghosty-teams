@@ -2034,7 +2034,8 @@ export function waitingFromGsError(e: unknown): string | null {
   const err = e as { status?: number; body?: any; message?: string };
   if (err?.status === 409 && err.body?.error === "no_slot") {
     const busy: number[] = Array.isArray(err.body?.busy) ? err.body.busy.map(Number).filter((n: number) => n > 0) : [];
-    return `sin lugar: ${busy.length || "todos los"} pedidos en curso${busy.length ? ` (${busy.map((n) => `#${n}`).join(", ")})` : ""}; arranca sola al liberarse uno`;
+    // «esperando lugar de caja (2 ocupados: #120, #121)»: lo mismo lee la app en gs (`previewStatus`).
+    return `esperando lugar de caja (${busy.length ? `${busy.length} ocupados: ${busy.map((n) => `#${n}`).join(", ")}` : "todos ocupados"}); arranca sola al liberarse uno`;
   }
   if (err?.status === 503) return String(err.body?.error ?? "no hay capacidad para otra caja ahora mismo; se reintenta sola");
   return null;
@@ -2512,6 +2513,30 @@ export async function retryPreviews(by: { runId?: number; repo?: string; envChan
     if (by.envChanged) void postInThread(toRun(r), "build", "🔁 Reconstruyo la preview con las variables nuevas.").catch(() => {});
   }
   return rows.length;
+}
+
+/**
+ * «Reintentar preview» de una persona (la app, la tarjeta), en CUALQUIER etapa con PR — no sólo en
+ * un escalado `platform`: el #131 de easybits se quedó horas en `pr_review` con la preview atorada
+ * y nada que tocar (20-oct). Se olvida el estado y se pide YA (no al siguiente tick), para contestar
+ * cómo quedó: `pending` (construyéndose), `waiting` con su motivo (sin lugar de caja) o `failed`.
+ * Sólo toca las columnas `preview_*`: la etapa del pedido no cambia. null = la preview está apagada.
+ */
+export async function retryRunPreviewNow(run: Run): Promise<{ state: RunPreviewState; error: string | null } | null> {
+  if (!(await retryPreviews({ runId: run.id, force: true }))) return null;
+  const [row] = await dbq("SELECT * FROM gt_factory_runs WHERE id = ?", [run.id]).catch(() => []);
+  if (row?.pr_url) {
+    lastPreviewCheck.set(run.id, Date.now());
+    const P = await import("./preview.server");
+    const touched: { repo: string; number: number; sha: string }[] = [];
+    await announceRunPreview(row, P, touched).catch((e) => console.warn(`[factory] reintentar preview #${run.id}: ${(e as Error).message}`));
+    if (touched.length) {
+      const C = await import("./factory-preview-check.server");
+      for (const t of touched) await C.syncPrCheck(t.repo, t.number, t.sha).catch(() => {});
+    }
+  }
+  const pv = await runPreview(run.id);
+  return { state: pv.state, error: pv.error };
 }
 
 /** ¿El dueño apagó la preview de este repo («Sin preview»)? */

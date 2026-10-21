@@ -30,6 +30,7 @@ vi.mock("../../dbq.server", () => ({
     if (sql.startsWith("SELECT * FROM gt_factory_runs WHERE status IN")) return rows.map((r) => ({ ...r }));
     if (sql.startsWith("SELECT * FROM gt_factory_runs WHERE id = ?")) return byId(args[0]) ? [{ ...byId(args[0]) }] : [];
     if (sql.startsWith("SELECT preview_off")) return [];
+    if (sql.startsWith("SELECT status, preview_state")) return byId(args[0]) ? [{ ...byId(args[0]) }] : [];
     if (sql.startsWith("INSERT INTO gt_factory_events")) {
       events.push({ run_id: Number(args[0]), type: String(args[2]), data_json: args[3] ?? null, at: nowS() });
       return [];
@@ -121,7 +122,7 @@ vi.mock("./preview.server", () => ({
 }));
 vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("sin red"); }));
 
-import { announcePreviews, boxNeedsUp, boxPreviewNext, previewDue, stuckPreviewReason, waitingFromGsError } from "./factory-runs.server";
+import { announcePreviews, retryRunPreviewNow, boxNeedsUp, boxPreviewNext, previewDue, stuckPreviewReason, waitingFromGsError } from "./factory-runs.server";
 
 beforeEach(() => {
   rows = [];
@@ -226,6 +227,34 @@ describe("vigilante de la preview (easybits, 20-oct)", () => {
     gsImpl = async (op) => (op === "status" ? { status: { phase: "ready", sha: "abc1234", url: "https://pr-127.preview.test", error: null } } : null);
     await announcePreviews();
     expect(r.status).toBe("escalated");
+  });
+});
+
+describe("«Reintentar preview» en cualquier etapa (#131 de easybits, 20-oct)", () => {
+  const asRun = (r: Row) => ({ id: r.id, channelId: r.channel_id, status: r.status, prUrl: r.pr_url, repo: r.repo, requestedBy: r.requested_by, approvedBy: r.approved_by }) as any;
+
+  it("en revisión con la preview fallida: la pide YA, sin lugar queda `waiting` con motivo, y la etapa no cambia", async () => {
+    const r = fresh({ status: "pr_review", preview_state: "failed", preview_error: "la preview no arrancó: la caja se quedó en «building» 15 min" });
+    rows = [r];
+    gsImpl = async (op) => {
+      if (op === "up") throw Object.assign(new Error("no_slot"), { status: 409, body: { error: "no_slot", busy: [120, 121, 125] } });
+      return null;
+    };
+    const out = await retryRunPreviewNow(asRun(r));
+    expect(gsCalls.map((c) => c.op)).toContain("up");
+    expect(out).toEqual({ state: "waiting", error: "esperando lugar de caja (3 ocupados: #120, #121, #125); arranca sola al liberarse uno" });
+    expect(r.status).toBe("pr_review");
+    expect(events.some((e) => e.type === "check_blocked")).toBe(false);
+  });
+
+  it("con lugar: queda construyéndose (`pending`) y sin el error viejo", async () => {
+    const r = fresh({ status: "pr_review", preview_state: "failed", preview_error: "vieja" });
+    rows = [r];
+    gsImpl = async (op) => (op === "up" ? { phase: "installing", sha: "abc1234", url: null, error: null } : null);
+    const out = await retryRunPreviewNow(asRun(r));
+    expect(out).toEqual({ state: "pending", error: null });
+    expect(r.preview_error).toBeNull();
+    expect(r.status).toBe("pr_review");
   });
 });
 
