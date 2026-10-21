@@ -28,6 +28,7 @@ vi.mock("./turns.server", () => ({
   finishTurn: (_ns: string, id: number) => void finished.push(id),
   turnState: () => null,
   setTurnStep: (_ns: string, _id: number, p: string) => void steps.push(p),
+  touchTurn: () => {},
 }));
 vi.mock("./mentions.server", () => ({ notificarMencionesDelAgente: async (_ns: string, _c: unknown, reply: string) => (mentioned.push(reply), "") }));
 vi.mock("./apps/factory-runs.server", () => ({ afterFactoryTurn: async () => {} }));

@@ -19,6 +19,11 @@ export type LiveTurn = {
   /** Origen del tenant al abrir el turno: lo necesita el auto-retomar, que corre sin request. */
   origin?: string;
   startedAt: number;
+  /**
+   * Última señal de vida del turno (cuerpo, paso, tools). Lo lee el vigía de la fábrica: un turno
+   * que sigue en el mapa pero lleva horas mudo es un zombi, no trabajo (business #136, 21-oct).
+   */
+  lastActivityAt?: number;
   /** Corta el fetch al worker. Colgar la conexión es lo que detiene el turno de verdad. */
   controller: AbortController;
   /** Para avisar a los clientes al cambiar de estado, sin acoplar este módulo al bus. */
@@ -385,9 +390,33 @@ export function setTurnTools(_ns: string, messageId: number, tools: string[]): v
   void persistir("UPDATE gt_turns SET tools_json = ? WHERE message_id = ?", [JSON.stringify(tools), messageId]);
 }
 
+/** El turno dio señal de vida (cuerpo nuevo, delta, paso). Sólo memoria: se llama por cada frame. */
+export function touchTurn(ns: string, messageId: number): void {
+  const t = live.get(claveDe(ns, messageId));
+  if (t) t.lastActivityAt = Date.now();
+}
+
+/**
+ * Los turnos vivos de este tenant con cuántos ms llevan sin dar señal de vida. Para el vigía de
+ * pedidos colgados (`sweepStale` en wakeups.server.ts): no le basta con «está en el mapa».
+ */
+export function liveTurnActivity(ns: string): { messageId: number; channelId: number | null; parentId: number | null; idleMs: number; stopped: boolean }[] {
+  const now = Date.now();
+  return [...live.values()]
+    .filter((t) => t.ns === ns)
+    .map((t) => ({
+      messageId: t.messageId,
+      channelId: t.channelId ?? null,
+      parentId: t.parentId ?? null,
+      idleMs: now - (t.lastActivityAt ?? t.startedAt),
+      stopped: !!t.stopped,
+    }));
+}
+
 /** El paso en curso, para que la barra diga en qué va sin preguntar por el cuerpo. */
 export function setTurnStep(ns: string, messageId: number, paso: string): void {
   const t = live.get(claveDe(ns, messageId));
+  if (t) t.lastActivityAt = Date.now();
   if (!t || t.paso === paso) return;
   t.paso = paso;
   void persistir("UPDATE gt_turns SET paso = ? WHERE message_id = ?", [paso, messageId]);

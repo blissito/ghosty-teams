@@ -1501,6 +1501,7 @@ export const askAgentAs = createServerOnlyFn(async (me: SessionMe | null, data: 
       flusher.offer(mid, body);
       // El PASO en curso viaja con el estado del turno. Antes el cliente lo sacaba del
       // cuerpo preguntando cada pocos segundos; aquí ya lo tenemos delante y es gratis.
+      turns.touchTurn(ns, mid);
       const p = pasoDe(body);
       if (p) turns.setTurnStep(ns, mid, p);
     },

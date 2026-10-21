@@ -120,7 +120,10 @@ export async function applyEvent(
   const next = nextStatus(run.status, event, loopsBefore);
   if (!next) throw new Error(`el pedido #${run.id} está en «${stageLabel(run.status)}»: no se puede ${event} ahora`);
   const cols = Object.keys(patch);
-  const sets = ["status = ?", "updated_at = unixepoch()", ...cols.map((c) => `${c} = ?`)];
+  // Toda transición rearma el vigía: el aviso de «colgado» era de UN atasco. Sin esto, un pedido
+  // avisado una vez quedaba fuera del barrido para siempre aunque luego avanzara y se volviera a
+  // atorar (business #136, 21-oct: avisado a las 20:48, atorado de nuevo a las 00:49, 13 h sin nadie).
+  const sets = ["status = ?", "updated_at = unixepoch()", "stale_warned_at = NULL", ...cols.map((c) => `${c} = ?`)];
   // Guarda contra carreras (dos firmas a la vez): sólo si sigue en el estado leído.
   // Guarda también la VERSIÓN del plan: una firma de v1 que llega mientras @plan sube v2
   // pasaría el filtro de estado (plan_review → plan_review) y aprobaría un plan que ya no es.
@@ -606,9 +609,70 @@ async function notifyRun(run: Run, subs: string[], body: string, tag: string): P
 /** Minutos sin actividad para que un pedido abierto cuente como colgado (Linear: 30). */
 export const STALE_SECONDS = 30 * 60;
 
+/** Un pedido ya avisado como colgado se vuelve a retomar solo cada tanto… */
+export const STALE_RETRY_SECONDS = 2 * 3600;
+/** …con tope por día: si cuatro intentos no lo movieron, el problema no se arregla insistiendo. */
+export const MAX_AUTO_RESUMES_PER_DAY = 4;
+
 /**
- * Barrido: pedidos abiertos sin un solo evento ni mensaje en 30 min y sin turno en vuelo →
- * un aviso, UNA vez, a quien lo pidió. Lo llama el timer de wakeups.
+ * El origin con el que se despierta a un rol cuando quien encarga no trae uno (barrido, recheck de
+ * la plataforma): el último de los encargos de este pedido; si no, el de cualquier encargo del
+ * espacio (respeta dominios propios); si no, el subdominio del espacio. Sin esto el auto-retomar
+ * no encontraba origin y saltaba directo al aviso (business #137, 20-oct: todos sus encargos
+ * venían de la plataforma, con origin vacío). Nunca lanza; "" si de plano no hay.
+ */
+export async function fallbackOrigin(runId: number): Promise<string> {
+  try {
+    const [w] = await dbq(
+      "SELECT origin FROM gt_agent_wakeups WHERE key LIKE ? AND origin IS NOT NULL AND origin != '' ORDER BY rowid DESC LIMIT 1",
+      [`factory:${runId}:%`],
+    ).catch(() => []);
+    if (w?.origin) return String(w.origin);
+    const [any] = await dbq("SELECT origin FROM gt_agent_wakeups WHERE origin IS NOT NULL AND origin != '' ORDER BY rowid DESC LIMIT 1").catch(() => []);
+    if (any?.origin) return String(any.origin);
+    const { currentSlug } = await import("../tenant.server");
+    const slug = await currentSlug().catch(() => null);
+    return slug ? `https://${slug}.${process.env.TEAMS_ROOT_DOMAIN ?? "teams.ghosty.studio"}` : "";
+  } catch {
+    return "";
+  }
+}
+
+/** Despierta al rol de la etapa con el encargo de «retomar (automático)». true si quedó encolado. */
+async function autoResume(run: Run, retry: boolean): Promise<boolean> {
+  const role = ({ planning: "plan", building: "build", checking: "check" } as const)[run.status as "planning" | "building" | "checking"];
+  if (!role) return false;
+  const origin = await fallbackOrigin(run.id);
+  if (!origin) return false;
+  const ok = await handoff(
+    run,
+    role,
+    run.approvedBy ?? run.requestedBy,
+    "retomar (automático)",
+    `Este pedido lleva ${retry ? "horas" : "30 min"} sin avanzar y nadie está trabajando en él: tu turno anterior terminó sin cerrar tu paso. ` +
+      `Revisa lo último del hilo, continúa y ciérralo con tu tool factory_*.` +
+      (role === "build" ? await takeNotes(run.id) : ""),
+    origin,
+  ).catch(() => false);
+  if (!ok) return false;
+  await logEvent(run.id, "auto_resumed", null, retry ? { role, retry: true } : { role });
+  await postInThread(run, role, retry ? `🔁 Sigue sin avanzar: lo retomo otra vez.` : `🔁 Llevaba 30 min sin avanzar: retomo el pedido.`).catch(() => null);
+  void refreshRoom(run.channelId);
+  return true;
+}
+
+/**
+ * Barrido: pedidos abiertos sin un solo evento ni mensaje en 30 min y sin nadie trabajando. Lo
+ * llama el timer de wakeups.
+ *
+ * 1. La plataforma lo retoma SOLA, una vez por atasco.
+ * 2. Si tras eso sigue parado, se avisa UNA vez a quien lo pidió (`stale_warned_at`).
+ * 3. Avisado, la plataforma sigue intentando cada `STALE_RETRY_SECONDS`, hasta
+ *    `MAX_AUTO_RESUMES_PER_DAY` al día. Antes quedaba estacionado hasta que una persona lo
+ *    retomara (business #137, 20-oct: 16 h en «checking»).
+ *
+ * Entran también los que esperan caja fuera de `building`: sólo ésos los reintenta el tick de
+ * cajas, y un planning/checking en espera se quedaba colgado sin que nadie lo mirara.
  */
 export async function sweepStaleRuns(isBusy: (run: Run) => boolean): Promise<void> {
   const now = Math.floor(Date.now() / 1000);
@@ -617,42 +681,33 @@ export async function sweepStaleRuns(isBusy: (run: Run) => boolean): Promise<voi
             COALESCE((SELECT MAX(created_at) FROM gc_messages m WHERE m.parent_id = r.root_msg_id AND m.channel_id = r.channel_id), 0),
             r.updated_at) AS last_at
        FROM gt_factory_runs r
-      WHERE r.status IN ('planning','building','checking') AND r.stale_warned_at IS NULL AND (r.kind IS NULL OR r.kind != 'eval')
-        AND COALESCE(r.box_state, '') != 'waiting'`,
+      WHERE r.status IN ('planning','building','checking') AND (r.kind IS NULL OR r.kind != 'eval')
+        AND NOT (COALESCE(r.box_state, '') = 'waiting' AND r.status = 'building')`,
   ).catch(() => []);
   for (const r of rows) {
     if (now - Number(r.last_at ?? now) < STALE_SECONDS) continue;
     const run = toRun(r);
     if (isBusy(run)) continue;
+    const warnedAt = Number(r.stale_warned_at ?? 0);
+    const [lastEv] = await dbq("SELECT type FROM gt_factory_events WHERE run_id = ? ORDER BY id DESC LIMIT 1", [run.id]).catch(() => []);
+    // `waiting_person`: el rol preguntó y espera a la persona; retomarlo solo sería contestarse.
+    const waitingPerson = lastEv?.type === "waiting_person";
+    if (warnedAt) {
+      if (waitingPerson) continue;
+      const tries = await dbq(
+        "SELECT at FROM gt_factory_events WHERE run_id = ? AND type = 'auto_resumed' AND at > ? ORDER BY id DESC",
+        [run.id, now - 86400],
+      ).catch(() => []);
+      if (tries.length >= MAX_AUTO_RESUMES_PER_DAY) continue;
+      if (now - Math.max(warnedAt, Number(tries[0]?.at ?? 0)) < STALE_RETRY_SECONDS) continue;
+      await autoResume(run, true);
+      continue;
+    }
     // Primero la plataforma lo retoma SOLA, una vez por atasco: el rol terminó su turno sin
     // cerrar su paso y nadie lo iba a mover. Una persona no sabe que existe «Retomar» (MailMask,
     // 4-oct: @build parado una hora con la tarjeta diciendo «construyendo…»). Si tras eso sigue
     // parado (su último evento sigue siendo el auto-retomar), ahora sí se avisa.
-    const [lastEv] = await dbq("SELECT type FROM gt_factory_events WHERE run_id = ? ORDER BY id DESC LIMIT 1", [run.id]).catch(() => []);
-    // `waiting_person`: el rol preguntó y espera a la persona; retomarlo solo sería contestarse.
-    if (lastEv?.type !== "auto_resumed" && lastEv?.type !== "waiting_person") {
-      const role = ({ planning: "plan", building: "build", checking: "check" } as const)[run.status as "planning" | "building" | "checking"];
-      const [w] = await dbq("SELECT origin FROM gt_agent_wakeups WHERE key LIKE ? AND origin IS NOT NULL AND origin != '' ORDER BY rowid DESC LIMIT 1", [`factory:${run.id}:%`]).catch(() => []);
-      const origin = String(w?.origin ?? "");
-      if (role && origin) {
-        const ok = await handoff(
-          run,
-          role,
-          run.approvedBy ?? run.requestedBy,
-          "retomar (automático)",
-          `Este pedido lleva 30 min sin avanzar y nadie está trabajando en él: tu turno anterior terminó sin cerrar tu paso. ` +
-            `Revisa lo último del hilo, continúa y ciérralo con tu tool factory_*.` +
-            (role === "build" ? await takeNotes(run.id) : ""),
-          origin,
-        ).catch(() => false);
-        if (ok) {
-          await logEvent(run.id, "auto_resumed", null, { role });
-          await postInThread(run, role, `🔁 Llevaba 30 min sin avanzar: retomo el pedido.`).catch(() => null);
-          void refreshRoom(run.channelId);
-          continue;
-        }
-      }
-    }
+    if (lastEv?.type !== "auto_resumed" && !waitingPerson && (await autoResume(run, false))) continue;
     const marked = await dbq("UPDATE gt_factory_runs SET stale_warned_at = ? WHERE id = ? AND stale_warned_at IS NULL RETURNING id", [now, run.id]).catch(() => []);
     if (!marked.length) continue;
     await logEvent(run.id, "stale", null, { status: run.status });
@@ -895,15 +950,51 @@ export async function resumeWaitingRun(run: Run): Promise<"ready" | "waiting" | 
   void syncRunTask(fresh, "plan_review").catch(() => {});
   void import("./sprint.server").then((S) => S.onSprintRunChanged(run.id)).catch(() => {});
   void refreshRoom(run.channelId);
-  if (h) await handoff(fresh, "build", h.sub, h.why, h.text, h.origin).catch((e) => console.warn(`[factory] encargo en cola #${run.id}: ${(e as Error).message}`));
+  // El encargo guardado es de @build: si el pedido ya cambió de etapa (otra vuelta, recheck) ya
+  // no aplica, y al rol de la etapa lo mueve el vigía de colgados (ahora que ya no está en espera).
+  if (h && fresh.status === "building")
+    await handoff(fresh, "build", h.sub, h.why, h.text, h.origin).catch((e) => console.warn(`[factory] encargo en cola #${run.id}: ${(e as Error).message}`));
   return st;
 }
 
-/** Tick: los pedidos en cola por caja vuelven a pedirla, del más viejo al más nuevo. */
+/**
+ * Tick: los pedidos en cola por caja vuelven a pedirla, del más viejo al más nuevo. Todas las
+ * etapas abiertas, no sólo `building`: un pedido que pasó a planning/checking con la caja aún en
+ * espera no lo miraba nadie y se quedaba así para siempre.
+ */
 export async function retryWaitingRunBoxes(): Promise<void> {
-  const rows = await dbq("SELECT * FROM gt_factory_runs WHERE box_state = 'waiting' AND status = 'building' ORDER BY updated_at ASC LIMIT 5").catch(() => []);
+  const rows = await dbq(
+    "SELECT * FROM gt_factory_runs WHERE box_state = 'waiting' AND status IN ('planning','building','checking') ORDER BY updated_at ASC LIMIT 5",
+  ).catch(() => []);
   for (const r of rows) {
     if ((await resumeWaitingRun(toRun(r))) === "waiting") break; // el primero no cupo: los demás tampoco
+  }
+}
+
+/**
+ * ¿La caja del pedido sigue viva? gs la puede haber tirado (a mano, el barrido de cajas) y el
+ * pedido seguía diciendo `ready` con un id muerto: @build y @check trabajaban contra una caja
+ * que ya no existe (business #134, 21-oct). Si gs dice que no está, se vuelve a pedir. Si gs no
+ * contesta se deja como está. Devuelve el estado con el que queda; null = sin caja que revisar.
+ */
+export async function verifyRunBox(run: Run): Promise<"ready" | "waiting" | "off" | null> {
+  const boxId = await runBoxIdOf(run.id);
+  if (!boxId) return null;
+  try {
+    const r = await gsRunBox("status", { runId: run.id });
+    if (r.status !== 200 || !r.json?.ok) return "ready";
+    const now = r.json.boxId ? String(r.json.boxId) : null;
+    if (now === boxId) return "ready";
+    await logEvent(run.id, "box_lost", null, { box: boxId, now });
+    if (now) {
+      await dbq("UPDATE gt_factory_runs SET box_id = ? WHERE id = ?", [now, run.id]);
+      return "ready";
+    }
+    console.warn(`[factory] la caja ${boxId} del pedido #${run.id} ya no existe: se pide otra`);
+    await dbq("UPDATE gt_factory_runs SET box_id = NULL, box_state = NULL WHERE id = ?", [run.id]);
+    return await ensureRunBox(run);
+  } catch {
+    return "ready";
   }
 }
 
@@ -981,6 +1072,17 @@ export async function handoff(
   opts: { from?: string; keySuffix?: string; skills?: boolean; dest?: { factoryMode?: "advisor" } } = {},
 ): Promise<boolean> {
   const t0 = Date.now();
+  // Sin origin (barrido, recheck de la plataforma), el de los encargos anteriores o el del espacio.
+  if (!origin) origin = await fallbackOrigin(run.id);
+  // @build y @check trabajan en la caja del pedido: si gs ya la tiró, se pide otra antes del
+  // encargo. Sin lugar, el encargo de @build espera en cola igual que al aprobar (`decide`).
+  if ((to === "build" || to === "check") && !groupSuffix) {
+    const box = await verifyRunBox(run);
+    if (box === "waiting" && to === "build") {
+      await dbq("UPDATE gt_factory_runs SET box_handoff = ? WHERE id = ?", [JSON.stringify({ sub, why: cause, text, origin }), run.id]);
+      return true;
+    }
+  }
   const { resolvedAgents, agentGroupId } = await import("../../agents.server");
   const agent = (await resolvedAgents()).find((a) => a.handle === to);
   if (!agent) {

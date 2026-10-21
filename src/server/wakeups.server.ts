@@ -191,14 +191,46 @@ async function sweepStale(ns: string): Promise<void> {
   if (Date.now() - (lastStale.get(ns) ?? 0) < 5 * 60_000) return;
   lastStale.set(ns, Date.now());
   const turns = await import("./turns.server");
-  const live = turns.allLiveTurnStates(ns);
-  const pending = await dbq(`SELECT key FROM gt_agent_wakeups WHERE fired_at IS NULL`).catch(() => []);
+  const live = turns.liveTurnActivity(ns);
+  // Sólo los que salen PRONTO: uno que vence en horas (o nunca) no es trabajo en curso.
+  const pending = await dbq(
+    `SELECT key FROM gt_agent_wakeups WHERE fired_at IS NULL AND due_at <= unixepoch() + ?`,
+    [WAKEUP_SOON_S],
+  ).catch(() => []);
   const { sweepStaleRuns } = await import("./apps/factory-runs.server");
-  await sweepStaleRuns(
-    (run) =>
-      live.some((t) => t.channelId === run.channelId && t.parentId === run.rootMsgId) ||
-      pending.some((w) => String(w.key).startsWith(`factory:${run.id}:`) || String(w.key).startsWith(`handoff:${run.channelId}:${run.rootMsgId}:`)),
-  );
+  await sweepStaleRuns((run) => {
+    const b = staleRunBusy(run, live, pending.map((w) => ({ key: String(w.key) })));
+    // Un zombi (en el mapa, horas sin decir nada) se suelta: si no, el relevo que encola el
+    // auto-retomar se difiere para siempre detrás de él (`hasOwnInflight` en `sweepTenant`).
+    for (const id of b.zombies) {
+      console.warn(`[factory] turno zombi ${id} en el pedido #${run.id}: se detiene`);
+      turns.stopTurn(ns, id, null, { force: true });
+    }
+    return b.busy;
+  });
+}
+
+/** Un turno vivo sin señal de vida en este lapso no cuenta como trabajo (zombi). */
+export const LIVE_TURN_IDLE_MS = 45 * 60_000;
+/** Un despertador pendiente sólo tapa un pedido si sale en este lapso. */
+export const WAKEUP_SOON_S = 10 * 60;
+
+/**
+ * ¿Hay alguien trabajando en este pedido? Turno vivo en su hilo que dio señal de vida hace poco, o
+ * un relevo suyo por salir. Antes bastaba con estar en el mapa: un turno zombi (fetch colgado, nunca
+ * llega el `finally`) o un despertador que nunca vence tapaban el pedido para siempre y el vigía
+ * no lo veía (business #136, 21-oct). `zombies`: los turnos del hilo que ya no cuentan.
+ */
+export function staleRunBusy(
+  run: { id: number; channelId: number; rootMsgId: number },
+  live: { messageId: number; channelId: number | null; parentId: number | null; idleMs: number; stopped?: boolean }[],
+  pending: { key: string }[],
+): { busy: boolean; zombies: number[] } {
+  const mine = live.filter((t) => t.channelId === run.channelId && t.parentId === run.rootMsgId);
+  const alive = mine.filter((t) => !t.stopped && t.idleMs < LIVE_TURN_IDLE_MS);
+  const zombies = mine.filter((t) => !t.stopped && t.idleMs >= LIVE_TURN_IDLE_MS).map((t) => t.messageId);
+  const queued = pending.some((w) => w.key.startsWith(`factory:${run.id}:`) || w.key.startsWith(`handoff:${run.channelId}:${run.rootMsgId}:`));
+  return { busy: alive.length > 0 || queued, zombies: alive.length || queued ? [] : zombies };
 }
 
 async function sweepTenant(ns: string): Promise<void> {
@@ -377,11 +409,14 @@ export async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
       if (shell) publish({ t: "message:new", msg: shell });
       return mid;
     },
-    emitDelta: (mid, chunk) =>
-      publish({ t: "message:delta", id: mid, chunk, channelId: dest.channelId ?? null, parentId: dest.parentId ?? null, dmId: dest.dmId ?? null }),
+    emitDelta: (mid, chunk) => {
+      turns.touchTurn(ns, mid);
+      publish({ t: "message:delta", id: mid, chunk, channelId: dest.channelId ?? null, parentId: dest.parentId ?? null, dmId: dest.dmId ?? null });
+    },
     emitBody: (mid, body) => {
       publish({ t: "message:body", id: mid, body });
       flusher.offer(mid, body);
+      turns.touchTurn(ns, mid);
       const p = bf.stepOfBody(body);
       if (p) turns.setTurnStep(ns, mid, p);
     },
