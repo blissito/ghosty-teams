@@ -898,7 +898,7 @@ async function deliverAdvice(run: Run, reply: string, origin: string): Promise<v
 // ── Caja por pedido ──────────────────────────────────────────────────────────
 
 /** Llamada firmada a gs `internal/workspace-runbox` (mismo esquema que `gsPreview`). */
-export async function gsRunBox(op: "up" | "status" | "down", body: Record<string, unknown>): Promise<{ status: number; json: any }> {
+export async function gsRunBox(op: "up" | "status" | "down" | "slot" | "release" | "notify_admin", body: Record<string, unknown>): Promise<{ status: number; json: any }> {
   const { currentSlug } = await import("../tenant.server");
   const slug = await currentSlug();
   if (!slug) throw new Error("sin espacio");

@@ -2280,4 +2280,11 @@ export const en: Record<string, string> = {
   "terminado": "done",
   "cancelado": "cancelled",
   "Ver la tarjeta actual ↓": "See the current card ↓",
+  "va {n} en la fila": "#{n} in line",
+  "Liberar": "Free up",
+  "Agregar 1 lugar": "Add 1 slot",
+  "Avisar al admin": "Tell the admin",
+  "Avisado · otra vez el {fecha}": "Admin told · again on {fecha}",
+  "Subir de plan": "Upgrade plan",
+  "Ver planes": "See plans",
 };

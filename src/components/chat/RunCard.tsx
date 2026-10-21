@@ -17,6 +17,7 @@ import { playYourTurnSound } from "../../utils/notificationSound";
 // dos veces (en el hilo y «también en el room»).
 const turnChimed = new Set<string>();
 import { DiffBar, MergeBox } from "./ReviewPanel";
+import { RunSlot } from "./RunSlot";
 import { factoryVerdictFn, factoryMergeFn, factoryRunCardFn, factoryDecisionFn, factoryAdviseFn, factoryRetryPreviewFn, factorySetPreviewOffFn, factoryRunActionFn, factoryRunCiFn, factoryFixCiFn } from "../../server/apps/factory";
 import { prepareRepoFn } from "../../server/apps/readiness";
 import type { RunCardData } from "../../lib/ebdoc";
@@ -564,6 +565,8 @@ function RunCardBody({ card, channelId, inPanel, msgId }: { card: RunCardData; c
             ▶ {t("Correr CI")}
           </button>
         )}
+        {/* En fila por un lugar: quién ocupa, «Liberar», «Agregar 1 lugar» o «Avisar al admin» (21-oct). */}
+        {boxWaiting && !closed && <RunSlot runId={st.runId} onChanged={refresh} />}
         {stalled && !waiting && (
           <p className="mt-2 flex flex-wrap items-center gap-2">
             <button

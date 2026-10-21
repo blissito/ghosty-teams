@@ -870,6 +870,59 @@ export const factoryRetryPreviewFn = createServerFn({ method: "POST" })
     return { retried: await R.retryPreviews({ runId: run.id }) };
   });
 
+/** La tarjeta «Lugar» del pedido en fila (cortesía de lugar de gs, 21-oct): quién ocupa cada lugar
+ *  (con «Liberar» si ya sólo espera) y, según quien mira, «Agregar 1 lugar» o «Avisar al admin».
+ *  gs resuelve el rol por el correo de la persona. null si gs no tiene nota. */
+export type SlotNote = {
+  kind: "courtesy" | "queued";
+  title: string;
+  message: string;
+  occupants: { label: string; detail: string; kind: "run" | "preview"; run: number | null; pr: number | null; repo: string | null; releasable: boolean }[];
+  position: number | null;
+  ahead: number[];
+  chip: string | null;
+  suggestUpgrade: boolean;
+  plansUrl: string;
+  addSlotUrl: string;
+  canAddSlot: boolean;
+  notifyAdmin: { available: boolean; lastAt: string | null; nextAt: string | null } | null;
+};
+
+async function slotRunFor(runId: number) {
+  const me = await sessionUser();
+  if (!me) throw new Error("no autenticado");
+  const R = await import("./factory-runs.server");
+  const run = await R.getRun(Number(runId));
+  if (!run) throw new Error("no existe el pedido");
+  const db = await import("../../db.server");
+  if (!(await db.listChannels(me.sub, me.isOwner)).some((c) => c.id === run.channelId)) throw new Error("no ves ese room");
+  const { getUserEmail } = await import("../prospeccion/send.server");
+  const email = await getUserEmail(me.sub);
+  if (!email) throw new Error("tu cuenta no tiene correo");
+  return { R, run, email };
+}
+
+export const factorySlotFn = createServerFn({ method: "POST" })
+  .validator((d: { runId: number }) => d)
+  .handler(async ({ data }): Promise<SlotNote | null> => {
+    const { R, run, email } = await slotRunFor(data.runId);
+    const r = await R.gsRunBox("slot", { runId: run.id, email, status: run.status });
+    if (r.status !== 200) throw new Error(r.json?.message ?? `gs ${r.status}`);
+    return (r.json?.slotNote ?? null) as SlotNote | null;
+  });
+
+/** «Liberar» un ocupante o «Avisar al admin» desde la tarjeta «Lugar». */
+export const factorySlotActFn = createServerFn({ method: "POST" })
+  .validator((d: { runId: number; op: "release" | "notify_admin"; target?: { run?: number; pr?: number; repo?: string } }) => d)
+  .handler(async ({ data }) => {
+    const { R, run, email } = await slotRunFor(data.runId);
+    const r = await R.gsRunBox(data.op === "release" ? "release" : "notify_admin", { runId: run.id, email, ...(data.target ? { target: data.target } : {}) });
+    if (r.status !== 200) throw new Error(r.json?.message ?? `gs ${r.status}`);
+    // Liberado: la fila se reintenta ya, sin esperar el tick de cada minuto.
+    if (data.op === "release") void R.retryWaitingRunBoxes().catch(() => {});
+    return { message: String(r.json?.message ?? (data.op === "release" ? "Lugar liberado." : "Le avisamos al admin.")) };
+  });
+
 /** «Sin preview» / «Encender» desde la tarjeta: apaga o prende la preview de TODO el repo del pedido. */
 export const factorySetPreviewOffFn = createServerFn({ method: "POST" })
   .validator((d: { runId: number; off: boolean }) => d)
