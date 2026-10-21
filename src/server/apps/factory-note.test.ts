@@ -55,6 +55,7 @@ vi.mock("./factory-runs.server", () => ({
     return { ...run, ...patch, status: "building" };
   },
   postInThread: async (_r: Run, _h: string, body: string) => (posted.push(body), 1),
+  postEscalation: async (_r: Run, _k: string, _f: string, fallback: string) => void posted.push(fallback),
   postRelay: (_r: Run, d: Run) => void relays.push(d),
   handoff: async (_r: Run, to: string, _s: string, cause: string, text: string, _o?: string, _g?: string, opts?: Run) => (handoffs.push({ to, cause, text, opts }), true),
   takeNotes: async () => "",

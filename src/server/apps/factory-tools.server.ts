@@ -9,6 +9,7 @@ import type { ToolDest } from "../connectors/tool-token.server";
 import { isInstalled } from "./installed.server";
 import { MAX_LOOPS, clipReason, countsLoop, isEscalationKind, isGithubRateLimit, stageLabel, type EscalationKind } from "./factory-flow";
 import type { EnvRiskEntry } from "./factory-preview-gate";
+import { ESCALATION_TITLE } from "./factory-brief";
 
 export async function factoryTools(_sub: string, dest: ToolDest | null): Promise<ConnectorTool[]> {
   if (!(await isInstalled("factory").catch(() => false))) return [];
@@ -20,14 +21,6 @@ export async function factoryTools(_sub: string, dest: ToolDest | null): Promise
 /** Tope de `factory_message` por pedido y por rol que escribe: evita el ping-pong entre agentes. */
 const MAX_ROLE_MESSAGES = 6;
 
-// Lo que dice @check al escalar, según el tipo (easybits, 20-oct: todo decía «Necesita una decisión»).
-const ESCALATION_TITLE: Record<EscalationKind, string> = {
-  env: "Faltan variables",
-  fix: "@build lo puede arreglar, pero lo decide una persona",
-  skip: "No conviene este cambio",
-  decision: "Necesita una decisión",
-  platform: "En pausa por la plataforma",
-};
 const ESCALATION_ASK: Record<EscalationKind, string> = {
   env: "Guarda las variables (con datos de prueba) y luego «Que @check revise».",
   fix: "Decide en la tarjeta de abajo: «Que @build lo arregle» o «Rehacer el plan».",
@@ -818,11 +811,8 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
                 "espera y vuelve a pedirla con factory_preview. Si no arranca, la plataforma lo detecta sola y te avisa.",
             };
           const next = await R.applyEvent(run, "check_blocked", checked, { actor: "check", data: { findings: findings.slice(0, 4000), kind, reason } });
-          await R.postInThread(
-            next,
-            "check",
-            `⚠️ **${ESCALATION_TITLE[kind]}** — ${reason}\n\n${findings}\n\n${ESCALATION_ASK[kind]}`,
-          );
+          // decision/fix/env: el brief de gs en llano (si contesta a tiempo); si no, lo de siempre.
+          await R.postEscalation(next, kind, findings, `⚠️ **${ESCALATION_TITLE[kind]}** — ${reason}\n\n${findings}\n\n${ESCALATION_ASK[kind]}`);
           await R.postRunCard(next);
           return { ok: true, status: next.status, note: "Escalado a una persona. No lo repitas." };
         }
@@ -836,9 +826,10 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           { actor: "check", data: { findings: findings.slice(0, 4000), counted, kind: run.loops + (counted ? 1 : 0) >= MAX_LOOPS ? "decision" : kind, reason } },
         );
         if (next.status === "escalated") {
-          await R.postInThread(
+          await R.postEscalation(
             next,
-            "check",
+            "decision",
+            findings,
             `⚠️ **Necesita una decisión** — ${next.loops} vueltas entre @build y @check sin cerrar. Lo último que encontré:\n\n${findings}\n\n` +
               "Decide en la tarjeta de abajo: lee los puntos y elige «Que @build lo arregle» o «Rehacer el plan».",
           );

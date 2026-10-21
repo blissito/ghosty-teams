@@ -22,6 +22,7 @@ import {
   type RunStatus,
 } from "./factory-flow";
 import { classifyPrRisk, type PrFile } from "./factory-risk";
+import { briefMessage, parseBrief, shouldPostBrief, wantsBrief, type EscalationBrief } from "./factory-brief";
 
 export type Run = {
   id: number;
@@ -133,7 +134,9 @@ export async function applyEvent(
   );
   if (!rows[0]) throw new Error(`el pedido #${run.id} cambió mientras tanto; vuelve a mirarla`);
   const updated = toRun(rows[0]);
-  void logEvent(updated.id, event, meta.actor ?? null, { from: run.status, to: next, ...meta.data });
+  // Se espera (logEvent no lanza): gs lee el escalado de la bitácora para su brief, y antes la
+  // fila podía no estar escrita cuando se le preguntaba.
+  await logEvent(updated.id, event, meta.actor ?? null, { from: run.status, to: next, ...meta.data });
   void notifyRunTurn(updated, run.status, meta.data);
   // Pedido de un sprint que llega a PR, merge o se cancela: puede destrabar el siguiente ticket.
   if (updated.status === "done" || updated.status === "cancelled" || updated.status === "pr_review")
@@ -221,6 +224,52 @@ export async function fetchRunAdvice(runId: number): Promise<RunAdvice> {
   const j = (await res.json().catch(() => null)) as { advice?: RunAdvice; message?: string } | null;
   if (!res.ok || !j?.advice) throw new Error(j?.message ?? `gs ${res.status}`);
   return j.advice;
+}
+
+/**
+ * El brief de decisión de un escalado (gs `/api/v2/factory/why` con `brief`): qué pasa en llano, lo
+ * que la plataforma ya verificó y la acción recomendada. Tarda (modelo): 45 s de tope. null si gs no
+ * contesta, no está escalado (409), el modelo no respondió (503) o gs aún no lo sabe hacer. Nunca lanza.
+ */
+export async function fetchRunBrief(runId: number): Promise<EscalationBrief | null> {
+  try {
+    const { nativeRuntimeBase, partnerHeaders } = await import("../ghosty-runtime.server");
+    const { currentNamespace } = await import("../tenant.server");
+    const base = await nativeRuntimeBase();
+    const ns = await currentNamespace();
+    if (!base || !ns) return null;
+    const body = JSON.stringify({ runId, brief: true });
+    const res = await fetch(`${base}/api/v2/factory/why`, { method: "POST", headers: partnerHeaders(body, ns), body, signal: AbortSignal.timeout(45_000) });
+    if (!res.ok) return null;
+    return parseBrief(await res.json().catch(() => null));
+  } catch (e) {
+    console.error("[factory] brief", e);
+    return null;
+  }
+}
+
+/**
+ * El aviso de un escalado en el hilo. decision/fix/env: si gs da el brief, va ése (con los hallazgos
+ * de @check al final); si no, `fallback` tal cual. Un brief por escalado (`brief_posted` con su `at`).
+ */
+export async function postEscalation(run: Run, kind: EscalationKind, findings: string, fallback: string): Promise<void> {
+  const brief = wantsBrief(kind) ? await fetchRunBrief(run.id) : null;
+  if (brief) {
+    const rows = await dbq("SELECT data_json FROM gt_factory_events WHERE run_id = ? AND type = 'brief_posted'", [run.id]).catch(() => []);
+    const posted = rows.map((r) => {
+      try {
+        return (JSON.parse(String(r.data_json ?? "{}")) as { at?: string | null }).at ?? null;
+      } catch {
+        return null;
+      }
+    });
+    // Ya se publicó el de este escalado: no se repite, ni el brief ni el aviso viejo.
+    if (!shouldPostBrief(brief.at, posted)) return;
+    await logEvent(run.id, "brief_posted", "plataforma", { at: brief.at, action: brief.recommend.action });
+    await postInThread(run, "check", briefMessage(brief, findings, kind));
+    return;
+  }
+  await postInThread(run, "check", fallback);
 }
 
 /**
