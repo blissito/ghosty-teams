@@ -46,7 +46,8 @@ export function AdsAppPanel() {
             )}
           </div>
           <p className="mt-1 text-sm text-muted">
-            {t("Campañas de Meta que llevan a Messenger. @ads las propone con vista previa y segmentación real; tú las creas, prendes y pausas desde su tarjeta. Mide el costo por lead calificado.")}
+            {t("Campañas de Meta que llevan a Messenger. @ads las propone con vista previa y segmentación real; tú las creas, prendes y pausas desde su tarjeta. Mide el costo por lead calificado.")}{" "}
+            {t("También ve tus campañas de Google Ads.")}
           </p>
         </div>
       </div>
@@ -309,6 +310,12 @@ function Installed({ status, onChange }: { status: AdsAppStatus; onChange: () =>
   );
 }
 
+/** Usuarios de la cuenta en Google Ads; con el ID ya escrito abre directo en esa cuenta. */
+function googleUsersUrl(cid: string) {
+  const d = cid.replace(/\D/g, "");
+  return `https://ads.google.com/aw/accountaccess/users${d.length === 10 ? `?__e=${d}` : ""}`;
+}
+
 function GoogleCard({ status, onChange }: { status: AdsAppStatus; onChange: () => void }) {
   const t = useT();
   const g = status.google;
@@ -339,36 +346,47 @@ function GoogleCard({ status, onChange }: { status: AdsAppStatus; onChange: () =
         </p>
       ) : (
         <>
-          <p className="mt-1 text-muted">
-            {g.link
-              ? t("Todavía no nos da acceso. En Google Ads → Administrador → Acceso y seguridad, agrega este correo como usuario con acceso Estándar:")
-              : t("Para ver tus campañas de Google, escribe el ID de tu cuenta y agrega este correo como usuario con acceso Estándar (Administrador → Acceso y seguridad):")}
-          </p>
-          {g.serviceAccount && (
-            <button
-              type="button"
-              onClick={() => {
-                void navigator.clipboard?.writeText(g.serviceAccount!).then(() => setCopied(true));
-              }}
-              className="mt-1.5 inline-flex max-w-full items-center gap-1.5 rounded-md bg-surface-2 px-2 py-1 font-mono text-[11px] text-ink hover:bg-surface-3"
-            >
-              <span className="truncate">{g.serviceAccount}</span>
-              <Copy className="size-3 shrink-0" />
-              {copied && <span className="font-sans text-emerald-600">{t("Copiado")}</span>}
-            </button>
-          )}
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <input value={cid} onChange={(e) => setCid(e.target.value)} placeholder="123-456-7890" inputMode="numeric" aria-label={t("ID de cliente de Google Ads")} className={`${field} mt-0 w-40`} />
-            <button
-              type="button"
-              disabled={!!busy || cid.replace(/\D/g, "").length !== 10}
-              onClick={() => run("glink", () => adsGoogleLinkFn({ data: { customerId: cid } }))}
-              className="inline-flex items-center gap-1 rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50"
-            >
-              {busy === "glink" && <Loader2 className="size-3.5 animate-spin" />}
-              {g.link ? t("Ya lo agregué") : t("Vincular")}
-            </button>
-          </div>
+          {g.link && <p className="mt-1 text-xs font-semibold text-amber-700 dark:text-amber-400">{t("Todavía no nos da acceso: revisa el paso 2.")}</p>}
+          <ol className="mt-1.5 space-y-2 text-muted">
+            <li>
+              1.{" "}
+              <a href={googleUsersUrl(cid)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-semibold text-brand hover:underline">
+                {t("Abre Google Ads → Usuarios")} <ExternalLink className="size-3" />
+              </a>
+              <span className="block text-xs">{t("Ruta: Administrador (engrane) → Acceso y seguridad → Usuarios → botón +")}</span>
+            </li>
+            <li>
+              2. {t("Agrega este correo con acceso «Estándar» y guarda:")}
+              {g.serviceAccount && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    void navigator.clipboard?.writeText(g.serviceAccount!).then(() => setCopied(true));
+                  }}
+                  className="mt-1 flex max-w-full items-center gap-1.5 rounded-md bg-surface-2 px-2 py-1 font-mono text-[11px] text-ink hover:bg-surface-3"
+                >
+                  <span className="truncate">{g.serviceAccount}</span>
+                  <Copy className="size-3 shrink-0" />
+                  {copied && <span className="font-sans text-emerald-600">{t("Copiado")}</span>}
+                </button>
+              )}
+            </li>
+            <li>
+              3. {t("Escribe el ID de tu cuenta (arriba a la derecha en Google Ads, 123-456-7890):")}
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <input value={cid} onChange={(e) => setCid(e.target.value)} placeholder="123-456-7890" inputMode="numeric" aria-label={t("ID de cliente de Google Ads")} className={`${field} mt-0 w-40`} />
+                <button
+                  type="button"
+                  disabled={!!busy || cid.replace(/\D/g, "").length !== 10}
+                  onClick={() => run("glink", () => adsGoogleLinkFn({ data: { customerId: cid } }))}
+                  className="inline-flex items-center gap-1 rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50"
+                >
+                  {busy === "glink" && <Loader2 className="size-3.5 animate-spin" />}
+                  {g.link ? t("Ya lo agregué") : t("Vincular")}
+                </button>
+              </div>
+            </li>
+          </ol>
         </>
       )}
       {error && <p className="mt-1 text-xs text-danger">{error}</p>}
