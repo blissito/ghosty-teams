@@ -6,9 +6,10 @@
 import { useEffect, useState } from "react";
 import { ExternalLink, Loader2, Megaphone } from "lucide-react";
 import { useLocale, useT } from "../i18n";
-import { adsConnectUrlFn, adsGoogleAccountsFn, adsGoogleConnectUrlFn, adsGoogleSelectFn, adsGoogleUnlinkFn, adsSelectFn, adsStatusFn, installAdsFn, setAdsAgentFn, uninstallAdsFn, type AdsAppStatus, type GoogleAccount } from "../server/apps/ads";
+import { adsConnectUrlFn, adsGoogleConnectUrlFn, adsGoogleUnlinkFn, adsSelectFn, adsStatusFn, installAdsFn, setAdsAgentFn, uninstallAdsFn, type AdsAppStatus } from "../server/apps/ads";
 import { listChannelsFn } from "../server/chat";
 import ConfirmModal from "./ConfirmModal";
+import { GoogleAccountPicker } from "./GoogleAccountPicker";
 import { tokenWarning } from "../server/apps/ads-proposal";
 
 type Room = { id: number; slug: string };
@@ -317,18 +318,7 @@ function GoogleCard({ status, onChange }: { status: AdsAppStatus; onChange: () =
   const g = status.google;
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [accounts, setAccounts] = useState<GoogleAccount[] | null>(null);
-  const [pick, setPick] = useState("");
   const choosing = g.link?.status === "choose";
-  useEffect(() => {
-    if (!choosing) return;
-    adsGoogleAccountsFn()
-      .then((a) => {
-        setAccounts(a);
-        setPick(a.find((x) => !x.taken)?.customerId ?? "");
-      })
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
-  }, [choosing]);
   const run = async (key: string, fn: () => Promise<unknown>) => {
     setBusy(key);
     setError(null);
@@ -341,19 +331,15 @@ function GoogleCard({ status, onChange }: { status: AdsAppStatus; onChange: () =
       setBusy(null);
     }
   };
-  // La pestaña se abre ANTES del await: si no, el navegador la bloquea como popup.
+  // En esta misma pestaña: Google regresa a /ads (confeti y, si hay varias, elegir la cuenta ahí).
   const connect = async () => {
-    const w = window.open("about:blank", "_blank");
     setBusy("gconnect");
     setError(null);
     try {
       const { url } = await adsGoogleConnectUrlFn({ data: { locale } });
-      if (w) w.location.href = url;
-      else window.location.href = url;
+      window.location.href = url;
     } catch (e) {
-      w?.close();
       setError(e instanceof Error ? e.message : String(e));
-    } finally {
       setBusy(null);
     }
   };
@@ -371,39 +357,16 @@ function GoogleCard({ status, onChange }: { status: AdsAppStatus; onChange: () =
       {linked ? (
         <p className="mt-1 text-ink">
           ✓ {g.link!.oauthEmail ? <span className="text-muted">{g.link!.oauthEmail} · </span> : null}
-          <b>{g.link!.name ?? g.link!.customerId}</b> <span className="text-muted">· {g.link!.customerId}{g.link!.currency ? ` · ${g.link!.currency}` : ""}</span>
+          <b>{g.link!.customerId}</b>
+          {g.link!.name && g.link!.name !== g.link!.customerId ? <span className="text-muted"> · {g.link!.name}</span> : null}
+          {g.link!.currency ? <span className="text-muted"> · {g.link!.currency}</span> : null}
         </p>
       ) : choosing ? (
         <div className="mt-1">
           <p className="text-muted">
-            ✓ {g.link!.oauthEmail ?? t("Google conectado")} · {t("elige la cuenta con tus campañas:")}
+            ✓ {g.link!.oauthEmail ?? t("Google conectado")}
           </p>
-          {accounts === null ? (
-            !error && <Loader2 className="mt-2 size-4 animate-spin text-muted" />
-          ) : accounts.length === 0 ? (
-            <p className="mt-1 text-xs font-semibold text-amber-700 dark:text-amber-400">{t("Ese Google no tiene cuentas de Google Ads. Reconecta con otra cuenta de Google.")}</p>
-          ) : (
-            <div className="mt-1.5 flex flex-wrap items-center gap-2">
-              <select value={pick} onChange={(e) => setPick(e.target.value)} aria-label={t("Cuenta de Google Ads")} className={`${field} mt-0 w-auto max-w-full`}>
-                {accounts.map((a) => (
-                  <option key={a.customerId} value={a.customerId} disabled={a.taken}>
-                    {a.name} · {a.customerId.replace(/(\d{3})(\d{3})(\d{4})/, "$1-$2-$3")}
-                    {a.currency ? ` · ${a.currency}` : ""}
-                    {a.taken ? ` (${t("en otro espacio")})` : ""}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                disabled={!!busy || !pick}
-                onClick={() => run("gselect", () => adsGoogleSelectFn({ data: { customerId: pick } }))}
-                className="inline-flex items-center gap-1 rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50"
-              >
-                {busy === "gselect" && <Loader2 className="size-3.5 animate-spin" />}
-                {t("Usar esta cuenta")}
-              </button>
-            </div>
-          )}
+          <GoogleAccountPicker onPicked={onChange} />
         </div>
       ) : (
         <div className="mt-1.5">

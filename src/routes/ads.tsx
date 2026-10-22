@@ -9,14 +9,16 @@
 // Misma forma que /factory: el loader sólo resuelve auth; los datos llegan por server fns.
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { ArrowLeft, Loader2, Megaphone } from "lucide-react";
-import { useT } from "../i18n";
+import { ArrowLeft, ExternalLink, Loader2, Megaphone } from "lucide-react";
+import { useLocale, useT } from "../i18n";
 import { me } from "../server/auth";
-import { adsGoogleSetStatusFn, adsImportableFn, adsImportFn, adsOverviewFn, adsRunReportFn, adsScheduleFn, setAdsScheduleFn } from "../server/apps/ads";
+import { adsGoogleConnectUrlFn, adsGoogleSetStatusFn, adsImportableFn, adsImportFn, adsOverviewFn, adsRunReportFn, adsScheduleFn, setAdsScheduleFn } from "../server/apps/ads";
 import { adsStatusLabel } from "../server/apps/ads-flow";
 import { mxn, tokenWarning } from "../server/apps/ads-proposal";
 import { Toggle } from "../components/Toggle";
 import ConfirmModal from "../components/ConfirmModal";
+import { FxOverlay } from "../components/chat/FxOverlay";
+import { GoogleAccountPicker } from "../components/GoogleAccountPicker";
 
 type Overview = Awaited<ReturnType<typeof adsOverviewFn>>;
 type Importable = Awaited<ReturnType<typeof adsImportableFn>>;
@@ -43,8 +45,18 @@ function AdsPage() {
     adsOverviewFn()
       .then(setData)
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+  // De regreso del permiso de Google (`?google=connected`): confeti una vez y se limpia la URL
+  // para que recargar no vuelva a festejar.
+  const [googleBack, setGoogleBack] = useState<string | null>(null);
   useEffect(() => {
     void load();
+    const u = new URL(window.location.href);
+    const g = u.searchParams.get("google");
+    if (g) {
+      setGoogleBack(g);
+      u.searchParams.delete("google");
+      window.history.replaceState(window.history.state, "", u.pathname + u.search + u.hash);
+    }
   }, []);
 
   const spend = data?.campaigns.reduce((a, c) => a + (c.spend ?? 0), 0) ?? 0;
@@ -69,6 +81,12 @@ function AdsPage() {
         </div>
       </div>
 
+      {googleBack === "connected" && <FxOverlay messageId={-1} fx="confetti" />}
+      {googleBack && googleBack !== "connected" && (
+        <p className="mt-4 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
+          {googleBack === "cancelled" ? t("Cancelaste el permiso de Google: Google Ads no se conectó.") : t("No se pudo conectar Google Ads. Inténtalo de nuevo.")}
+        </p>
+      )}
       {error && <p className="mt-4 text-sm text-red-600 dark:text-red-400">{error}</p>}
       {!data && !error && <div className="mt-6 h-24 animate-pulse rounded-xl bg-surface-2 motion-reduce:animate-none" />}
       {data && !data.installed && (
@@ -151,13 +169,11 @@ function AdsPage() {
             </ul>
           </section>
 
-          {data.google && (data.google.status.link || data.google.error) && <GoogleSection g={data.google} isOwner={data.isOwner} onChange={() => void load()} />}
+          {data.google && (data.google.status.link || data.google.error) && <GoogleSection g={data.google} isOwner={data.isOwner} justConnected={googleBack === "connected"} onChange={load} />}
           {data.isOwner && data.google?.status.configured && !data.google.status.link && (
             <section className="mt-8">
               <h2 className="text-sm font-semibold text-ink">{t("Google Ads")}</h2>
-              <p className="mt-2 rounded-xl border border-border bg-surface-2 px-3 py-2 text-xs text-muted">
-                {t("Sin conectar. Conecta tu Google Ads en Ajustes → Apps → Ghosty Ads para ver aquí sus campañas, gasto y conversiones.")}
-              </p>
+              <ConnectGoogle />
             </section>
           )}
 
@@ -317,8 +333,41 @@ const G_STATUS: Record<string, [string, string]> = {
   SUSPENDED: ["Suspendida", "error"],
 };
 
+/** «Conectar Google Ads» aquí mismo: va al permiso de Google en esta pestaña y regresa a /ads. */
+function ConnectGoogle() {
+  const t = useT();
+  const locale = useLocale();
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  return (
+    <div className="mt-2 rounded-xl border border-border bg-surface-2 px-3 py-3">
+      <p className="text-xs text-muted">{t("Conéctalo para ver aquí sus campañas, gasto y conversiones. Entra con el Google que administra tus campañas; basta con acceso Estándar.")}</p>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          setErr("");
+          try {
+            const { url } = await adsGoogleConnectUrlFn({ data: { locale } });
+            window.location.href = url;
+          } catch (e) {
+            setErr(e instanceof Error ? e.message : String(e));
+            setBusy(false);
+          }
+        }}
+        className="mt-2 inline-flex items-center gap-1 rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50"
+      >
+        {busy ? <Loader2 className="size-3.5 animate-spin" /> : <ExternalLink className="size-3.5" />}
+        {t("Conectar Google Ads")}
+      </button>
+      {err && <p className="mt-1.5 text-xs text-red-600 dark:text-red-400">{err}</p>}
+    </div>
+  );
+}
+
 /** Campañas de Google Ads de la cuenta vinculada (30 días). */
-function GoogleSection({ g, isOwner, onChange }: { g: NonNullable<Overview["google"]>; isOwner: boolean; onChange: () => void }) {
+function GoogleSection({ g, isOwner, justConnected, onChange }: { g: NonNullable<Overview["google"]>; isOwner: boolean; justConnected?: boolean; onChange: () => Promise<unknown> }) {
   const t = useT();
   const [ask, setAsk] = useState<{ id: string; name: string; to: "ACTIVE" | "PAUSED" } | null>(null);
   const [err, setErr] = useState("");
@@ -331,7 +380,12 @@ function GoogleSection({ g, isOwner, onChange }: { g: NonNullable<Overview["goog
       <h2 className="text-sm font-semibold text-ink">
         {t("Google Ads")} {g.status.link?.name ? <span className="font-normal text-muted">· {g.status.link.name}</span> : null}
       </h2>
-      {!linked ? (
+      {justConnected && linked && (
+        <p className="mt-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400">✓ {t("Google Ads conectado.")}</p>
+      )}
+      {!linked && isOwner && g.status.link?.status === "choose" ? (
+        <GoogleAccountPicker email={g.status.link.oauthEmail} onPicked={onChange} />
+      ) : !linked ? (
         <p className="mt-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
           {g.error ?? t("La cuenta de Google Ads todavía no nos da acceso.")} {isOwner ? t("Termínalo en Ajustes → Apps → Ghosty Ads.") : t("Pídeselo al dueño del espacio.")}
         </p>
@@ -383,7 +437,7 @@ function GoogleSection({ g, isOwner, onChange }: { g: NonNullable<Overview["goog
             setErr("");
             try {
               await adsGoogleSetStatusFn({ data: { campaignId: ask.id, status: ask.to } });
-              onChange();
+              await onChange();
             } catch (e) {
               setErr(e instanceof Error ? e.message : String(e));
             }
