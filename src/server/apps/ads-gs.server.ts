@@ -115,7 +115,7 @@ export async function metaStatus(): Promise<MetaStatus & { error?: string }> {
 
 export type GoogleLink = { customerId: string; name: string | null; currency: string | null; status: "pending" | "linked"; via: "direct" | "mcc" };
 export type GoogleStatus = { configured: boolean; serviceAccount: string | null; mcc: string | null; link: GoogleLink | null };
-export type GoogleCampaign = { id: string; name: string; status: string; configured: string | null; reasons: string[]; channel: string | null; dailyBudget: number | null; endDate: string | null };
+export type GoogleCampaign = { id: string; name: string; status: string; configured: string | null; reasons: string[]; channel: string | null; dailyBudget: number | null };
 export type GoogleInsights = { spend: number; impressions: number; clicks: number; conversions: number; conversionsValue: number };
 
 type GoogleOps = {
