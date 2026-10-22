@@ -266,11 +266,13 @@ export function GoogleProposalView({
                 {t("Lleva a")}:
                 <EditableText value={p.finalUrl} inline editable={editable} label={t("Página de destino")} className="break-all text-ink" onSave={(v) => save({ finalUrl: v })} />
               </div>
+              {(editable || p.path1 || p.path2) && (
               <div className="flex flex-wrap items-baseline gap-1">
                 {t("Ruta visible")}: /
                 <EditableText value={p.path1 ?? ""} inline editable={editable} label={t("Ruta visible 1")} placeholder="ruta1" className="text-ink" onSave={(v) => save({ path1: v })} />/
                 <EditableText value={p.path2 ?? ""} inline editable={editable} label={t("Ruta visible 2")} placeholder="ruta2" className="text-ink" onSave={(v) => save({ path2: v })} />
               </div>
+              )}
             </div>
           </div>
 
