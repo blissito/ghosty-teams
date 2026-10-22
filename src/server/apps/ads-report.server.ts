@@ -16,7 +16,21 @@ const TICK_MS = 60_000;
 export type AdsSchedule = { enabled: boolean; hours: number[]; tz: string; nextAt: number | null };
 
 export type AdsReportItem = { id: number; title: string; status: string; funnel: Funnel; threadId: number | null };
-export type AdsReportData = { at: number; items: AdsReportItem[] };
+/** Google Ads: las campañas activas de la cuenta vinculada con sus números de 30 días. */
+export type AdsReportGoogle = { account: string | null; currency: string | null; items: { id: string; name: string; spend: number; clicks: number; conversions: number }[] };
+export type AdsReportData = { at: number; items: AdsReportItem[]; google?: AdsReportGoogle | null };
+
+async function googleForReport(): Promise<AdsReportGoogle | null> {
+  const { googleAds, googleStatus } = await import("./ads-gs.server");
+  const st = await googleStatus();
+  if (st.link?.status !== "linked") return null;
+  const [cs, ins] = await Promise.all([googleAds("campaigns"), googleAds("insights", { days: 30 })]);
+  if (!cs.ok || !ins.ok) return null;
+  const items = (cs.items ?? [])
+    .filter((c) => c.status === "ACTIVE")
+    .map((c) => ({ id: c.id, name: c.name, spend: ins.byCampaign[c.id]?.spend ?? 0, clicks: ins.byCampaign[c.id]?.clicks ?? 0, conversions: Math.round((ins.byCampaign[c.id]?.conversions ?? 0) * 10) / 10 }));
+  return items.length ? { account: st.link.name, currency: st.link.currency, items } : null;
+}
 
 export async function getSchedule(): Promise<AdsSchedule> {
   const r = (await dbq("SELECT * FROM gt_ads_schedule WHERE id = 1", []).catch(() => []))[0];
@@ -150,28 +164,29 @@ export async function runReport(ns: string, opts: { force: boolean }): Promise<{
     }
     if (c.status === "active") campaigns.push(c);
   }
-  if (!campaigns.length) return { posted: false, reason: "no hay campañas activas" };
+  const google = await googleForReport().catch(() => null);
+  if (!campaigns.length && !google) return { posted: false, reason: "no hay campañas activas" };
   // De paso, la revisión de Meta de las que corren (un rechazo sale en su hilo una sola vez).
   for (const c of campaigns) await C.syncReview(c, ns).catch(() => {});
-  const { byId, error } = await C.funnels(campaigns);
-  if (error && !byId.size) return { posted: false, reason: error };
+  const { byId, error } = campaigns.length ? await C.funnels(campaigns) : { byId: new Map(), error: null };
+  if (error && !byId.size && !google) return { posted: false, reason: error };
   const items: AdsReportItem[] = campaigns
     .filter((c) => byId.has(c.id))
     .map((c) => ({ id: c.id, title: c.title, status: c.status, funnel: byId.get(c.id)!, threadId: c.rootMsgId }));
-  const digest = reportDigest(items);
+  const digest = reportDigest(items) + (google ? JSON.stringify(google.items.map((g) => [g.id, Math.round(g.spend), g.clicks, g.conversions])) : "");
   const prev = (await dbq("SELECT last_digest FROM gt_ads_schedule WHERE id = 1", []).catch(() => []))[0]?.last_digest ?? null;
   if (!opts.force && prev === digest) return { posted: false, reason: "nada cambió desde el último reporte" };
-  const data: AdsReportData = { at: Math.floor(now / 1000), items };
+  const data: AdsReportData = { at: Math.floor(now / 1000), items, google };
   const saved = await dbq("INSERT INTO gt_ads_reports (channel_id, data_json) VALUES (?, ?) RETURNING id", [cfg.roomId, JSON.stringify(data)]);
   const reportId = Number(saved[0]?.id);
   const msgId = await C.postAsAds(cfg.roomId, null, "```gt-ads-report\n" + JSON.stringify({ reportId }) + "\n```");
   if (!msgId) return { posted: false, reason: "no pude publicar en el room" };
   await dbq("UPDATE gt_ads_schedule SET last_digest = ? WHERE id = 1", [digest]).catch(() => {});
-  await notifyReport(ns, cfg.roomId, campaigns, items).catch(() => {});
+  await notifyReport(ns, cfg.roomId, campaigns, items, google).catch(() => {});
   return { posted: true };
 }
 
-async function notifyReport(ns: string, roomId: number, campaigns: { requestedBy: string; approvedBy: string | null }[], items: AdsReportItem[]) {
+async function notifyReport(ns: string, roomId: number, campaigns: { requestedBy: string; approvedBy: string | null }[], items: AdsReportItem[], google: AdsReportGoogle | null) {
   const owner = (await dbq("SELECT owner_sub FROM gt_ads_schedule WHERE id = 1", []).catch(() => []))[0]?.owner_sub;
   const recipients = [...new Set([owner, ...campaigns.flatMap((c) => [c.requestedBy, c.approvedBy])].filter(Boolean) as string[])];
   if (!recipients.length) return;
@@ -180,13 +195,17 @@ async function notifyReport(ns: string, roomId: number, campaigns: { requestedBy
   const { mxn } = await import("./ads-proposal");
   const spend = items.reduce((a, i) => a + i.funnel.spend, 0);
   const qualified = items.reduce((a, i) => a + i.funnel.qualified, 0);
+  const n = items.length + (google?.items.length ?? 0);
+  const gSpend = google?.items.reduce((a, i) => a + i.spend, 0) ?? 0;
   const { notify } = await import("../notify.server");
   await notify(
     {
       kind: "ads",
       recipients,
-      title: `Ghosty Ads · ${items.length} ${items.length === 1 ? "campaña activa" : "campañas activas"}`,
-      body: `Gasto ${mxn(spend)} · ${qualified} ${qualified === 1 ? "lead calificado" : "leads calificados"}${qualified ? ` · ${mxn(Math.round((spend / qualified) * 100) / 100)} por calificado` : ""}`,
+      title: `Ghosty Ads · ${n} ${n === 1 ? "campaña activa" : "campañas activas"}`,
+      body:
+        (items.length ? `Gasto ${mxn(spend)} · ${qualified} ${qualified === 1 ? "lead calificado" : "leads calificados"}${qualified ? ` · ${mxn(Math.round((spend / qualified) * 100) / 100)} por calificado` : ""}` : "") +
+        (google ? `${items.length ? " · " : ""}Google: ${mxn(Math.round(gSpend * 100) / 100)} en 30 días` : ""),
       url: room ? `/c/${room.slug}` : "/ads",
       tag: `ads-report:${Math.floor(Date.now() / 1000)}`,
     },

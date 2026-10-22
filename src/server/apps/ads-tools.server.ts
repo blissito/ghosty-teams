@@ -4,6 +4,7 @@
 //
 // NINGUNA gasta dinero. Leen (cuenta, intereses, alcance, números) y la única que escribe
 // deja una PROPUESTA: la plataforma publica su tarjeta y una persona decide con los botones.
+// Google Ads sólo se LEE (`ads_google_*`); pausar o reanudar lo hace el dueño en /ads.
 import { notaNombres, type ConnectorTool, type ToolChannel } from "../connectors/impl";
 import type { ToolDest } from "../connectors/tool-token.server";
 import { isInstalled } from "./installed.server";
@@ -48,6 +49,17 @@ function guarded(t: ConnectorTool): ConnectorTool {
       }
     },
   };
+}
+
+/**
+ * Las campañas de Google son de la cuenta, no de un room: sólo se leen desde el room de la app
+ * (el que eligió el dueño al instalar), igual que /ads las enseña a quien ve ese room.
+ */
+async function googleAllowed(dest: ToolDest | null): Promise<string | null> {
+  const { getAppConfig } = await import("./installed.server");
+  const cfg = await getAppConfig<{ roomId?: number }>("ads").catch(() => null);
+  if (dest?.channelId && cfg?.roomId && dest.channelId !== cfg.roomId) return "Las campañas de Google Ads sólo se consultan desde el room de Ghosty Ads.";
+  return null;
 }
 
 /** Hilo del turno: la raíz si estamos en uno; si no, el mensaje que invocó. */
@@ -548,6 +560,44 @@ function tools(dest: ToolDest | null): ConnectorTool[] {
         };
       },
     },
+    {
+      name: "ads_google_campaigns",
+      description:
+        "Ghosty Ads: las campañas de Google Ads de la cuenta vinculada (no viven en un room ni tienen #N): id, nombre, estado " +
+        "(ACTIVE, PAUSED, ENDED, NOT_ELIGIBLE, SUSPENDED), presupuesto diario y motivos de Google. Sólo lectura: crearlas se hace en Google Ads " +
+        "y pausarlas o reanudarlas lo hace el dueño en /ads. Si no hay cuenta vinculada, dile que la vincule en Ajustes → Apps → Ghosty Ads.",
+      inputSchema: { type: "object", properties: {} },
+      handler: async () => {
+        const no = await googleAllowed(dest);
+        if (no) return { ok: false, error: no };
+        const { googleAds, googleStatus } = await import("./ads-gs.server");
+        const st = await googleStatus();
+        if (st.link?.status !== "linked") return { linked: false, hint: "Google Ads no está vinculado: el dueño lo hace en Ajustes → Apps → Ghosty Ads.", ...(st.error ? { error: st.error } : {}) };
+        const r = await googleAds("campaigns");
+        if (!r.ok) return r;
+        return { account: st.link.name, customerId: st.link.customerId, currency: st.link.currency, items: r.items };
+      },
+    },
+    {
+      name: "ads_google_insights",
+      description:
+        "Ghosty Ads: números de Google Ads por campaña en los últimos N días (gasto, impresiones, clics, conversiones y su valor). " +
+        "Sin `campaign_ids`, todas las campañas de la cuenta.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          campaign_ids: { type: "array", items: { type: "string" }, description: "Ids de ads_google_campaigns (opcional)" },
+          days: { type: "number", description: "Ventana en días (default 30, máx. 365)" },
+        },
+      },
+      handler: async (_sub, a) => {
+        const no = await googleAllowed(dest);
+        if (no) return { ok: false, error: no };
+        const { googleAds } = await import("./ads-gs.server");
+        const ids = Array.isArray(a.campaign_ids) ? a.campaign_ids.map(String) : [];
+        return googleAds("insights", { campaignIds: ids, days: Number(a.days) || 30 });
+      },
+    },
   ];
 }
 
@@ -592,7 +642,7 @@ export async function adsContext(dest: ToolDest | null, toolChannel: ToolChannel
     }
   }
   parts.push(
-    "Tus tools (ads_account_info, ads_proposal_get, ads_campaign_change_propose, ads_campaign_show, ads_pending_show, ads_review_status, ads_interest_search, ads_location_search, ads_delivery_estimate, ads_proposal_submit, ads_campaigns_list, ads_insights) ya están disponibles en este turno: LLÁMALAS; ninguna gasta." +
+    "Tus tools (ads_account_info, ads_proposal_get, ads_campaign_change_propose, ads_campaign_show, ads_pending_show, ads_review_status, ads_interest_search, ads_location_search, ads_delivery_estimate, ads_proposal_submit, ads_campaigns_list, ads_insights, ads_google_campaigns, ads_google_insights) ya están disponibles en este turno: LLÁMALAS; ninguna gasta." +
       notaNombres(toolChannel) +
       "]",
   );

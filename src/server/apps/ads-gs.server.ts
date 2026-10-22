@@ -108,3 +108,57 @@ export async function metaStatus(): Promise<MetaStatus & { error?: string }> {
   if (!r.ok) return { connected: false, expiresAt: null, daysLeft: null, adAccount: null, page: null, error: r.error };
   return { connected: !!r.connected, expiresAt: r.expiresAt ?? null, daysLeft: r.daysLeft ?? null, adAccount: r.adAccount ?? null, page: r.page ?? null };
 }
+
+// ── Google Ads (`POST /api/v2/partners/google-ads`) ─────────────────────────────────────────
+// Sin OAuth del cliente: gs lee con su service account, a la que el cliente agrega como usuario
+// Estándar en su cuenta de Google Ads (o vincula a la MCC de Ghosty). Mismo «nunca lanza».
+
+export type GoogleLink = { customerId: string; name: string | null; currency: string | null; status: "pending" | "linked"; via: "direct" | "mcc" };
+export type GoogleStatus = { configured: boolean; serviceAccount: string | null; mcc: string | null; link: GoogleLink | null };
+export type GoogleCampaign = { id: string; name: string; status: string; configured: string | null; reasons: string[]; channel: string | null; dailyBudget: number | null; endDate: string | null };
+export type GoogleInsights = { spend: number; impressions: number; clicks: number; conversions: number; conversionsValue: number };
+
+type GoogleOps = {
+  status: [Record<string, never>, GoogleStatus];
+  link: [{ customerId: string; by: string }, GoogleStatus];
+  unlink: [{ by: string }, Record<string, never>];
+  campaigns: [Record<string, never>, { items: GoogleCampaign[] }];
+  insights: [{ campaignIds?: string[]; days?: number }, { desde: string; hasta: string; currency: string | null; byCampaign: Record<string, GoogleInsights> }];
+  set_status: [{ campaignId: string; status: "ACTIVE" | "PAUSED"; by: string }, Record<string, never>];
+};
+export type GoogleAdsOp = keyof GoogleOps;
+
+export async function googleAds<K extends GoogleAdsOp>(op: K, args: GoogleOps[K][0] = {} as GoogleOps[K][0]): Promise<GsResult<GoogleOps[K][1]>> {
+  const t0 = Date.now();
+  let r: GsResult<GoogleOps[K][1]>;
+  try {
+    const { nativeRuntimeBase, partnerHeaders } = await import("../ghosty-runtime.server");
+    const { currentNamespace } = await import("../tenant.server");
+    const base = await nativeRuntimeBase();
+    if (!base) return { ok: false, error: "este espacio no está conectado a Ghosty Studio" };
+    const body = JSON.stringify({ op, ...args });
+    const res = await fetch(`${base}/api/v2/partners/google-ads`, {
+      method: "POST",
+      headers: partnerHeaders(body, await currentNamespace()),
+      body,
+      signal: AbortSignal.timeout(op === "set_status" ? 60_000 : 30_000),
+    });
+    const j = (await res.json().catch(() => null)) as ({ ok?: boolean; error?: string } & Record<string, unknown>) | null;
+    if (res.status === 404 && !j?.error) r = { ok: false, error: "Ghosty Studio todavía no tiene la conexión con Google Ads" };
+    else if (!j) r = { ok: false, error: `Ghosty Studio no contestó bien (${res.status})` };
+    else if (!res.ok || j.ok === false) r = { ok: false, error: String(j.error ?? `error ${res.status}`) };
+    else r = { ...(j as object), ok: true } as GsResult<GoogleOps[K][1]>;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    r = { ok: false, error: /timeout|aborted/i.test(msg) ? "Google Ads tardó demasiado en contestar; inténtalo otra vez" : `no pude hablar con Ghosty Studio: ${msg}` };
+  }
+  console.log(`[ads gs google ${op} ${Date.now() - t0}ms] ${r.ok ? "ok" : `error: ${String((r as { error?: string }).error).slice(0, 160)}`}`);
+  return r;
+}
+
+/** Estado de Google Ads; sin vincular si gs no contesta (la UI no se rompe). */
+export async function googleStatus(): Promise<GoogleStatus & { error?: string }> {
+  const r = await googleAds("status");
+  if (!r.ok) return { configured: false, serviceAccount: null, mcc: null, link: null, error: r.error };
+  return { configured: r.configured, serviceAccount: r.serviceAccount, mcc: r.mcc, link: r.link };
+}

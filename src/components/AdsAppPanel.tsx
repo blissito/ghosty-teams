@@ -1,11 +1,12 @@
 // Ajustes → Apps → Ghosty Ads (server/apps/ads.ts). Instalar pide dónde vive (room) y qué
 // agente de Studio hace de @ads; la app no crea agentes. Instalada: «Conectar Meta» (el OAuth
 // vive en gs y se abre en otra pestaña), la cuenta y la página conectadas, el selector si hay
-// varias, el agente de @ads y desinstalar.
+// varias, el agente de @ads y desinstalar. Google Ads: el ID de la cuenta + el correo de la service
+// account de gs como usuario Estándar; «Ya lo agregué» vuelve a revisar.
 import { useEffect, useState } from "react";
-import { ExternalLink, Loader2, Megaphone } from "lucide-react";
+import { Copy, ExternalLink, Loader2, Megaphone } from "lucide-react";
 import { useT } from "../i18n";
-import { adsConnectUrlFn, adsSelectFn, adsStatusFn, installAdsFn, setAdsAgentFn, uninstallAdsFn, type AdsAppStatus } from "../server/apps/ads";
+import { adsConnectUrlFn, adsGoogleLinkFn, adsGoogleUnlinkFn, adsSelectFn, adsStatusFn, installAdsFn, setAdsAgentFn, uninstallAdsFn, type AdsAppStatus } from "../server/apps/ads";
 import { listChannelsFn } from "../server/chat";
 import ConfirmModal from "./ConfirmModal";
 import { tokenWarning } from "../server/apps/ads-proposal";
@@ -247,6 +248,8 @@ function Installed({ status, onChange }: { status: AdsAppStatus; onChange: () =>
         </button>
       </div>
 
+      <GoogleCard status={status} onChange={onChange} />
+
       <label className="block">
         <span className="text-xs font-semibold text-muted">{t("Agente de @ads")}</span>
         <div className="flex items-center gap-2">
@@ -301,6 +304,78 @@ function Installed({ status, onChange }: { status: AdsAppStatus; onChange: () =>
             onChange();
           }}
         />
+      )}
+    </div>
+  );
+}
+
+function GoogleCard({ status, onChange }: { status: AdsAppStatus; onChange: () => void }) {
+  const t = useT();
+  const g = status.google;
+  const [cid, setCid] = useState(g.link?.customerId ?? "");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const run = async (key: string, fn: () => Promise<unknown>) => {
+    setBusy(key);
+    setError(null);
+    try {
+      await fn();
+      onChange();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+  if (!g.configured) return null;
+  const linked = g.link?.status === "linked";
+  return (
+    <div className="rounded-lg border border-border bg-surface p-3">
+      <p className="text-xs font-semibold text-muted">{t("Google Ads")}</p>
+      {linked ? (
+        <p className="mt-1 text-ink">
+          ✓ {t("Cuenta")}: <b>{g.link!.name ?? g.link!.customerId}</b> <span className="text-muted">· {g.link!.customerId}{g.link!.currency ? ` · ${g.link!.currency}` : ""}</span>
+        </p>
+      ) : (
+        <>
+          <p className="mt-1 text-muted">
+            {g.link
+              ? t("Todavía no nos da acceso. En Google Ads → Administrador → Acceso y seguridad, agrega este correo como usuario con acceso Estándar:")
+              : t("Para ver tus campañas de Google, escribe el ID de tu cuenta y agrega este correo como usuario con acceso Estándar (Administrador → Acceso y seguridad):")}
+          </p>
+          {g.serviceAccount && (
+            <button
+              type="button"
+              onClick={() => {
+                void navigator.clipboard?.writeText(g.serviceAccount!).then(() => setCopied(true));
+              }}
+              className="mt-1.5 inline-flex max-w-full items-center gap-1.5 rounded-md bg-surface-2 px-2 py-1 font-mono text-[11px] text-ink hover:bg-surface-3"
+            >
+              <span className="truncate">{g.serviceAccount}</span>
+              <Copy className="size-3 shrink-0" />
+              {copied && <span className="font-sans text-emerald-600">{t("Copiado")}</span>}
+            </button>
+          )}
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <input value={cid} onChange={(e) => setCid(e.target.value)} placeholder="123-456-7890" inputMode="numeric" aria-label={t("ID de cliente de Google Ads")} className={`${field} mt-0 w-40`} />
+            <button
+              type="button"
+              disabled={!!busy || cid.replace(/\D/g, "").length !== 10}
+              onClick={() => run("glink", () => adsGoogleLinkFn({ data: { customerId: cid } }))}
+              className="inline-flex items-center gap-1 rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50"
+            >
+              {busy === "glink" && <Loader2 className="size-3.5 animate-spin" />}
+              {g.link ? t("Ya lo agregué") : t("Vincular")}
+            </button>
+          </div>
+        </>
+      )}
+      {error && <p className="mt-1 text-xs text-danger">{error}</p>}
+      {g.link && (
+        <button type="button" disabled={!!busy} onClick={() => run("gunlink", () => adsGoogleUnlinkFn())} className="mt-2 text-xs text-muted hover:text-danger">
+          {t("Desvincular Google Ads")}
+        </button>
       )}
     </div>
   );

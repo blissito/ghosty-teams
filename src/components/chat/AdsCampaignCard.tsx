@@ -244,6 +244,23 @@ export function AdsReportCard({ card, channelId }: { card: { reportId: number };
           </li>
         ))}
       </ul>
+      {st.google && (
+        <>
+          <p className="mt-2 border-t border-border pt-2 text-xs font-semibold text-muted">
+            Google Ads{st.google.account ? ` · ${st.google.account}` : ""} · {t("últimos 30 días")}
+          </p>
+          <ul className="mt-1 divide-y divide-border">
+            {st.google.items.map((g) => (
+              <li key={g.id} className="flex items-baseline justify-between gap-2 py-1.5 text-xs">
+                <span className="truncate font-semibold text-ink">{g.name}</span>
+                <span className="shrink-0 tabular-nums text-muted">
+                  {mxn(g.spend)} · {g.clicks} {t("clics")} · {g.conversions} {t("conversiones")}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
     </div>
   );
 }

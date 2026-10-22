@@ -3,6 +3,8 @@
 //    calificado (el embudo sale de Meta y del tablero de Ventas, por gs).
 //  - «Nueva campaña» lleva al room de @ads; «Importar campaña existente» trae una de la
 //    cuenta de Meta sin tocarla (sólo el dueño).
+//  - Google Ads (si la cuenta está vinculada): sus campañas con gasto, clics y conversiones de
+//    30 días; el dueño las pausa o reanuda con confirmación. Se crean en Google Ads, no aquí.
 //  - Automático (dueño): el reporte de las 9:00 y 21:00, con «Correr ahora».
 // Misma forma que /factory: el loader sólo resuelve auth; los datos llegan por server fns.
 import { createFileRoute, Link } from "@tanstack/react-router";
@@ -10,10 +12,11 @@ import { useEffect, useState } from "react";
 import { ArrowLeft, Loader2, Megaphone } from "lucide-react";
 import { useT } from "../i18n";
 import { me } from "../server/auth";
-import { adsImportableFn, adsImportFn, adsOverviewFn, adsRunReportFn, adsScheduleFn, setAdsScheduleFn } from "../server/apps/ads";
+import { adsGoogleSetStatusFn, adsImportableFn, adsImportFn, adsOverviewFn, adsRunReportFn, adsScheduleFn, setAdsScheduleFn } from "../server/apps/ads";
 import { adsStatusLabel } from "../server/apps/ads-flow";
 import { mxn, tokenWarning } from "../server/apps/ads-proposal";
 import { Toggle } from "../components/Toggle";
+import ConfirmModal from "../components/ConfirmModal";
 
 type Overview = Awaited<ReturnType<typeof adsOverviewFn>>;
 type Importable = Awaited<ReturnType<typeof adsImportableFn>>;
@@ -147,6 +150,8 @@ function AdsPage() {
               ))}
             </ul>
           </section>
+
+          {data.google && (data.google.status.link || data.google.error) && <GoogleSection g={data.google} isOwner={data.isOwner} onChange={() => void load()} />}
 
           {data.isOwner && data.meta.connected && <ImportCampaign onDone={() => void load()} />}
           {data.isOwner && <ReportSchedule />}
@@ -292,6 +297,92 @@ function ReportSchedule() {
           {msg && <span className="ml-1">· {msg}</span>}
         </p>
       </div>
+    </section>
+  );
+}
+
+const G_STATUS: Record<string, [string, string]> = {
+  ACTIVE: ["Activa", "active"],
+  PAUSED: ["En pausa", "paused"],
+  ENDED: ["Terminada", "ended"],
+  NOT_ELIGIBLE: ["No apta", "error"],
+  SUSPENDED: ["Suspendida", "error"],
+};
+
+/** Campañas de Google Ads de la cuenta vinculada (30 días). */
+function GoogleSection({ g, isOwner, onChange }: { g: NonNullable<Overview["google"]>; isOwner: boolean; onChange: () => void }) {
+  const t = useT();
+  const [ask, setAsk] = useState<{ id: string; name: string; to: "ACTIVE" | "PAUSED" } | null>(null);
+  const [err, setErr] = useState("");
+  const money = (n: number) => (g.currency && g.currency !== "MXN" ? `${n.toLocaleString("es-MX", { maximumFractionDigits: 2 })} ${g.currency}` : mxn(n));
+  const linked = g.status.link?.status === "linked";
+  const spend = g.campaigns.reduce((a, c) => a + c.spend, 0);
+  const conv = g.campaigns.reduce((a, c) => a + c.conversions, 0);
+  return (
+    <section className="mt-8">
+      <h2 className="text-sm font-semibold text-ink">
+        {t("Google Ads")} {g.status.link?.name ? <span className="font-normal text-muted">· {g.status.link.name}</span> : null}
+      </h2>
+      {!linked ? (
+        <p className="mt-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
+          {g.error ?? t("La cuenta de Google Ads todavía no nos da acceso.")} {isOwner ? t("Termínalo en Ajustes → Apps → Ghosty Ads.") : t("Pídeselo al dueño del espacio.")}
+        </p>
+      ) : (
+        <>
+          <p className="text-[11px] text-muted">
+            {t("Últimos 30 días")} · {t("gasto")} {money(Math.round(spend * 100) / 100)} · {Math.round(conv * 10) / 10} {t("conversiones")}
+          </p>
+          {g.error && <p className="mt-1.5 text-[11px] text-amber-700 dark:text-amber-400">{g.error}</p>}
+          <ul className="mt-2 divide-y divide-border overflow-hidden rounded-xl border border-border">
+            {g.campaigns.length === 0 && <li className="px-3 py-4 text-sm text-muted">{t("No hay campañas en la cuenta de Google Ads.")}</li>}
+            {g.campaigns.map((c) => {
+              const [label, cls] = G_STATUS[c.status] ?? [c.status, ""];
+              return (
+                <li key={c.id} className="flex items-center gap-3 px-3 py-2.5">
+                  <span className="shrink-0 rounded bg-surface-3 px-1.5 text-[10px] font-semibold uppercase text-muted">Google</span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-ink">{c.name}</p>
+                    <p className="truncate text-[11px] text-muted">
+                      {c.dailyBudget ? `${money(c.dailyBudget)} ${t("al día")} · ` : ""}
+                      {t("gasto")} {money(c.spend)} · {c.clicks} {t("clics")} · {c.conversions} {t("conversiones")}
+                    </p>
+                  </div>
+                  {isOwner && (c.status === "ACTIVE" || c.status === "PAUSED") && (
+                    <button
+                      type="button"
+                      onClick={() => setAsk({ id: c.id, name: c.name, to: c.status === "ACTIVE" ? "PAUSED" : "ACTIVE" })}
+                      className="shrink-0 rounded-md border border-border px-2 py-0.5 text-[11px] font-semibold text-muted hover:text-ink"
+                    >
+                      {c.status === "ACTIVE" ? t("Pausar") : t("Reanudar")}
+                    </button>
+                  )}
+                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLS[cls] ?? "bg-surface-3 text-muted"}`}>{t(label)}</span>
+                </li>
+              );
+            })}
+          </ul>
+          {err && <p className="mt-1.5 text-xs text-red-600 dark:text-red-400">{err}</p>}
+        </>
+      )}
+      {ask && (
+        <ConfirmModal
+          title={ask.to === "PAUSED" ? t("¿Pausar la campaña?") : t("¿Reanudar la campaña?")}
+          body={`«${ask.name}» — ${ask.to === "PAUSED" ? t("deja de mostrarse y de gastar en Google Ads.") : t("vuelve a mostrarse y a gastar su presupuesto en Google Ads.")}`}
+          confirmLabel={ask.to === "PAUSED" ? t("Pausar") : t("Reanudar")}
+          danger={ask.to === "PAUSED"}
+          onCancel={() => setAsk(null)}
+          onConfirm={async () => {
+            setErr("");
+            try {
+              await adsGoogleSetStatusFn({ data: { campaignId: ask.id, status: ask.to } });
+              onChange();
+            } catch (e) {
+              setErr(e instanceof Error ? e.message : String(e));
+            }
+            setAsk(null);
+          }}
+        />
+      )}
     </section>
   );
 }

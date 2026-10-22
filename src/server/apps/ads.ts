@@ -12,6 +12,8 @@ import { campaignLink } from "../../lib/ads-links";
 //  3. el reporte automático de las 9:00 y 21:00 (CDMX);
 //  4. la fila en `gt_installed_apps`, que es lo que hace aparecer las tools `ads_*`.
 // La credencial de Meta la guarda gs: «Conectar Meta» abre su OAuth en otra pestaña.
+// Google Ads no tiene OAuth: el dueño da el ID de su cuenta y agrega como usuario Estándar el
+// correo de la service account de gs; gs lee y pausa con ella. Crear campañas sigue siendo de Meta.
 // Desinstalar apaga `@ads` y sus tools; las campañas y Meta no se tocan.
 
 type AdsCfg = {
@@ -82,8 +84,8 @@ async function readStatus() {
   const cfg = await getAppConfig<AdsCfg>("ads");
   const { studioAgents } = await import("./factory");
   const candidates = await studioAgents().catch(() => []);
-  const { metaStatus, gsAds } = await import("./ads-gs.server");
-  const meta = await metaStatus();
+  const { metaStatus, gsAds, googleStatus } = await import("./ads-gs.server");
+  const [meta, google] = await Promise.all([metaStatus(), googleStatus()]);
   // Con Meta conectado, las cuentas y páginas para elegir (si hay varias).
   const assets = meta.connected ? await gsAds("assets") : null;
   const { getSchedule } = await import("./ads-report.server");
@@ -99,6 +101,7 @@ async function readStatus() {
     candidates,
     studioAgentsUrl: `${IDP()}/app/agents`,
     meta,
+    google,
     assets: assets?.ok ? { adAccounts: assets.adAccounts ?? [], pages: assets.pages ?? [] } : null,
     schedule: cfg ? await getSchedule() : null,
   };
@@ -210,6 +213,60 @@ export const adsSelectFn = createServerFn({ method: "POST" })
     if (!r.ok) throw new Error(r.error);
     return { ok: true as const };
   });
+
+/** Vincular (o volver a revisar) la cuenta de Google Ads: es el «Ya lo agregué». */
+export const adsGoogleLinkFn = createServerFn({ method: "POST" })
+  .validator((d: { customerId: string }) => d)
+  .handler(async ({ data }) => {
+    const me = await requireOwner();
+    const { googleAds } = await import("./ads-gs.server");
+    const r = await googleAds("link", { customerId: String(data.customerId ?? ""), by: me.name ?? me.sub });
+    if (!r.ok) throw new Error(r.error);
+    return r.link;
+  });
+
+export const adsGoogleUnlinkFn = createServerFn({ method: "POST" }).handler(async () => {
+  const me = await requireOwner();
+  const { googleAds } = await import("./ads-gs.server");
+  const r = await googleAds("unlink", { by: me.name ?? me.sub });
+  if (!r.ok) throw new Error(r.error);
+  return { ok: true as const };
+});
+
+/** Pausar o reanudar una campaña de Google. Sólo el dueño, con confirmación en la UI. */
+export const adsGoogleSetStatusFn = createServerFn({ method: "POST" })
+  .validator((d: { campaignId: string; status: "ACTIVE" | "PAUSED" }) => d)
+  .handler(async ({ data }) => {
+    const me = await requireOwner();
+    if (data.status !== "ACTIVE" && data.status !== "PAUSED") throw new Error("estado inválido");
+    const { googleAds } = await import("./ads-gs.server");
+    const r = await googleAds("set_status", { campaignId: String(data.campaignId), status: data.status, by: me.name ?? me.sub });
+    if (!r.ok) throw new Error(r.error);
+    return { ok: true as const };
+  });
+
+export type GoogleCampaignRow = { id: string; name: string; status: string; dailyBudget: number | null; spend: number; clicks: number; conversions: number; reasons: string[] };
+
+/** Campañas de Google con sus números de 30 días; vacío si no hay cuenta vinculada. */
+async function googleCampaigns() {
+  const { googleAds, googleStatus } = await import("./ads-gs.server");
+  const st = await googleStatus();
+  if (st.link?.status !== "linked") return { status: st, campaigns: [] as GoogleCampaignRow[], error: st.error ?? null, currency: null as string | null };
+  const [cs, ins] = await Promise.all([googleAds("campaigns"), googleAds("insights", { days: 30 })]);
+  if (!cs.ok) return { status: st, campaigns: [] as GoogleCampaignRow[], error: cs.error, currency: st.link.currency };
+  const by = ins.ok ? ins.byCampaign : {};
+  const campaigns: GoogleCampaignRow[] = (cs.items ?? []).map((c) => ({
+    id: c.id,
+    name: c.name,
+    status: c.status,
+    dailyBudget: c.dailyBudget,
+    spend: by[c.id]?.spend ?? 0,
+    clicks: by[c.id]?.clicks ?? 0,
+    conversions: Math.round((by[c.id]?.conversions ?? 0) * 10) / 10,
+    reasons: c.reasons ?? [],
+  }));
+  return { status: st, campaigns, error: ins.ok ? null : ins.error, currency: st.link.currency };
+}
 
 // ── Tarjetas ─────────────────────────────────────────────────────────────────
 
@@ -425,6 +482,7 @@ export const adsReportCardFn = createServerFn({ method: "POST" })
     return {
       at: r.data.at,
       items: r.data.items.map((i) => ({ ...i, threadUrl: i.threadId ? `/c/${ch.slug}?thread=${i.threadId}` : null })),
+      google: r.data.google ?? null,
     };
   });
 
@@ -587,6 +645,8 @@ export const adsOverviewFn = createServerFn({ method: "GET" }).handler(async () 
   const room = cfg?.roomId ? (byId.get(cfg.roomId) ?? null) : null;
   const { metaStatus } = await import("./ads-gs.server");
   const meta: Awaited<ReturnType<typeof metaStatus>> = installed ? await metaStatus() : { connected: false, expiresAt: null, adAccount: null, page: null };
+  // Las de Google no viven en un room: las ve quien ve el room de la app (o el dueño).
+  const google = installed && (room || me.isOwner) ? await googleCampaigns() : null;
   const C = await import("./ads-campaigns.server");
   const cs = installed ? await C.campaignsOf([...byId.keys()]) : [];
   const { inMeta } = await import("./ads-flow");
@@ -617,6 +677,7 @@ export const adsOverviewFn = createServerFn({ method: "GET" }).handler(async () 
     room: room ? { id: room.id, slug: room.slug, name: room.name } : null,
     meta,
     campaigns,
+    google,
     funnelError: error,
   };
 });
