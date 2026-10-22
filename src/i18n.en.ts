@@ -2287,4 +2287,5 @@ export const en: Record<string, string> = {
   "Avisado · otra vez el {fecha}": "Admin told · again on {fecha}",
   "Subir de plan": "Upgrade plan",
   "Ver planes": "See plans",
+  "Ningún agente va a contestar este mensaje: menciónalo para que responda.": "No agent will answer this message: mention one so it replies.",
 };

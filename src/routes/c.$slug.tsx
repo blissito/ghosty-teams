@@ -1896,7 +1896,22 @@ function ChannelPage() {
   };
   const editMsg = (m: Message, body: string) => {
     patchMessage(m.id, (msg) => ({ ...msg, body, edited_at: Date.now() }));
-    editMessageFn({ data: { slug: channel.slug, id: m.id, body } }).catch(() => revalidate());
+    editMessageFn({ data: { slug: channel.slug, id: m.id, body } })
+      .then((r) => {
+        // La edición agregó la mención de un agente: contesta como si el mensaje hubiera salido así
+        // (descti, 21-oct). La respuesta nace en el hilo del mensaje, igual que al enviarlo.
+        const respondents = r?.ok ? r.respondents : [];
+        if (!respondents.length) return;
+        revalidate();
+        if (m.parent_id == null && respondents[0].parent != null) openThread(respondents[0].parent);
+        for (const ag of respondents) {
+          if (ag.steered) showSteerHint({ channelId: channel.id, parentId: ag.parent, dmId: null });
+          askAgent({ data: { slug: channel.slug, parentId: ag.parent, fleetThread: ag.fleetThread, body, sender: "", handle: ag.handle, shellId: ag.shellId || undefined, invokerMessageId: m.id } })
+            .then(() => revalidate())
+            .catch(() => revalidate());
+        }
+      })
+      .catch(() => revalidate());
   };
 
   // Flujo del room: cacheado → volver a un room es instantáneo (sin skeleton si ya se vio).
@@ -2684,6 +2699,21 @@ function ChannelPage() {
             preview: `${quien} ${t("no es nadie en este espacio.")}${agentes ? ` ${t("Agentes:")} ${agentes}` : ""}`,
             onOpen: () => {},
           });
+        }
+        // Nadie va a contestar porque no se llamó a ningún agente: se dice una vez al día por room.
+        if (!respondents.length && r?.noAgent) {
+          const key = `gt-noagent-hint:${o.slug}`;
+          let last = 0;
+          try { last = Number(localStorage.getItem(key)) || 0; } catch { /* sin localStorage */ }
+          if (Date.now() - last > 86_400_000) {
+            try { localStorage.setItem(key, String(Date.now())); } catch { /* sin localStorage */ }
+            const agentes = (r.agentHandles ?? []).slice(0, 4).map((h) => `@${h}`).join(", ");
+            pushToast({
+              sender: t("Agentes"), avatar: "", kind: "room",
+              preview: `${t("Ningún agente va a contestar este mensaje: menciónalo para que responda.")}${agentes ? ` ${t("Agentes:")} ${agentes}` : ""}`,
+              onOpen: () => {},
+            });
+          }
         }
         if (respondents.length) {
           // MODELO ZULIP: el agente responde SIEMPRE dentro de un hilo colgado del mensaje

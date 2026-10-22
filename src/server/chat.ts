@@ -690,6 +690,60 @@ export const toggleReactionFn = createServerFn({ method: "POST" })
     return { ok: true as const, op, count };
   });
 
+/**
+ * Abre la cáscara de cada agente que va a contestar y le pone el 👀 al mensaje que lo invocó (o lo
+ * marca `steered` si ya tiene un turno vivo de esa persona). Lo usan el envío y la edición que agrega
+ * una mención (descti, 21-oct: Alejandro editó su pedido para mencionar a los 4 agentes y nadie despertó).
+ *
+ * Caja caliente: la cáscara del agente se crea EAGER (kind:"msg" VACÍA, con avatar+nombre)
+ * aquí mismo → aparece al instante y PERMANECE; el turno (askAgent) streamea sobre este
+ * MISMO id vía message:body/delta. Sin "pensando…" que borrar/recrear → cero parpadeo.
+ * El cliente recibe el shellId por respondent y se lo pasa a askAgent.
+ * ⚠️ Salvo cuando el mensaje va a ser STEER: si el que escribe ya tiene un turno vivo
+ * en este flow, `askAgent` mete el texto a ese turno y no abre otro. Crear la cáscara
+ * aquí y borrarla allá era una burbuja "pensando…" que aparecía y se esfumaba — en el
+ * teléfono, con el stream atrasado, duraba segundos y parecía un bug. Mismo criterio y
+ * mismo groupId que `askAgent`.
+ */
+async function startRespondents(o: {
+  ns: string;
+  channel: { id: number } & Record<string, unknown>;
+  invokerId: number;
+  topic: string;
+  agents: { handle: string; name?: string; avatar?: string }[];
+  meSub: string | undefined;
+  respondents: { handle: string; parent: number | null; fleetThread: string; shellId: number; steered?: boolean }[];
+}): Promise<void> {
+  const db = await import("../db.server");
+  const bus = await import("./bus.server");
+  const { agentGroupId } = await import("../agents.server");
+  const turns = await import("./turns.server");
+  const { fleetSuffixFor } = await import("./apps/factory-session.server");
+  const { ackStart } = await import("./agent-ack.server");
+  for (const r of o.respondents) {
+    const ag = o.agents.find((a) => a.handle === r.handle);
+    const groupId = await agentGroupId((ag ?? { handle: r.handle }) as never, await fleetSuffixFor(r.handle, o.channel as never, r.parent, r.fleetThread));
+    if (turns.hasOwnInflight(groupId, o.meSub)) {
+      r.steered = true;
+      // El steer también lleva su 👀: sin él, lo que la persona escribe a media respuesta
+      // no tenía ninguna señal y lo repetía (descti, 5-oct: «¿ya tienes el cuadro?» ×3).
+      // El ✅ lo pone `onSteerAnswered` / el `ackEnd` del cierre del turno anfitrión.
+      await ackStart(o.ns, o.invokerId, r.handle);
+      continue;
+    }
+    const { id: shellId } = await db.postAgent(o.channel.id, r.parent, "", "msg", r.handle, ag?.name ?? "Ghosty", o.topic, ag?.avatar ?? "");
+    r.shellId = shellId;
+    const shell = await db.getMessage(shellId);
+    if (shell) bus.publish(bus.ch.room(o.ns, o.channel.id), { t: "message:new", msg: shell });
+    // Acuse 👀 sobre el mensaje que lo invocó. Va AQUÍ y no en `askAgent` porque éste es
+    // el único punto que tiene a la vez el id del invocador y la lista de agentes
+    // que van a responder: `askAgent` sólo recibe `parentId`, que coincide con el
+    // invocador en top-level pero es la RAÍZ DEL HILO cuando ya estás dentro de uno.
+    // Además así no hay que creerle un id al cliente.
+    await ackStart(o.ns, o.invokerId, r.handle);
+  }
+}
+
 // Editar mensaje (solo autor u owner). Publica refresh del contexto.
 export const editMessageFn = createServerFn({ method: "POST" })
   .validator((d: { slug: string; id: number; body: string }) => d)
@@ -712,8 +766,33 @@ export const editMessageFn = createServerFn({ method: "POST" })
       body,
       edited_at: Math.floor(Date.now() / 1000),
     });
-    return { ok: true as const };
+    const respondents = owns && user ? await respondentsAddedByEdit(ns, msg, body, user.sub).catch(() => []) : [];
+    return { ok: true as const, respondents };
   });
+
+/** Una edición del autor que AGREGA la mención de un agente lo despierta, como si lo hubiera mandado
+ *  así (descti, 21-oct). Sólo mensajes de room de la última hora, y sólo los agentes nuevos: los que
+ *  ya estaban mencionados ya contestaron (o están contestando). */
+const EDIT_WAKE_MAX_AGE_S = 3600;
+async function respondentsAddedByEdit(ns: string, msg: import("../db.server").Message, body: string, sub: string) {
+  if (msg.dm_id != null || msg.channel_id == null) return [];
+  if (Date.now() / 1000 - Number(msg.created_at) > EDIT_WAKE_MAX_AGE_S) return [];
+  const db = await import("../db.server");
+  const { resolvedAgents, detectMentions } = await import("../agents.server");
+  const channel = await db.getChannelById(msg.channel_id);
+  if (!channel || (!!channel.call_mode && channel.agent_enabled !== 1)) return [];
+  const agents = await resolvedAgents();
+  const handles = agents.map((a) => a.handle);
+  const userHandles = (await import("../users.server").then((u) => u.listUsers()).catch(() => [])).map((u) => u.handle);
+  const before = new Set(detectMentions(msg.body ?? "", handles, userHandles));
+  const added = detectMentions(body, handles, userHandles).filter((h) => !before.has(h));
+  if (!added.length) return [];
+  const { pickRespondents } = await import("./agent-handoff.server");
+  const parent = msg.parent_id ?? msg.id;
+  const respondents: { handle: string; parent: number | null; fleetThread: string; shellId: number; steered?: boolean }[] = pickRespondents(body, added).map((h) => ({ handle: h, parent, fleetThread: FLEET_THREAD, shellId: 0 }));
+  await startRespondents({ ns, channel: channel as never, invokerId: msg.id, topic: msg.topic ?? "general", agents, meSub: sub, respondents });
+  return respondents;
+}
 
 // Un hilo: el mensaje raíz + sus respuestas.
 //
@@ -783,7 +862,7 @@ export const postMessageAs = createServerOnlyFn(async (me: SessionMe | null, dat
   const db = await import("../db.server");
   const bus = await import("./bus.server");
   const { currentNamespace } = await import("./tenant.server");
-  const { resolvedAgents, detectMentions, quoteExcerpt, agentGroupId } = await import("../agents.server");
+  const { resolvedAgents, detectMentions, quoteExcerpt } = await import("../agents.server");
   // Una respuesta de hilo vive en el canal DE SU RAÍZ, no en el que diga el cliente. El
   // cliente podía mandar el slug del room donde estaba parado con un hilo de OTRO room
   // abierto (el toast de una respuesta abría el hilo sin cambiar de room): la respuesta
@@ -960,41 +1039,7 @@ export const postMessageAs = createServerOnlyFn(async (me: SessionMe | null, dat
     const parentFor = data.parentId ?? id;
     respondents.push({ handle: quoted.agent_handle, parent: parentFor, fleetThread: FLEET_THREAD, shellId: 0 });
   }
-  // Caja caliente: la cáscara del agente se crea EAGER (kind:"msg" VACÍA, con avatar+nombre)
-  // aquí mismo → aparece al instante y PERMANECE; el turno (askAgent) streamea sobre este
-  // MISMO id vía message:body/delta. Sin "pensando…" que borrar/recrear → cero parpadeo.
-  // El cliente recibe el shellId por respondent y se lo pasa a askAgent.
-  // ⚠️ Salvo cuando el mensaje va a ser STEER: si el que escribe ya tiene un turno vivo
-  // en este flow, `askAgent` mete el texto a ese turno y no abre otro. Crear la cáscara
-  // aquí y borrarla allá era una burbuja "pensando…" que aparecía y se esfumaba — en el
-  // teléfono, con el stream atrasado, duraba segundos y parecía un bug. Mismo criterio y
-  // mismo groupId que `askAgent`.
-  const turns = await import("./turns.server");
-  for (const r of respondents) {
-    const ag = agents.find((a) => a.handle === r.handle);
-    const { fleetSuffixFor } = await import("./apps/factory-session.server");
-    const groupId = await agentGroupId(ag ?? { handle: r.handle }, await fleetSuffixFor(r.handle, channel, r.parent, r.fleetThread));
-    if (turns.hasOwnInflight(groupId, me?.sub)) {
-      r.steered = true;
-      // El steer también lleva su 👀: sin él, lo que la persona escribe a media respuesta
-      // no tenía ninguna señal y lo repetía (descti, 5-oct: «¿ya tienes el cuadro?» ×3).
-      // El ✅ lo pone `onSteerAnswered` / el `ackEnd` del cierre del turno anfitrión.
-      const { ackStart } = await import("./agent-ack.server");
-      await ackStart(ns, id, r.handle);
-      continue;
-    }
-    const { id: shellId } = await db.postAgent(channel.id, r.parent, "", "msg", r.handle, ag?.name ?? "Ghosty", topic, ag?.avatar ?? "");
-    r.shellId = shellId;
-    const shell = await db.getMessage(shellId);
-    if (shell) bus.publish(bus.ch.room(ns, channel.id), { t: "message:new", msg: shell });
-    // Acuse 👀 sobre el mensaje que lo invocó. Va AQUÍ y no en `askAgent` porque éste es
-    // el único punto que tiene a la vez el id del invocador (`id`) y la lista de agentes
-    // que van a responder: `askAgent` sólo recibe `parentId`, que coincide con el
-    // invocador en top-level pero es la RAÍZ DEL HILO cuando ya estás dentro de uno.
-    // Además así no hay que creerle un id al cliente.
-    const { ackStart } = await import("./agent-ack.server");
-    await ackStart(ns, id, r.handle);
-  }
+  await startRespondents({ ns, channel, invokerId: id, topic, agents, meSub: me?.sub, respondents });
   // Un pedido, varios roles: si la persona le habla a uno (@build) mientras OTRO rol del mismo
   // pedido trabaja (@plan), a ése le llega la línea por steer y decide con su contexto si es lo
   // mismo y se detiene. Sin candados ni estado: `injectOnly` hace que gs conteste `not_live`
@@ -1023,6 +1068,10 @@ export const postMessageAs = createServerOnlyFn(async (me: SessionMe | null, dat
     respondents, // [{handle, parent, fleetThread, shellId}] → el cliente llama askAgent por cada uno
     // Sólo cuando NADIE va a contestar: con un agente despierto, un @ suelto es ruido.
     unresolved: respondents.length === 0 && menciones?.unresolved?.length ? menciones.unresolved : [],
+    // Mensaje de raíz en un room con agentes que no llama a nadie: el cliente avisa (una vez al día
+    // por room) que hay que mencionar a un agente. Alejandro (descti, 20-oct) escribió 4 veces en
+    // #general esperando respuesta: ahí sólo contestan si los mencionas.
+    noAgent: respondents.length === 0 && data.parentId === null && !factorySigned && !agentOff && handles.length > 0 && !mencionaAAlguienMas(body),
     agentHandles: handles,
   };
 });
