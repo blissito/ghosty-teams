@@ -4,7 +4,7 @@
 // varias, el agente de @ads y desinstalar. Google Ads: el ID de la cuenta + el correo de la service
 // account de gs como usuario Estándar; «Ya lo agregué» vuelve a revisar.
 import { useEffect, useState } from "react";
-import { Copy, ExternalLink, Loader2, Megaphone } from "lucide-react";
+import { Check, Copy, ExternalLink, Loader2, Megaphone } from "lucide-react";
 import { useT } from "../i18n";
 import { adsConnectUrlFn, adsGoogleLinkFn, adsGoogleUnlinkFn, adsSelectFn, adsStatusFn, installAdsFn, setAdsAgentFn, uninstallAdsFn, type AdsAppStatus } from "../server/apps/ads";
 import { listChannelsFn } from "../server/chat";
@@ -361,13 +361,15 @@ function GoogleCard({ status, onChange }: { status: AdsAppStatus; onChange: () =
                 <button
                   type="button"
                   onClick={() => {
-                    void navigator.clipboard?.writeText(g.serviceAccount!).then(() => setCopied(true));
+                    void navigator.clipboard?.writeText(g.serviceAccount!).then(() => {
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 1200);
+                    });
                   }}
                   className="mt-1 flex max-w-full items-center gap-1.5 rounded-md bg-surface-2 px-2 py-1 font-mono text-[11px] text-ink hover:bg-surface-3"
                 >
                   <span className="truncate">{g.serviceAccount}</span>
-                  <Copy className="size-3 shrink-0" />
-                  {copied && <span className="font-sans text-emerald-600">{t("Copiado")}</span>}
+                  {copied ? <Check className="gc-pop size-3.5 shrink-0 text-emerald-500" aria-label={t("Copiado")} /> : <Copy className="size-3 shrink-0" />}
                 </button>
               )}
             </li>
