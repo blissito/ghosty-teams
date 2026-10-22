@@ -156,7 +156,7 @@ function AdsPage() {
             <section className="mt-8">
               <h2 className="text-sm font-semibold text-ink">{t("Google Ads")}</h2>
               <p className="mt-2 rounded-xl border border-border bg-surface-2 px-3 py-2 text-xs text-muted">
-                {t("Sin vincular. Vincula tu cuenta de Google Ads en Ajustes → Apps → Ghosty Ads para ver aquí sus campañas, gasto y conversiones.")}
+                {t("Sin conectar. Conecta tu Google Ads en Ajustes → Apps → Ghosty Ads para ver aquí sus campañas, gasto y conversiones.")}
               </p>
             </section>
           )}

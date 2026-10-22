@@ -4,9 +4,9 @@
 // varias, el agente de @ads y desinstalar. Google Ads: el ID de la cuenta + el correo de la service
 // account de gs como usuario Estándar; «Ya lo agregué» vuelve a revisar.
 import { useEffect, useState } from "react";
-import { Check, Copy, ExternalLink, Loader2, Megaphone } from "lucide-react";
-import { useT } from "../i18n";
-import { adsConnectUrlFn, adsGoogleLinkFn, adsGoogleUnlinkFn, adsSelectFn, adsStatusFn, installAdsFn, setAdsAgentFn, uninstallAdsFn, type AdsAppStatus } from "../server/apps/ads";
+import { ExternalLink, Loader2, Megaphone } from "lucide-react";
+import { useLocale, useT } from "../i18n";
+import { adsConnectUrlFn, adsGoogleAccountsFn, adsGoogleConnectUrlFn, adsGoogleSelectFn, adsGoogleUnlinkFn, adsSelectFn, adsStatusFn, installAdsFn, setAdsAgentFn, uninstallAdsFn, type AdsAppStatus, type GoogleAccount } from "../server/apps/ads";
 import { listChannelsFn } from "../server/chat";
 import ConfirmModal from "./ConfirmModal";
 import { tokenWarning } from "../server/apps/ads-proposal";
@@ -311,18 +311,24 @@ function Installed({ status, onChange }: { status: AdsAppStatus; onChange: () =>
 }
 
 /** Usuarios de la cuenta en Google Ads; con el ID ya escrito abre directo en esa cuenta. */
-function googleUsersUrl(cid: string) {
-  const d = cid.replace(/\D/g, "");
-  return `https://ads.google.com/aw/accountaccess/users${d.length === 10 ? `?__e=${d}` : ""}`;
-}
-
 function GoogleCard({ status, onChange }: { status: AdsAppStatus; onChange: () => void }) {
   const t = useT();
+  const locale = useLocale();
   const g = status.google;
-  const [cid, setCid] = useState(g.link?.customerId ?? "");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [accounts, setAccounts] = useState<GoogleAccount[] | null>(null);
+  const [pick, setPick] = useState("");
+  const choosing = g.link?.status === "choose";
+  useEffect(() => {
+    if (!choosing) return;
+    adsGoogleAccountsFn()
+      .then((a) => {
+        setAccounts(a);
+        setPick(a.find((x) => !x.taken)?.customerId ?? "");
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+  }, [choosing]);
   const run = async (key: string, fn: () => Promise<unknown>) => {
     setBusy(key);
     setError(null);
@@ -335,67 +341,88 @@ function GoogleCard({ status, onChange }: { status: AdsAppStatus; onChange: () =
       setBusy(null);
     }
   };
+  // La pestaña se abre ANTES del await: si no, el navegador la bloquea como popup.
+  const connect = async () => {
+    const w = window.open("about:blank", "_blank");
+    setBusy("gconnect");
+    setError(null);
+    try {
+      const { url } = await adsGoogleConnectUrlFn({ data: { locale } });
+      if (w) w.location.href = url;
+      else window.location.href = url;
+    } catch (e) {
+      w?.close();
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
   if (!g.configured) return null;
   const linked = g.link?.status === "linked";
+  const connectBtn = (label: string) => (
+    <button type="button" disabled={!!busy} onClick={() => void connect()} className="inline-flex items-center gap-1 rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50">
+      {busy === "gconnect" ? <Loader2 className="size-3.5 animate-spin" /> : <ExternalLink className="size-3.5" />}
+      {label}
+    </button>
+  );
   return (
     <div className="rounded-lg border border-border bg-surface p-3">
       <p className="text-xs font-semibold text-muted">{t("Google Ads")}</p>
       {linked ? (
         <p className="mt-1 text-ink">
-          ✓ {t("Cuenta")}: <b>{g.link!.name ?? g.link!.customerId}</b> <span className="text-muted">· {g.link!.customerId}{g.link!.currency ? ` · ${g.link!.currency}` : ""}</span>
+          ✓ {g.link!.oauthEmail ? <span className="text-muted">{g.link!.oauthEmail} · </span> : null}
+          <b>{g.link!.name ?? g.link!.customerId}</b> <span className="text-muted">· {g.link!.customerId}{g.link!.currency ? ` · ${g.link!.currency}` : ""}</span>
         </p>
+      ) : choosing ? (
+        <div className="mt-1">
+          <p className="text-muted">
+            ✓ {g.link!.oauthEmail ?? t("Google conectado")} · {t("elige la cuenta con tus campañas:")}
+          </p>
+          {accounts === null ? (
+            !error && <Loader2 className="mt-2 size-4 animate-spin text-muted" />
+          ) : accounts.length === 0 ? (
+            <p className="mt-1 text-xs font-semibold text-amber-700 dark:text-amber-400">{t("Ese Google no tiene cuentas de Google Ads. Reconecta con otra cuenta de Google.")}</p>
+          ) : (
+            <div className="mt-1.5 flex flex-wrap items-center gap-2">
+              <select value={pick} onChange={(e) => setPick(e.target.value)} aria-label={t("Cuenta de Google Ads")} className={`${field} mt-0 w-auto max-w-full`}>
+                {accounts.map((a) => (
+                  <option key={a.customerId} value={a.customerId} disabled={a.taken}>
+                    {a.name} · {a.customerId.replace(/(\d{3})(\d{3})(\d{4})/, "$1-$2-$3")}
+                    {a.currency ? ` · ${a.currency}` : ""}
+                    {a.taken ? ` (${t("en otro espacio")})` : ""}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={!!busy || !pick}
+                onClick={() => run("gselect", () => adsGoogleSelectFn({ data: { customerId: pick } }))}
+                className="inline-flex items-center gap-1 rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50"
+              >
+                {busy === "gselect" && <Loader2 className="size-3.5 animate-spin" />}
+                {t("Usar esta cuenta")}
+              </button>
+            </div>
+          )}
+        </div>
       ) : (
-        <>
-          {g.link && <p className="mt-1 text-xs font-semibold text-amber-700 dark:text-amber-400">{t("Todavía no nos da acceso: revisa el paso 2.")}</p>}
-          <ol className="mt-1.5 space-y-2 text-muted">
-            <li>
-              1.{" "}
-              <a href={googleUsersUrl(cid)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-semibold text-brand hover:underline">
-                {t("Abre Google Ads → Usuarios")} <ExternalLink className="size-3" />
-              </a>
-              <span className="block text-xs">{t("Ruta: Administrador (engrane) → Acceso y seguridad → Usuarios → botón +")}</span>
-            </li>
-            <li>
-              2. {t("Agrega este correo con acceso «Estándar» y guarda:")}
-              {g.serviceAccount && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    void navigator.clipboard?.writeText(g.serviceAccount!).then(() => {
-                      setCopied(true);
-                      setTimeout(() => setCopied(false), 1200);
-                    });
-                  }}
-                  className="mt-1 flex max-w-full items-center gap-1.5 rounded-md bg-surface-2 px-2 py-1 font-mono text-[11px] text-ink hover:bg-surface-3"
-                >
-                  <span className="truncate">{g.serviceAccount}</span>
-                  {copied ? <Check className="gc-pop size-3.5 shrink-0 text-emerald-500" aria-label={t("Copiado")} /> : <Copy className="size-3 shrink-0" />}
-                </button>
-              )}
-            </li>
-            <li>
-              3. {t("Escribe el ID de tu cuenta (arriba a la derecha en Google Ads, 123-456-7890):")}
-              <div className="mt-1 flex flex-wrap items-center gap-2">
-                <input value={cid} onChange={(e) => setCid(e.target.value)} placeholder="123-456-7890" inputMode="numeric" aria-label={t("ID de cliente de Google Ads")} className={`${field} mt-0 w-40`} />
-                <button
-                  type="button"
-                  disabled={!!busy || cid.replace(/\D/g, "").length !== 10}
-                  onClick={() => run("glink", () => adsGoogleLinkFn({ data: { customerId: cid } }))}
-                  className="inline-flex items-center gap-1 rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50"
-                >
-                  {busy === "glink" && <Loader2 className="size-3.5 animate-spin" />}
-                  {g.link ? t("Ya lo agregué") : t("Vincular")}
-                </button>
-              </div>
-            </li>
-          </ol>
-        </>
+        <div className="mt-1.5">
+          <p className="mb-2 text-muted">{t("Entra con el Google que administra tus campañas. Basta con acceso Estándar.")}</p>
+          {connectBtn(t("Conectar Google Ads"))}
+        </div>
       )}
       {error && <p className="mt-1 text-xs text-danger">{error}</p>}
       {g.link && (
-        <button type="button" disabled={!!busy} onClick={() => run("gunlink", () => adsGoogleUnlinkFn())} className="mt-2 text-xs text-muted hover:text-danger">
-          {t("Desvincular Google Ads")}
-        </button>
+        <div className="mt-2 flex gap-3 text-xs">
+          {(linked || choosing) && (
+            <button type="button" disabled={!!busy} onClick={() => void connect()} className="text-muted hover:text-ink">
+              {t("Reconectar")}
+            </button>
+          )}
+          <button type="button" disabled={!!busy} onClick={() => run("gunlink", () => adsGoogleUnlinkFn())} className="text-muted hover:text-danger">
+            {t("Desvincular Google Ads")}
+          </button>
+        </div>
       )}
     </div>
   );

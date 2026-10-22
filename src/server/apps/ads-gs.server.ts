@@ -113,7 +113,8 @@ export async function metaStatus(): Promise<MetaStatus & { error?: string }> {
 // Sin OAuth del cliente: gs lee con su service account, a la que el cliente agrega como usuario
 // Estándar en su cuenta de Google Ads (o vincula a la MCC de Ghosty). Mismo «nunca lanza».
 
-export type GoogleLink = { customerId: string; name: string | null; currency: string | null; status: "pending" | "linked"; via: "direct" | "mcc" };
+export type GoogleLink = { customerId: string; name: string | null; currency: string | null; status: "pending" | "choose" | "linked"; via: "direct" | "mcc"; oauthEmail?: string | null; oauth?: boolean };
+export type GoogleAccount = { customerId: string; name: string; currency: string | null; loginCustomerId: string | null; taken: boolean };
 export type GoogleStatus = { configured: boolean; serviceAccount: string | null; mcc: string | null; link: GoogleLink | null };
 export type GoogleCampaign = { id: string; name: string; status: string; configured: string | null; reasons: string[]; channel: string | null; dailyBudget: number | null };
 export type GoogleInsights = { spend: number; impressions: number; clicks: number; conversions: number; conversionsValue: number };
@@ -121,6 +122,9 @@ export type GoogleInsights = { spend: number; impressions: number; clicks: numbe
 type GoogleOps = {
   status: [Record<string, never>, GoogleStatus];
   link: [{ customerId: string; by: string }, GoogleStatus];
+  connect_url: [{ returnTo: string; email: string | null; locale?: string }, { url: string }];
+  accounts: [Record<string, never>, { items: GoogleAccount[] }];
+  select: [{ customerId: string; by: string }, GoogleStatus];
   unlink: [{ by: string }, Record<string, never>];
   campaigns: [Record<string, never>, { items: GoogleCampaign[] }];
   insights: [{ campaignIds?: string[]; days?: number }, { desde: string; hasta: string; currency: string | null; byCampaign: Record<string, GoogleInsights> }];

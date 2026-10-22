@@ -185,22 +185,60 @@ export const uninstallAdsFn = createServerFn({ method: "POST" }).handler(async (
 });
 
 /** El link firmado de gs al OAuth de Meta (vale 15 min). Vuelve a /ads al terminar. */
-export const adsConnectUrlFn = createServerFn({ method: "POST" }).handler(async () => {
+/** Lo que necesita un «Conectar» (Meta o Google): a dónde regresar y el correo de quien conecta. */
+async function connectContext(what: string) {
   const me = await requireOwner();
   const { reqOrigin } = await import("../../origin.server");
   const origin = await reqOrigin().catch(() => "");
   if (!origin) throw new Error("no pude resolver la dirección de este espacio");
   // gs sólo regresa a https de *.ghosty.studio: desde otro host (local) se dice aquí.
-  if (!/^https:\/\/([a-z0-9-]+\.)*ghosty\.studio$/i.test(origin)) throw new Error("conectar Meta sólo funciona desde tu espacio en ghosty.studio");
-  const { gsAds } = await import("./ads-gs.server");
-  // El correo liga la conexión a la cuenta de gs de quien conectó (su rol en Meta es el que vale).
+  if (!/^https:\/\/([a-z0-9-]+\.)*ghosty\.studio$/i.test(origin)) throw new Error(`conectar ${what} sólo funciona desde tu espacio en ghosty.studio`);
+  // El correo liga la conexión a la cuenta de gs de quien conectó (su rol en Meta/Google es el que vale).
   // La sesión no siempre trae el correo: si falta, sale del padrón del espacio.
   const db = await import("../../db.server");
   const email = (me as { email?: string | null }).email ?? (await db.emailsForSubsAny([me.sub]).catch(() => []))[0]?.email ?? null;
-  const r = await gsAds("connect_url", { returnTo: `${origin}/ads`, email });
+  return { returnTo: `${origin}/ads`, email };
+}
+
+export const adsConnectUrlFn = createServerFn({ method: "POST" }).handler(async () => {
+  const ctx = await connectContext("Meta");
+  const { gsAds } = await import("./ads-gs.server");
+  const r = await gsAds("connect_url", ctx);
   if (!r.ok) throw new Error(r.error);
   return { url: r.url };
 });
+
+/** «Conectar Google Ads»: link firmado por gs al consentimiento de Google (alcance `adwords`). */
+export const adsGoogleConnectUrlFn = createServerFn({ method: "POST" })
+  .validator((d: { locale?: string }) => d)
+  .handler(async ({ data }) => {
+    const ctx = await connectContext("Google Ads");
+    const { googleAds } = await import("./ads-gs.server");
+    const r = await googleAds("connect_url", { ...ctx, locale: data.locale === "en" ? "en" : "es" });
+    if (!r.ok) throw new Error(r.error);
+    return { url: r.url };
+  });
+
+/** Cuentas que ve el Google que se conectó (para elegir cuando hay varias). */
+export const adsGoogleAccountsFn = createServerFn({ method: "POST" }).handler(async () => {
+  await requireOwner();
+  const { googleAds } = await import("./ads-gs.server");
+  const r = await googleAds("accounts");
+  if (!r.ok) throw new Error(r.error);
+  return r.items;
+});
+
+export type GoogleAccount = Awaited<ReturnType<typeof adsGoogleAccountsFn>>[number];
+
+export const adsGoogleSelectFn = createServerFn({ method: "POST" })
+  .validator((d: { customerId: string }) => d)
+  .handler(async ({ data }) => {
+    const me = await requireOwner();
+    const { googleAds } = await import("./ads-gs.server");
+    const r = await googleAds("select", { customerId: String(data.customerId ?? ""), by: me.name ?? me.sub });
+    if (!r.ok) throw new Error(r.error);
+    return r.link;
+  });
 
 /** Elegir cuenta de anuncios y página (cuando la persona tiene varias). */
 export const adsSelectFn = createServerFn({ method: "POST" })
@@ -215,16 +253,6 @@ export const adsSelectFn = createServerFn({ method: "POST" })
   });
 
 /** Vincular (o volver a revisar) la cuenta de Google Ads: es el «Ya lo agregué». */
-export const adsGoogleLinkFn = createServerFn({ method: "POST" })
-  .validator((d: { customerId: string }) => d)
-  .handler(async ({ data }) => {
-    const me = await requireOwner();
-    const { googleAds } = await import("./ads-gs.server");
-    const r = await googleAds("link", { customerId: String(data.customerId ?? ""), by: me.name ?? me.sub });
-    if (!r.ok) throw new Error(r.error);
-    return r.link;
-  });
-
 export const adsGoogleUnlinkFn = createServerFn({ method: "POST" }).handler(async () => {
   const me = await requireOwner();
   const { googleAds } = await import("./ads-gs.server");
