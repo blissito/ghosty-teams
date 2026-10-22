@@ -12,7 +12,7 @@ import { useEffect, useState } from "react";
 import { ArrowLeft, ExternalLink, Loader2, Megaphone } from "lucide-react";
 import { useLocale, useT } from "../i18n";
 import { me } from "../server/auth";
-import { adsGoogleConnectUrlFn, adsGoogleSetStatusFn, adsImportableFn, adsImportFn, adsOverviewFn, adsRunReportFn, adsScheduleFn, setAdsScheduleFn } from "../server/apps/ads";
+import { adsGoogleConnectUrlFn, adsGoogleSetStatusFn, adsGoogleUnlinkFn, adsImportableFn, adsImportFn, adsOverviewFn, adsRunReportFn, adsScheduleFn, setAdsScheduleFn } from "../server/apps/ads";
 import { adsStatusLabel } from "../server/apps/ads-flow";
 import { mxn, tokenWarning } from "../server/apps/ads-proposal";
 import { Toggle } from "../components/Toggle";
@@ -60,6 +60,9 @@ function AdsPage() {
   }, []);
 
   const spend = data?.campaigns.reduce((a, c) => a + (c.spend ?? 0), 0) ?? 0;
+  // Siempre con moneda: «$641.31» solo no dice si son pesos o dólares.
+  const metaCurrency = data?.meta.adAccount?.currency ?? "MXN";
+  const money = (n: number | null | undefined) => (n == null ? "—" : `${mxn(n)} ${metaCurrency}`);
   const qualified = data?.campaigns.reduce((a, c) => a + (c.qualified ?? 0), 0) ?? 0;
 
   return (
@@ -122,9 +125,9 @@ function AdsPage() {
             <div className="mt-2 grid grid-cols-3 gap-2">
               {(
                 [
-                  [t("Gasto"), mxn(spend)],
+                  [t("Gasto"), money(spend)],
                   [t("Calificados"), String(qualified)],
-                  [t("Costo por lead calificado"), qualified ? mxn(Math.round((spend / qualified) * 100) / 100) : "—"],
+                  [t("Costo por lead calificado"), qualified ? money(Math.round((spend / qualified) * 100) / 100) : "—"],
                 ] as [string, string][]
               ).map(([k, v]) => (
                 <div key={k} className="rounded-lg border border-border bg-surface-2 px-3 py-2">
@@ -146,15 +149,15 @@ function AdsPage() {
                       {c.title}
                     </a>
                     <p className="truncate text-[11px] text-muted">
-                      {c.dailyBudget ? `${mxn(c.dailyBudget)} ${t("al día")}` : "—"}
-                      {c.spend != null ? ` · ${t("gasto")} ${mxn(c.spend)}` : ""}
+                      {c.dailyBudget ? `${money(c.dailyBudget)} ${t("al día")}` : "—"}
+                      {c.spend != null ? ` · ${t("gasto")} ${money(c.spend)}` : ""}
                       {c.qualified != null ? ` · ${c.qualified} ${t("calificados")}` : ""}
                       {c.imported ? ` · ${t("importada")}` : ""}
                     </p>
                   </div>
                   <span className="shrink-0 text-right text-xs">
                     <span className="block text-[10px] text-muted">{t("por calificado")}</span>
-                    <b className="tabular-nums text-ink">{c.costPerQualified == null ? "—" : mxn(c.costPerQualified)}</b>
+                    <b className="tabular-nums text-ink">{c.costPerQualified == null ? "—" : money(c.costPerQualified)}</b>
                   </span>
                   {c.hasPending && (
                     <span className="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:text-amber-400">
@@ -333,29 +336,36 @@ const G_STATUS: Record<string, [string, string]> = {
   SUSPENDED: ["Suspendida", "error"],
 };
 
-/** «Conectar Google Ads» aquí mismo: va al permiso de Google en esta pestaña y regresa a /ads. */
-function ConnectGoogle() {
-  const t = useT();
+/** Va al permiso de Google en esta misma pestaña; Google regresa a /ads?google=… */
+function useGoogleConnect() {
   const locale = useLocale();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const start = async () => {
+    setBusy(true);
+    setErr("");
+    try {
+      const { url } = await adsGoogleConnectUrlFn({ data: { locale } });
+      window.location.href = url;
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setBusy(false);
+    }
+  };
+  return { busy, err, start };
+}
+
+/** «Conectar Google Ads» aquí mismo: todo Google Ads vive en /ads, nada en Ajustes. */
+function ConnectGoogle() {
+  const t = useT();
+  const { busy, err, start } = useGoogleConnect();
   return (
     <div className="mt-2 rounded-xl border border-border bg-surface-2 px-3 py-3">
       <p className="text-xs text-muted">{t("Conéctalo para ver aquí sus campañas, gasto y conversiones. Entra con el Google que administra tus campañas; basta con acceso Estándar.")}</p>
       <button
         type="button"
         disabled={busy}
-        onClick={async () => {
-          setBusy(true);
-          setErr("");
-          try {
-            const { url } = await adsGoogleConnectUrlFn({ data: { locale } });
-            window.location.href = url;
-          } catch (e) {
-            setErr(e instanceof Error ? e.message : String(e));
-            setBusy(false);
-          }
-        }}
+        onClick={() => void start()}
         className="mt-2 inline-flex items-center gap-1 rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50"
       >
         {busy ? <Loader2 className="size-3.5 animate-spin" /> : <ExternalLink className="size-3.5" />}
@@ -371,7 +381,9 @@ function GoogleSection({ g, isOwner, justConnected, onChange }: { g: NonNullable
   const t = useT();
   const [ask, setAsk] = useState<{ id: string; name: string; to: "ACTIVE" | "PAUSED" } | null>(null);
   const [err, setErr] = useState("");
-  const money = (n: number) => (g.currency && g.currency !== "MXN" ? `${n.toLocaleString("es-MX", { maximumFractionDigits: 2 })} ${g.currency}` : mxn(n));
+  const [askUnlink, setAskUnlink] = useState(false);
+  const reconnect = useGoogleConnect();
+  const money = (n: number) => (g.currency && g.currency !== "MXN" ? `${n.toLocaleString("es-MX", { maximumFractionDigits: 2 })} ${g.currency}` : `${mxn(n)} MXN`);
   const linked = g.status.link?.status === "linked";
   const spend = g.campaigns.reduce((a, c) => a + c.spend, 0);
   const conv = g.campaigns.reduce((a, c) => a + c.conversions, 0);
@@ -387,7 +399,7 @@ function GoogleSection({ g, isOwner, justConnected, onChange }: { g: NonNullable
         <GoogleAccountPicker email={g.status.link.oauthEmail} onPicked={onChange} />
       ) : !linked ? (
         <p className="mt-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
-          {g.error ?? t("La cuenta de Google Ads todavía no nos da acceso.")} {isOwner ? t("Termínalo en Ajustes → Apps → Ghosty Ads.") : t("Pídeselo al dueño del espacio.")}
+          {g.error ?? t("La cuenta de Google Ads todavía no nos da acceso.")} {isOwner ? t("Vuelve a conectarla.") : t("Pídeselo al dueño del espacio.")}
         </p>
       ) : (
         <>
@@ -425,6 +437,37 @@ function GoogleSection({ g, isOwner, justConnected, onChange }: { g: NonNullable
           </ul>
           {err && <p className="mt-1.5 text-xs text-red-600 dark:text-red-400">{err}</p>}
         </>
+      )}
+      {isOwner && g.status.link && (
+        <div className="mt-2 flex items-center gap-3 text-[11px]">
+          <button type="button" disabled={reconnect.busy} onClick={() => void reconnect.start()} className="inline-flex items-center gap-1 font-semibold text-muted hover:text-ink disabled:opacity-50">
+            {reconnect.busy && <Loader2 className="size-3 animate-spin" />}
+            {t("Reconectar")}
+          </button>
+          <button type="button" onClick={() => setAskUnlink(true)} className="font-semibold text-muted hover:text-red-600">
+            {t("Desvincular Google Ads")}
+          </button>
+          {reconnect.err && <span className="text-red-600 dark:text-red-400">{reconnect.err}</span>}
+        </div>
+      )}
+      {askUnlink && (
+        <ConfirmModal
+          title={t("¿Desvincular Google Ads?")}
+          body={t("Dejas de ver sus campañas aquí y @ads ya no las lee. En Google Ads no cambia nada; puedes volver a conectarla.")}
+          confirmLabel={t("Desvincular")}
+          danger
+          onCancel={() => setAskUnlink(false)}
+          onConfirm={async () => {
+            setErr("");
+            try {
+              await adsGoogleUnlinkFn();
+              await onChange();
+            } catch (e) {
+              setErr(e instanceof Error ? e.message : String(e));
+            }
+            setAskUnlink(false);
+          }}
+        />
       )}
       {ask && (
         <ConfirmModal

@@ -1,15 +1,14 @@
 // Ajustes → Apps → Ghosty Ads (server/apps/ads.ts). Instalar pide dónde vive (room) y qué
 // agente de Studio hace de @ads; la app no crea agentes. Instalada: «Conectar Meta» (el OAuth
 // vive en gs y se abre en otra pestaña), la cuenta y la página conectadas, el selector si hay
-// varias, el agente de @ads y desinstalar. Google Ads: el ID de la cuenta + el correo de la service
-// account de gs como usuario Estándar; «Ya lo agregué» vuelve a revisar.
+// varias, el agente de @ads y desinstalar. Google Ads se conecta, elige y desvincula en /ads; aquí
+// sólo va la liga.
 import { useEffect, useState } from "react";
 import { ExternalLink, Loader2, Megaphone } from "lucide-react";
-import { useLocale, useT } from "../i18n";
-import { adsConnectUrlFn, adsGoogleConnectUrlFn, adsGoogleUnlinkFn, adsSelectFn, adsStatusFn, installAdsFn, setAdsAgentFn, uninstallAdsFn, type AdsAppStatus } from "../server/apps/ads";
+import { useT } from "../i18n";
+import { adsConnectUrlFn, adsSelectFn, adsStatusFn, installAdsFn, setAdsAgentFn, uninstallAdsFn, type AdsAppStatus } from "../server/apps/ads";
 import { listChannelsFn } from "../server/chat";
 import ConfirmModal from "./ConfirmModal";
-import { GoogleAccountPicker } from "./GoogleAccountPicker";
 import { tokenWarning } from "../server/apps/ads-proposal";
 
 type Room = { id: number; slug: string };
@@ -250,7 +249,14 @@ function Installed({ status, onChange }: { status: AdsAppStatus; onChange: () =>
         </button>
       </div>
 
-      <GoogleCard status={status} onChange={onChange} />
+      {status.google.configured && (
+        <p className="text-xs text-muted">
+          {t("Google Ads se conecta en Ghosty Ads.")}{" "}
+          <a href="/ads" className="font-semibold text-brand hover:underline">
+            {t("Abrir Ghosty Ads")} →
+          </a>
+        </p>
+      )}
 
       <label className="block">
         <span className="text-xs font-semibold text-muted">{t("Agente de @ads")}</span>
@@ -306,86 +312,6 @@ function Installed({ status, onChange }: { status: AdsAppStatus; onChange: () =>
             onChange();
           }}
         />
-      )}
-    </div>
-  );
-}
-
-/** Usuarios de la cuenta en Google Ads; con el ID ya escrito abre directo en esa cuenta. */
-function GoogleCard({ status, onChange }: { status: AdsAppStatus; onChange: () => void }) {
-  const t = useT();
-  const locale = useLocale();
-  const g = status.google;
-  const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const choosing = g.link?.status === "choose";
-  const run = async (key: string, fn: () => Promise<unknown>) => {
-    setBusy(key);
-    setError(null);
-    try {
-      await fn();
-      onChange();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(null);
-    }
-  };
-  // En esta misma pestaña: Google regresa a /ads (confeti y, si hay varias, elegir la cuenta ahí).
-  const connect = async () => {
-    setBusy("gconnect");
-    setError(null);
-    try {
-      const { url } = await adsGoogleConnectUrlFn({ data: { locale } });
-      window.location.href = url;
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-      setBusy(null);
-    }
-  };
-  if (!g.configured) return null;
-  const linked = g.link?.status === "linked";
-  const connectBtn = (label: string) => (
-    <button type="button" disabled={!!busy} onClick={() => void connect()} className="inline-flex items-center gap-1 rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50">
-      {busy === "gconnect" ? <Loader2 className="size-3.5 animate-spin" /> : <ExternalLink className="size-3.5" />}
-      {label}
-    </button>
-  );
-  return (
-    <div className="rounded-lg border border-border bg-surface p-3">
-      <p className="text-xs font-semibold text-muted">{t("Google Ads")}</p>
-      {linked ? (
-        <p className="mt-1 text-ink">
-          ✓ {g.link!.oauthEmail ? <span className="text-muted">{g.link!.oauthEmail} · </span> : null}
-          <b>{g.link!.customerId}</b>
-          {g.link!.name && g.link!.name.replace(/\D/g, "") !== g.link!.customerId.replace(/\D/g, "") ? <span className="text-muted"> · {g.link!.name}</span> : null}
-          {g.link!.currency ? <span className="text-muted"> · {g.link!.currency}</span> : null}
-        </p>
-      ) : choosing ? (
-        <div className="mt-1">
-          <p className="text-muted">
-            ✓ {g.link!.oauthEmail ?? t("Google conectado")}
-          </p>
-          <GoogleAccountPicker onPicked={onChange} />
-        </div>
-      ) : (
-        <div className="mt-1.5">
-          <p className="mb-2 text-muted">{t("Entra con el Google que administra tus campañas. Basta con acceso Estándar.")}</p>
-          {connectBtn(t("Conectar Google Ads"))}
-        </div>
-      )}
-      {error && <p className="mt-1 text-xs text-danger">{error}</p>}
-      {g.link && (
-        <div className="mt-2 flex gap-3 text-xs">
-          {(linked || choosing) && (
-            <button type="button" disabled={!!busy} onClick={() => void connect()} className="text-muted hover:text-ink">
-              {t("Reconectar")}
-            </button>
-          )}
-          <button type="button" disabled={!!busy} onClick={() => run("gunlink", () => adsGoogleUnlinkFn())} className="text-muted hover:text-danger">
-            {t("Desvincular Google Ads")}
-          </button>
-        </div>
       )}
     </div>
   );
