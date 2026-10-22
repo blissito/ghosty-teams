@@ -2305,6 +2305,7 @@ export const en: Record<string, string> = {
   "No hay campañas en la cuenta de Google Ads.": "There are no campaigns in the Google Ads account.",
   "No apta": "Not eligible",
   "Suspendida": "Suspended",
+  "Sin vincular. Vincula tu cuenta de Google Ads en Ajustes → Apps → Ghosty Ads para ver aquí sus campañas, gasto y conversiones.": "Not linked. Link your Google Ads account in Settings → Apps → Ghosty Ads to see its campaigns, spend and conversions here.",
   "¿Pausar la campaña?": "Pause the campaign?",
   "¿Reanudar la campaña?": "Resume the campaign?",
   "deja de mostrarse y de gastar en Google Ads.": "stops showing and spending on Google Ads.",
