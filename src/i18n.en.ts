@@ -2321,6 +2321,7 @@ export const en: Record<string, string> = {
   "¿Qué cuenta quieres ver aquí?": "Which account do you want to see here?",
   "tiene varias cuentas de Google Ads.": "has several Google Ads accounts.",
   "Trayendo campañas…": "Loading campaigns…",
+  "sin nombre en Google Ads": "no name in Google Ads",
   "Cancelaste el permiso de Google: Google Ads no se conectó.": "You cancelled Google's permission: Google Ads wasn't connected.",
   "No se pudo conectar Google Ads. Inténtalo de nuevo.": "Couldn't connect Google Ads. Try again.",
   "Conéctalo para ver aquí sus campañas, gasto y conversiones. Entra con el Google que administra tus campañas; basta con acceso Estándar.": "Connect it to see its campaigns, spend and conversions here. Sign in with the Google account that manages your campaigns; Standard access is enough.",

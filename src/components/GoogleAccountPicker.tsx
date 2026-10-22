@@ -49,7 +49,8 @@ export function GoogleAccountPicker({ email, onPicked }: { email?: string | null
         <ul className="mt-2 grid gap-2">
           {accounts.map((a) => {
             const busy = picking === a.customerId;
-            const named = a.name && a.name !== a.customerId;
+            // Sin nombre en Google Ads, gs manda el mismo ID con guiones: no se repite.
+            const named = !!a.name && a.name.replace(/\D/g, "") !== a.customerId.replace(/\D/g, "");
             return (
               <li key={a.customerId}>
                 <button
@@ -65,6 +66,7 @@ export function GoogleAccountPicker({ email, onPicked }: { email?: string | null
                     <span className="block truncate text-[11px] text-muted">
                       {named ? `${pretty(a.customerId)} · ` : ""}
                       {a.currency ?? ""}
+                      {named ? "" : ` · ${t("sin nombre en Google Ads")}`}
                       {a.taken ? ` · ${t("en otro espacio")}` : ""}
                     </span>
                   </span>

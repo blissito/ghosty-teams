@@ -358,7 +358,7 @@ function GoogleCard({ status, onChange }: { status: AdsAppStatus; onChange: () =
         <p className="mt-1 text-ink">
           ✓ {g.link!.oauthEmail ? <span className="text-muted">{g.link!.oauthEmail} · </span> : null}
           <b>{g.link!.customerId}</b>
-          {g.link!.name && g.link!.name !== g.link!.customerId ? <span className="text-muted"> · {g.link!.name}</span> : null}
+          {g.link!.name && g.link!.name.replace(/\D/g, "") !== g.link!.customerId.replace(/\D/g, "") ? <span className="text-muted"> · {g.link!.name}</span> : null}
           {g.link!.currency ? <span className="text-muted"> · {g.link!.currency}</span> : null}
         </p>
       ) : choosing ? (
