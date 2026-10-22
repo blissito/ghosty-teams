@@ -496,3 +496,130 @@ describe("cambio a campaña viva: presupuesto y comportamientos", () => {
     expect(liveChangeDiff(before, keep)).toEqual(["Edad 25–45 → 28–55"]);
   });
 });
+
+// ── Google Ads (Búsqueda) ────────────────────────────────────────────────────
+
+import { adsStatusLabel, isLive } from "./ads-flow";
+import {
+  applyGoogleEdit,
+  BASE_NEGATIVES,
+  describeGoogleChanges,
+  googleChangedFields,
+  googleForGs,
+  googleMaxTotal,
+  mergeGoogleSubmit,
+  parseGoogleProposal,
+  parseKeyword,
+  type GoogleProposal,
+} from "./ads-google-proposal";
+
+describe("estado por plataforma", () => {
+  it("«Creando en…» dice la plataforma; lo demás igual", () => {
+    expect(adsStatusLabel("creating")).toBe("Creando en Meta…");
+    expect(adsStatusLabel("creating", "google")).toBe("Creando en Google…");
+    expect(adsStatusLabel("paused", "google")).toBe("En pausa");
+  });
+  it("una de Google está viva pero no «en Meta»", () => {
+    expect(isLive("active")).toBe(true);
+    expect(inMeta("active", "google")).toBe(false);
+    expect(inMeta("active", "meta")).toBe(true);
+    expect(inMeta("proposal", "meta")).toBe(false);
+  });
+});
+
+const G = {
+  name: "Plomería CDMX",
+  final_url: "https://plomeria.example.com/urgencias",
+  headlines: ["Plomero urgente 24/7", "Llegamos en 40 minutos", "Presupuesto sin costo"],
+  descriptions: ["Destapamos caños y reparamos fugas el mismo día.", "Técnicos certificados en toda la CDMX."],
+  keywords: [{ text: "plomero urgente", volume: 1900 }],
+  daily_budget: 150,
+};
+
+describe("parseGoogleProposal", () => {
+  it("una válida: frase por default, negativas base, México sin zonas", () => {
+    const p = parseGoogleProposal(G, NOW) as GoogleProposal;
+    expect(typeof p).toBe("object");
+    expect(p.platform).toBe("google");
+    expect(p.keywords).toEqual([{ text: "plomero urgente", match: "phrase", volume: 1900 }]);
+    expect(p.negatives).toEqual(BASE_NEGATIVES);
+    expect(p.locations).toEqual([{ id: "2484", name: "México" }]);
+  });
+
+  it("negativas: las que manda se respetan; en una edición la lista vacía se queda vacía", () => {
+    const p = parseGoogleProposal({ ...G, negatives: ["Gratis", "gratis", "barato"] }, NOW) as GoogleProposal;
+    expect(p.negatives).toEqual(["gratis", "barato"]);
+    const e = applyGoogleEdit(parseGoogleProposal(G, NOW) as GoogleProposal, { negatives: [] }, NOW) as GoogleProposal;
+    expect(e.negatives).toEqual([]);
+  });
+
+  it("títulos: ≤30, sin repetidos (sin importar mayúsculas), de 3 a 15", () => {
+    expect(parseGoogleProposal({ ...G, headlines: [...G.headlines, "Un título larguísimo que pasa de treinta"] }, NOW)).toMatch(/título 4.*máximo 30/);
+    expect(parseGoogleProposal({ ...G, headlines: ["Uno", "uno", "Dos"] }, NOW)).toMatch(/de 3 a 15/);
+    const many = Array.from({ length: 16 }, (_, i) => `Título ${i}`);
+    expect(parseGoogleProposal({ ...G, headlines: many }, NOW)).toMatch(/de 3 a 15/);
+  });
+
+  it("descripciones: ≤90 y de 2 a 4", () => {
+    expect(parseGoogleProposal({ ...G, descriptions: ["Sólo una descripción."] }, NOW)).toMatch(/de 2 a 4/);
+    expect(parseGoogleProposal({ ...G, descriptions: ["x".repeat(91), "ok"] }, NOW)).toMatch(/máximo 90/);
+  });
+
+  it("concordancia: amplia se fuerza a frase; [..] es exacta; \"..\" es frase", () => {
+    expect(parseKeyword({ text: "bot whatsapp", match: "broad" })).toEqual({ text: "bot whatsapp", match: "phrase" });
+    expect(parseKeyword("[Agente WhatsApp]")).toEqual({ text: "agente whatsapp", match: "exact" });
+    expect(parseKeyword('"agente whatsapp"')).toEqual({ text: "agente whatsapp", match: "phrase" });
+    expect(parseKeyword("+bot +whatsapp")).toEqual({ text: "bot whatsapp", match: "phrase" });
+  });
+
+  it("palabra clave y negativa iguales: error, no se calla", () => {
+    expect(parseGoogleProposal({ ...G, negatives: ["plomero urgente"] }, NOW)).toMatch(/palabra clave y como negativa/);
+  });
+
+  it("url https, presupuesto 20–50,000, fin de mañana a 90 días", () => {
+    expect(parseGoogleProposal({ ...G, final_url: "http://x.com" }, NOW)).toMatch(/https/);
+    expect(parseGoogleProposal({ ...G, daily_budget: 10 }, NOW)).toMatch(/mínimo/);
+    expect(parseGoogleProposal({ ...G, end_date: "2026-10-01" }, NOW)).toMatch(/mañana/);
+    expect(parseGoogleProposal({ ...G, end_date: "2027-03-01" }, NOW)).toMatch(/90 días/);
+    expect((parseGoogleProposal({ ...G, end_date: "2026-10-31" }, NOW) as GoogleProposal).endDate).toBe("2026-10-31");
+  });
+
+  it("ubicaciones con ids reales; teléfono normalizado", () => {
+    expect(parseGoogleProposal({ ...G, locations: [{ id: "cdmx", name: "CDMX" }] }, NOW)).toMatch(/id/);
+    const p = parseGoogleProposal({ ...G, locations: [{ id: "geoTargetConstants/1010043", name: "Ciudad de México" }], phone: "55 1234 5678" }, NOW) as GoogleProposal;
+    expect(p.locations).toEqual([{ id: "1010043", name: "Ciudad de México" }]);
+    expect(p.phone).toBe("5512345678");
+    expect(parseGoogleProposal({ ...G, phone: "123" }, NOW)).toMatch(/teléfono/);
+  });
+});
+
+describe("versiones de Google", () => {
+  const p = parseGoogleProposal(G, NOW) as GoogleProposal;
+
+  it("mergeGoogleSubmit hereda lo que no se manda; \"\" quita un opcional", () => {
+    const withPhone = { ...p, phone: "5512345678" };
+    const merged = parseGoogleProposal(mergeGoogleSubmit(withPhone, { daily_budget: 300, phone: "" }), NOW, { baseNegatives: false }) as GoogleProposal;
+    expect(merged.dailyBudget).toBe(300);
+    expect(merged.headlines).toEqual(p.headlines);
+    expect(merged.phone).toBeUndefined();
+  });
+
+  it("applyGoogleEdit conserva el volumen de una palabra que se queda", () => {
+    const e = applyGoogleEdit(p, { keywords: [{ text: "plomero urgente", match: "exact" }, { text: "fuga de agua", match: "phrase" }] }, NOW) as GoogleProposal;
+    expect(e.keywords[0]).toEqual({ text: "plomero urgente", match: "exact", volume: 1900 });
+    expect(googleChangedFields(p, e)).toEqual(["keywords"]);
+    expect(describeGoogleChanges(["headlines", "dailyBudget"])).toBe("los títulos y el presupuesto");
+  });
+
+  it("a gs va sin platform, sin volumen y sin el rechazo guardado", () => {
+    const out = googleForGs({ ...p, policy: [{ field: "headlines", index: 0, text: "x", reason: "y" }] });
+    expect("platform" in out).toBe(false);
+    expect("policy" in out).toBe(false);
+    expect(out.keywords).toEqual([{ text: "plomero urgente", match: "phrase" }]);
+  });
+
+  it("techo: diario × 30 sin fin; × días hasta el fin si es antes", () => {
+    expect(googleMaxTotal(150, undefined, NOW)).toEqual({ total: 4500, days: 30, open: true });
+    expect(googleMaxTotal(100, "2026-10-10", NOW).days).toBe(10);
+  });
+});

@@ -44,12 +44,14 @@ export function nextAdsStatus(status: AdsStatus, event: AdsEvent): AdsStatus | n
   }
 }
 
-/** Etiqueta visible del estado. */
-export function adsStatusLabel(status: AdsStatus | string): string {
+export type AdsPlatform = "meta" | "google";
+
+/** Etiqueta visible del estado. «Creando en…» dice en qué plataforma. */
+export function adsStatusLabel(status: AdsStatus | string, platform: AdsPlatform | string = "meta"): string {
   return (
     {
       proposal: "Propuesta",
-      creating: "Creando en Meta…",
+      creating: platform === "google" ? "Creando en Google…" : "Creando en Meta…",
       paused: "En pausa",
       active: "Activa",
       ended: "Terminada",
@@ -59,7 +61,12 @@ export function adsStatusLabel(status: AdsStatus | string): string {
   )[status] ?? status;
 }
 
-/** ¿La campaña ya existe en Meta? (tiene ids y se le pueden pedir números). */
-export function inMeta(status: AdsStatus | string): boolean {
+/** ¿La campaña ya existe en su plataforma? (tiene ids y se le pueden pedir números). */
+export function isLive(status: AdsStatus | string): boolean {
   return status === "paused" || status === "active" || status === "ended";
+}
+
+/** ¿Existe en META? (embudo de Messenger, ubicaciones, revisión, cambios pendientes). */
+export function inMeta(status: AdsStatus | string, platform: AdsPlatform | string = "meta"): boolean {
+  return platform !== "google" && isLive(status);
 }

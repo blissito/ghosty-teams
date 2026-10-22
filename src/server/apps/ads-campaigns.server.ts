@@ -5,7 +5,7 @@
 // (`ads_proposal_submit`); crear, prender, pausar y cambiar presupuesto los pica una persona
 // desde su tarjeta, y cada uno queda en el hilo con su nombre.
 import { dbq } from "../../dbq.server";
-import { adsStatusLabel, nextAdsStatus, type AdsEvent, type AdsStatus } from "./ads-flow";
+import { adsStatusLabel, nextAdsStatus, type AdsEvent, type AdsPlatform, type AdsStatus } from "./ads-flow";
 import {
   attachmentIdOf,
   budgetRejection,
@@ -27,7 +27,18 @@ import {
   type ProposalField,
   type StoredProposal,
 } from "./ads-proposal";
-import { gsAds, type GsCampaign } from "./ads-gs.server";
+import { googleAds, gsAds, type GsCampaign } from "./ads-gs.server";
+import {
+  googleChangedFields,
+  googleForGs,
+  googleMaxTotal,
+  describeGoogleChanges,
+  isGoogleProposal,
+  type GoogleField,
+  type GooglePolicyIssue,
+  type GoogleProposal,
+  type StoredGoogleProposal,
+} from "./ads-google-proposal";
 import { versionLine } from "../../lib/ads-links";
 
 export const ADS_HANDLE = "ads";
@@ -37,6 +48,14 @@ export type PendingChange = LiveChange & { proposedBy: string; at: number };
 export type Campaign = {
   id: number;
   channelId: number;
+  /** meta | google. En una de Google, `proposal` es sólo la vista común (nombre, presupuesto,
+   *  fin) para listas y reportes; la propuesta de Búsqueda completa va en `google`. */
+  platform: AdsPlatform;
+  google: StoredGoogleProposal | null;
+  googleCampaignId: string | null;
+  googleAdGroupId: string | null;
+  googleAdId: string | null;
+  googleBudgetId: string | null;
   rootMsgId: number | null;
   cardMsgId: number | null;
   title: string;
@@ -64,16 +83,33 @@ function parseJson<T>(s: unknown, fallback: T): T {
   }
 }
 
+/** Fin de una campaña de Google (YYYY-MM-DD) como ISO a las 23:59 de la Ciudad de México. */
+const endOfDayCdmx = (d: string | undefined) => (d ? `${d}T23:59:00-06:00` : "");
+
+/** Lo común de una propuesta de Google con la forma de la de Meta (nombre, presupuesto, fin). */
+export function commonView(g: GoogleProposal): StoredProposal {
+  return { name: g.name, dailyBudget: g.dailyBudget, endTime: endOfDayCdmx(g.endDate) } as StoredProposal;
+}
+
 const toCampaign = (r: Record<string, any>): Campaign => {
   const adIds = parseJson<string[]>(r.ad_ids, []);
+  const platform: AdsPlatform = r.platform === "google" ? "google" : "meta";
+  const raw = parseJson<Record<string, unknown>>(r.proposal_json, {});
+  const google = platform === "google" && isGoogleProposal(raw) ? (raw as StoredGoogleProposal) : null;
   return {
     id: Number(r.id),
     channelId: Number(r.channel_id),
+    platform,
+    google,
+    googleCampaignId: r.google_campaign_id ?? null,
+    googleAdGroupId: r.google_ad_group_id ?? null,
+    googleAdId: r.google_ad_id ?? null,
+    googleBudgetId: r.google_budget_id ?? null,
     rootMsgId: r.root_msg_id != null ? Number(r.root_msg_id) : null,
     cardMsgId: r.card_msg_id != null ? Number(r.card_msg_id) : null,
     title: String(r.title),
     status: r.status as AdsStatus,
-    proposal: parseJson<StoredProposal>(r.proposal_json, {} as StoredProposal),
+    proposal: google ? commonView(google) : (raw as StoredProposal),
     metaCampaignId: r.meta_campaign_id ?? null,
     metaAdsetId: r.meta_adset_id ?? null,
     metaAdId: r.meta_ad_id ?? null,
@@ -236,25 +272,31 @@ export async function listVersions(campaignId: number): Promise<ProposalVersion[
   }));
 }
 
-async function insertVersion(campaignId: number, version: number, p: StoredProposal, editedBy: string, changed: ProposalField[] | null) {
+async function insertVersion(campaignId: number, version: number, p: StoredProposal | StoredGoogleProposal, editedBy: string, changed: (ProposalField | GoogleField)[] | null) {
+  const { previewSrc, previewNote, estimate } = p as Partial<StoredProposal>;
   await dbq(
     `INSERT INTO gt_ads_proposal_versions (campaign_id, version, proposal_json, preview_src, preview_note, estimate_json, edited_by, changed_fields)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       campaignId,
       version,
-      JSON.stringify(bare(p)),
-      p.previewSrc ?? null,
-      p.previewNote ?? null,
-      p.estimate ? JSON.stringify(p.estimate) : null,
+      JSON.stringify(isGoogleProposal(p) ? bareGoogle(p) : bare(p as StoredProposal)),
+      previewSrc ?? null,
+      previewNote ?? null,
+      estimate ? JSON.stringify(estimate) : null,
       editedBy,
       changed ? JSON.stringify(changed) : null,
     ],
   );
 }
 
+const bareGoogle = (p: StoredGoogleProposal): GoogleProposal => {
+  const { policy: _p, ...rest } = p;
+  return rest;
+};
+
 /** La v1 de una campaña recién propuesta. */
-export async function recordFirstVersion(campaignId: number, p: StoredProposal, editedBy: string): Promise<void> {
+export async function recordFirstVersion(campaignId: number, p: StoredProposal | StoredGoogleProposal, editedBy: string): Promise<void> {
   await insertVersion(campaignId, 1, p, editedBy, null).catch(() => {});
 }
 
@@ -326,6 +368,111 @@ export async function saveVersion(
   return { version, changed, ...(previewError ? { previewError } : {}) };
 }
 
+// ── Versiones de una propuesta de Google ─────────────────────────────────────
+
+export type GoogleVersion = { version: number; proposal: GoogleProposal; editedBy: string; changedFields: GoogleField[]; createdAt: number };
+
+export async function listGoogleVersions(campaignId: number): Promise<GoogleVersion[]> {
+  const rows = await dbq("SELECT * FROM gt_ads_proposal_versions WHERE campaign_id = ? ORDER BY version DESC", [campaignId]).catch(() => []);
+  return rows
+    .map((r) => ({
+      version: Number(r.version),
+      proposal: parseJson<GoogleProposal>(r.proposal_json, {} as GoogleProposal),
+      editedBy: String(r.edited_by),
+      changedFields: parseJson<GoogleField[]>(r.changed_fields, []),
+      createdAt: Number(r.created_at ?? 0),
+    }))
+    .filter((v) => isGoogleProposal(v.proposal));
+}
+
+/**
+ * Versión nueva de una propuesta de Google (de @ads o de una persona en la tarjeta). Mismo
+ * patrón que `saveVersion`: la MISMA tarjeta se repinta y el hilo lo dice en una línea. Al
+ * guardar se borra el rechazo de política anterior (ya se corrigió o se volverá a validar).
+ */
+export async function saveGoogleVersion(
+  c: Campaign,
+  next: GoogleProposal,
+  editor: { editedBy: string; display: string },
+  alsoIn: { channelId: number; parentId: number | null } | null = null,
+): Promise<{ version: number; changed: GoogleField[] }> {
+  if (c.platform !== "google" || !c.google) throw new Error(`la campaña #${c.id} no es de Google`);
+  if (c.status !== "proposal") throw new Error(`la campaña #${c.id} ya no es propuesta: su propuesta no se edita`);
+  const changed = googleChangedFields(bareGoogle(c.google), next);
+  if (!changed.length) throw new Error("no cambió nada respecto a la versión vigente");
+  const versions = await listGoogleVersions(c.id);
+  if (!versions.length) await insertVersion(c.id, 1, c.google, AGENT_EDITOR, null).catch(() => {});
+  const version = (versions[0]?.version ?? 1) + 1;
+  try {
+    await insertVersion(c.id, version, next, editor.editedBy, changed);
+  } catch {
+    throw new Error("alguien más guardó una versión al mismo tiempo; vuelve a mirarla");
+  }
+  const rows = await dbq(
+    "UPDATE gt_ads_campaigns SET proposal_json = ?, title = ?, updated_at = unixepoch() WHERE id = ? AND status = 'proposal' RETURNING id",
+    [JSON.stringify(next), next.name.slice(0, 120), c.id],
+  );
+  if (!rows.length) throw new Error(`la campaña #${c.id} cambió mientras tanto; vuelve a mirarla`);
+  const line = editor.editedBy === AGENT_EDITOR ? versionLine("@ads", null, c.id, version) : versionLine(editor.display, describeGoogleChanges(changed), c.id, version);
+  await postInThread(c, line);
+  if (alsoIn) await postAsAds(alsoIn.channelId, alsoIn.parentId, line);
+  const { refreshRoom } = await import("./factory-runs.server");
+  void refreshRoom(c.channelId);
+  return { version, changed };
+}
+
+/** «Abrir en Google Ads ↗»: la campaña en la cuenta vinculada (`__c` = cliente sin guiones). */
+export function googleAdsUrl(campaignId: string, customerId: string | null | undefined): string {
+  const q = new URLSearchParams({ campaignId });
+  const c = String(customerId ?? "").replace(/\D/g, "");
+  if (c) q.set("__c", c);
+  return `https://ads.google.com/aw/campaigns?${q.toString()}`;
+}
+
+/** Guarda en la fila el rechazo de política de Google (para resaltar el título culpable). */
+async function savePolicy(c: Campaign, policy: GooglePolicyIssue[] | undefined) {
+  if (!c.google) return;
+  await dbq("UPDATE gt_ads_campaigns SET proposal_json = ? WHERE id = ?", [JSON.stringify({ ...c.google, policy: policy?.length ? policy : null }), c.id]).catch(() => {});
+}
+
+/** Texto legible de un rechazo de política: «Título 3 («…»): motivo». */
+export function policyText(policy: GooglePolicyIssue[] | undefined): string {
+  if (!policy?.length) return "";
+  const label = { headlines: "Título", descriptions: "Descripción", keywords: "Palabra clave" } as const;
+  return policy.map((x) => `${label[x.field] ?? x.field} ${x.index + 1} («${x.text}»): ${x.reason}`).join("; ");
+}
+
+/** [Crear en pausa] de Google: presupuesto, campaña, grupo, palabras y anuncio en UN mutate de gs. */
+async function createPausedGoogle(c: Campaign, me: Who): Promise<Campaign> {
+  if (!c.google) throw new Error("la propuesta de Google no se pudo leer");
+  const claimed = await applyAdsEvent(c, "create", { approved_by: me.sub, error: null });
+  const r = await googleAds("create_paused", { proposal: googleForGs(c.google), requestedBy: me.sub });
+  if (!r.ok) {
+    const why = [r.error, policyText(r.policy)].filter(Boolean).join(" — ");
+    const failed = await applyAdsEvent(claimed, "create_failed", { error: why.slice(0, 1000) });
+    await savePolicy(failed, r.policy);
+    await postInThread(
+      failed,
+      `⚠️ No se pudo crear la campaña #${c.id} en Google Ads: ${why}\nNo se gastó nada. Corrígelo en la tarjeta (o con @ads) y dale «Reintentar».`,
+    );
+    throw new Error(why);
+  }
+  const done = await applyAdsEvent(claimed, "created", {
+    google_campaign_id: r.campaignId,
+    google_ad_group_id: r.adGroupId,
+    google_ad_id: r.adId,
+    google_budget_id: r.budgetId,
+  });
+  await savePolicy(done, undefined);
+  await postInThread(
+    done,
+    `⏸️ ${whoName(me)} creó la campaña #${c.id} **en pausa** en Google Ads (Búsqueda). No gasta nada hasta que alguien la prenda desde su tarjeta.` +
+      (r.measured ? " Las llamadas desde el anuncio se miden como conversión." : " ⚠️ Sin medición de llamadas: no lleva teléfono."),
+  );
+  await ensureCampaignCard(done);
+  return done;
+}
+
 // ── Los botones ──────────────────────────────────────────────────────────────
 
 type Who = { sub: string; name?: string | null };
@@ -333,6 +480,7 @@ const whoName = (me: Who) => me.name || "Alguien";
 
 /** [Crear en pausa]: la campaña, el conjunto y el anuncio nacen en PAUSED en Meta. */
 export async function createPaused(c: Campaign, me: Who): Promise<Campaign> {
+  if (c.platform === "google") return createPausedGoogle(c, me);
   const claimed = await applyAdsEvent(c, "create", { approved_by: me.sub, error: null });
   const p = await forGs(claimed);
   const r = "error" in p ? { ok: false as const, error: p.error } : await gsAds("create_paused", { proposal: p, requestedBy: me.sub });
@@ -357,10 +505,10 @@ export async function createPaused(c: Campaign, me: Who): Promise<Campaign> {
   return done;
 }
 
-/** [Cancelar] una propuesta (o una que falló al crearse). No toca Meta. */
+/** [Cancelar] una propuesta (o una que falló al crearse). No toca Meta ni Google. */
 export async function cancelCampaign(c: Campaign, me: Who): Promise<Campaign> {
   const next = await applyAdsEvent(c, "cancel", { approved_by: me.sub });
-  await postInThread(next, `✖️ ${whoName(me)} canceló la propuesta #${c.id}. En Meta no se creó nada.`);
+  await postInThread(next, `✖️ ${whoName(me)} canceló la propuesta #${c.id}. En ${c.platform === "google" ? "Google Ads" : "Meta"} no se creó nada.`);
   return next;
 }
 
@@ -374,9 +522,13 @@ export async function retryCampaign(c: Campaign): Promise<Campaign> {
  * llamada) y se regresa si Meta dice que no.
  */
 export async function setStatus(c: Campaign, me: Who, to: "ACTIVE" | "PAUSED"): Promise<Campaign> {
-  if (!c.metaCampaignId) throw new Error("la campaña todavía no existe en Meta");
+  const google = c.platform === "google";
+  const remoteId = google ? c.googleCampaignId : c.metaCampaignId;
+  if (!remoteId) throw new Error(`la campaña todavía no existe en ${google ? "Google Ads" : "Meta"}`);
   const claimed = await applyAdsEvent(c, to === "ACTIVE" ? "activate" : "pause", { approved_by: me.sub });
-  const r = await gsAds("set_status", { campaignId: c.metaCampaignId, status: to, by: me.sub });
+  const r = google
+    ? await googleAds("set_status", { campaignId: remoteId, status: to, by: me.sub })
+    : await gsAds("set_status", { campaignId: remoteId, status: to, by: me.sub });
   if (!r.ok) {
     await dbq("UPDATE gt_ads_campaigns SET status = ?, approved_by = ?, updated_at = unixepoch() WHERE id = ? AND status = ?", [
       c.status,
@@ -391,8 +543,8 @@ export async function setStatus(c: Campaign, me: Who, to: "ACTIVE" | "PAUSED"): 
   await postInThread(
     claimed,
     to === "ACTIVE"
-      ? `▶️ ${whoName(me)} prendió la campaña #${c.id}: gasta hasta ${mxn(c.proposal.dailyBudget)} al día.`
-      : `⏸️ ${whoName(me)} pausó la campaña #${c.id}. Deja de gastar.`,
+      ? `▶️ ${whoName(me)} prendió la campaña #${c.id}${google ? " en Google Ads" : ""}: gasta hasta ${mxn(c.proposal.dailyBudget)} al día.`
+      : `⏸️ ${whoName(me)} pausó la campaña #${c.id}${google ? " en Google Ads" : ""}. Deja de gastar.`,
   );
   return claimed;
 }
@@ -402,16 +554,29 @@ export async function setBudget(c: Campaign, me: Who, dailyBudget: number): Prom
   const amount = Math.round(Number(dailyBudget) * 100) / 100;
   const bad = budgetRejection(amount);
   if (bad) throw new Error(bad);
-  if (!c.metaCampaignId) throw new Error("la campaña todavía no existe en Meta");
+  const google = c.platform === "google";
+  const remoteId = google ? c.googleCampaignId : c.metaCampaignId;
+  if (!remoteId) throw new Error(`la campaña todavía no existe en ${google ? "Google Ads" : "Meta"}`);
   if (nextAdsStatus(c.status, "budget") == null) throw new Error(`la campaña #${c.id} está «${adsStatusLabel(c.status)}»: su presupuesto ya no se cambia`);
-  const r = await gsAds("set_budget", { campaignId: c.metaCampaignId, dailyBudget: amount, by: me.sub });
+  const r = google
+    ? await googleAds("set_budget", { campaignId: remoteId, dailyBudget: amount, by: me.sub })
+    : await gsAds("set_budget", { campaignId: remoteId, dailyBudget: amount, by: me.sub });
   if (!r.ok) throw new Error(r.error);
   const before = c.proposal.dailyBudget;
   const next = await applyAdsEvent(c, "budget", {
     approved_by: me.sub,
-    proposal_json: JSON.stringify({ ...c.proposal, dailyBudget: amount }),
+    proposal_json: JSON.stringify(google && c.google ? { ...c.google, dailyBudget: amount } : { ...c.proposal, dailyBudget: amount }),
   });
-  await postInThread(next, `💰 ${whoName(me)} cambió el presupuesto de la campaña #${c.id}: ${mxn(before)} → **${mxn(amount)} al día**.`);
+  await postInThread(
+    next,
+    `💰 ${whoName(me)} cambió el presupuesto de la campaña #${c.id}${google ? " en Google Ads" : ""}: ${mxn(before)} → **${mxn(amount)} al día**.` +
+      (google && c.google
+        ? (() => {
+            const m = googleMaxTotal(amount, c.google.endDate, Date.now());
+            return ` Máximo ~${mxn(m.total)} en ${m.days} días.`;
+          })()
+        : ""),
+  );
   return next;
 }
 

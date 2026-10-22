@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { sessionUser } from "../chat";
 import type { ProposalEdit } from "./ads-proposal";
+import type { GoogleProposalEdit } from "./ads-google-proposal";
 import { campaignLink } from "../../lib/ads-links";
 
 // Ghosty Ads: campañas de Meta que llevan a Messenger, desde un room con `@ads`.
@@ -13,7 +14,8 @@ import { campaignLink } from "../../lib/ads-links";
 //  4. la fila en `gt_installed_apps`, que es lo que hace aparecer las tools `ads_*`.
 // La credencial de Meta la guarda gs: «Conectar Meta» abre su OAuth en otra pestaña.
 // Google Ads no tiene OAuth: el dueño da el ID de su cuenta y agrega como usuario Estándar el
-// correo de la service account de gs; gs lee y pausa con ella. Crear campañas sigue siendo de Meta.
+// correo de la service account de gs; gs lee y pausa con ella. Desde el 22-oct @ads también
+// propone campañas de Búsqueda de Google y una persona las crea en pausa desde la misma tarjeta.
 // Desinstalar apaga `@ads` y sus tools; las campañas y Meta no se tocan.
 
 type AdsCfg = {
@@ -273,7 +275,19 @@ export const adsGoogleSetStatusFn = createServerFn({ method: "POST" })
     return { ok: true as const };
   });
 
-export type GoogleCampaignRow = { id: string; name: string; status: string; dailyBudget: number | null; spend: number; clicks: number; conversions: number; reasons: string[] };
+export type GoogleCampaignRow = {
+  id: string;
+  name: string;
+  status: string;
+  dailyBudget: number | null;
+  spend: number;
+  clicks: number;
+  conversions: number;
+  reasons: string[];
+  /** La creó @ads: su #N y la liga a su hilo. */
+  ownId?: number;
+  threadUrl?: string | null;
+};
 
 /** Campañas de Google con sus números de 30 días; vacío si no hay cuenta vinculada. */
 async function googleCampaigns() {
@@ -325,8 +339,25 @@ export const adsProposalCardFn = createServerFn({ method: "POST" })
     const { c, C, ch } = v;
     let previewSrc = c.proposal.previewSrc ?? null;
     let previewNote = c.proposal.previewNote ?? null;
+    // Google: la vista previa la arma la tarjeta (como sale en el buscador); se manda la propuesta
+    // completa, sus versiones y la moneda de la cuenta.
+    const googleExtra =
+      c.platform === "google" && c.google
+        ? await (async () => {
+            const { googleStatus } = await import("./ads-gs.server");
+            const [st, gv] = await Promise.all([googleStatus(), C.listGoogleVersions(c.id)]);
+            return {
+              google: c.google!,
+              googleVersions: gv.slice(1),
+              googleVersion: gv[0]?.version ?? 1,
+              googleEditedBy: gv[0]?.editedBy ?? null,
+              currency: st.link?.currency ?? null,
+              googleUrl: c.googleCampaignId ? C.googleAdsUrl(c.googleCampaignId, st.link?.customerId) : null,
+            };
+          })()
+        : null;
     // Sin vista previa al proponer (gs no contestó): se pide otra vez mientras siga en propuesta.
-    if (!previewSrc && !previewNote && c.status === "proposal") {
+    if (c.platform === "meta" && !previewSrc && !previewNote && c.status === "proposal") {
       const p = await C.forGs(c);
       if (!("error" in p)) {
         const { gsAds } = await import("./ads-gs.server");
@@ -344,14 +375,16 @@ export const adsProposalCardFn = createServerFn({ method: "POST" })
     const versions = await C.listVersions(c.id);
     return {
       campaignId: c.id,
+      platform: c.platform,
       status: c.status,
       error: c.error,
       proposal,
       estimate: c.proposal.estimate ?? null,
       previewSrc,
       previewNote,
-      version: versions[0]?.version ?? 1,
-      versions: versions.slice(1),
+      version: googleExtra?.googleVersion ?? versions[0]?.version ?? 1,
+      versions: googleExtra ? [] : versions.slice(1),
+      googleData: googleExtra,
       /** El mensaje que es la tarjeta de la campaña: si es ésta, al crearse se vuelve la de campaña. */
       cardMsgId: c.cardMsgId,
       title: c.title,
@@ -413,6 +446,7 @@ export const adsEditProposalFn = createServerFn({ method: "POST" })
     if (!v) throw new Error("no ves esa campaña");
     const { me, C, c } = v;
     if (c.status !== "proposal") throw new Error("sólo se edita mientras es propuesta");
+    if (c.platform === "google") throw new Error("esa propuesta es de Google: se edita en su tarjeta");
     const { applyEdit } = await import("./ads-proposal");
     const e = data.edit ?? {};
     const edit: ProposalEdit = {
@@ -463,6 +497,15 @@ export const adsUseVersionFn = createServerFn({ method: "POST" })
     const v = await visibleCampaign(Number(data.campaignId));
     if (!v) throw new Error("no ves esa campaña");
     const { me, C, c } = v;
+    if (c.platform === "google") {
+      const old = (await C.listGoogleVersions(c.id)).find((x) => x.version === Number(data.version));
+      if (!old) throw new Error("esa versión no existe");
+      const { applyGoogleEdit } = await import("./ads-google-proposal");
+      const next = applyGoogleEdit(old.proposal, {}, Date.now());
+      if (typeof next === "string") throw new Error(`la v${old.version} ya no es válida: ${next}`);
+      const r = await C.saveGoogleVersion(c, next, await editorOf(me));
+      return { ok: true as const, version: r.version };
+    }
     const old = (await C.listVersions(c.id)).find((x) => x.version === Number(data.version));
     if (!old) throw new Error("esa versión no existe");
     // Se revalida: una fecha de fin que ya pasó no vuelve a ser vigente.
@@ -473,6 +516,56 @@ export const adsUseVersionFn = createServerFn({ method: "POST" })
     return { ok: true as const, version: r.version };
   });
 
+// ── Propuesta de Google (Búsqueda) ───────────────────────────────────────────
+
+/** Edición en línea de una propuesta de Google: misma validación que @ads, versión nueva. */
+export const adsEditGoogleProposalFn = createServerFn({ method: "POST" })
+  .validator((d: { campaignId: number; edit: GoogleProposalEdit }) => d)
+  .handler(async ({ data }) => {
+    const v = await visibleCampaign(Number(data.campaignId));
+    if (!v) throw new Error("no ves esa campaña");
+    const { me, C, c } = v;
+    if (c.platform !== "google" || !c.google) throw new Error("esa campaña no es de Google");
+    if (c.status !== "proposal") throw new Error("sólo se edita mientras es propuesta");
+    const { applyGoogleEdit } = await import("./ads-google-proposal");
+    const { policy: _p, ...current } = c.google;
+    const next = applyGoogleEdit(current, data.edit ?? {}, Date.now());
+    if (typeof next === "string") throw new Error(next);
+    const r = await C.saveGoogleVersion(c, next, await editorOf(me));
+    return { ok: true as const, version: r.version };
+  });
+
+/** Buscador de ubicaciones de Google para la tarjeta (sólo lee, por gs). */
+export const adsGoogleLocationSearchFn = createServerFn({ method: "POST" })
+  .validator((d: { campaignId: number; q: string }) => d)
+  .handler(async ({ data }) => {
+    const v = await visibleCampaign(Number(data.campaignId));
+    if (!v) throw new Error("no ves esa campaña");
+    const q = String(data.q ?? "").trim().slice(0, 80);
+    if (q.length < 2) return [];
+    const { googleAds } = await import("./ads-gs.server");
+    const r = await googleAds("locations", { q });
+    if (!r.ok) throw new Error(r.error);
+    return (r.locations ?? []).slice(0, 12);
+  });
+
+/**
+ * Antes de «Crear en pausa»: Google revisa la propuesta en seco (validateOnly) y devuelve qué
+ * título o descripción viola una política, para marcarlo en la tarjeta antes de confirmar.
+ */
+export const adsGoogleValidateFn = createServerFn({ method: "POST" })
+  .validator((d: { campaignId: number }) => d)
+  .handler(async ({ data }) => {
+    const v = await visibleCampaign(Number(data.campaignId));
+    if (!v) throw new Error("no ves esa campaña");
+    const { c } = v;
+    if (c.platform !== "google" || !c.google) throw new Error("esa campaña no es de Google");
+    const { googleForGs } = await import("./ads-google-proposal");
+    const { googleAds } = await import("./ads-gs.server");
+    const r = await googleAds("validate", { proposal: googleForGs(c.google) });
+    return r.ok ? { ok: true as const, error: null, policy: [] } : { ok: false as const, error: r.error, policy: r.policy ?? [] };
+  });
+
 /** Lo que pinta `gt-ads-campaign`: estado y embudo en vivo. */
 export const adsCampaignCardFn = createServerFn({ method: "POST" })
   .validator((d: { campaignId: number }) => d)
@@ -480,10 +573,27 @@ export const adsCampaignCardFn = createServerFn({ method: "POST" })
     const v = await visibleCampaign(Number(data.campaignId));
     if (!v) return null;
     const { c, C } = v;
-    const { inMeta } = await import("./ads-flow");
-    const f = inMeta(c.status) ? await C.funnels([c]) : null;
+    const { inMeta, isLive } = await import("./ads-flow");
+    const f = inMeta(c.status, c.platform) ? await C.funnels([c]) : null;
+    // Google: gasto, clics y conversiones de 30 días de ESA campaña, y la liga a Google Ads.
+    const g =
+      c.platform === "google" && c.googleCampaignId && isLive(c.status)
+        ? await (async () => {
+            const { googleAds, googleStatus } = await import("./ads-gs.server");
+            const [st, ins] = await Promise.all([googleStatus(), googleAds("insights", { campaignIds: [c.googleCampaignId!], days: 30 })]);
+            const n = ins.ok ? ins.byCampaign[c.googleCampaignId!] : undefined;
+            return {
+              url: C.googleAdsUrl(c.googleCampaignId!, st.link?.customerId),
+              currency: st.link?.currency ?? null,
+              stats: n ? { spend: n.spend, clicks: n.clicks, conversions: Math.round(n.conversions * 10) / 10 } : null,
+              error: ins.ok ? null : ins.error,
+            };
+          })()
+        : null;
     return {
       campaignId: c.id,
+      platform: c.platform,
+      google: g,
       title: c.title,
       status: c.status,
       imported: c.imported,
@@ -510,7 +620,9 @@ export const adsReportCardFn = createServerFn({ method: "POST" })
     return {
       at: r.data.at,
       items: r.data.items.map((i) => ({ ...i, threadUrl: i.threadId ? `/c/${ch.slug}?thread=${i.threadId}` : null })),
-      google: r.data.google ?? null,
+      google: r.data.google
+        ? { ...r.data.google, items: r.data.google.items.map((g) => ({ ...g, threadUrl: g.ownId && g.threadId ? campaignLink(ch.slug, g.threadId, g.ownId) : null })) }
+        : null,
     };
   });
 
@@ -648,6 +760,7 @@ export const adsActionFn = createServerFn({ method: "POST" })
 
 export type AdsCampaignRow = {
   id: number;
+  platform: "meta" | "google";
   title: string;
   status: string;
   imported: boolean;
@@ -679,13 +792,14 @@ export const adsOverviewFn = createServerFn({ method: "GET" }).handler(async () 
   const cs = installed ? await C.campaignsOf([...byId.keys()]) : [];
   const { inMeta } = await import("./ads-flow");
   // Números sólo de las que existen en Meta (las terminadas también: su gasto ya pasó).
-  const { byId: funnels, error } = await C.funnels(cs.filter((c) => inMeta(c.status)));
+  const { byId: funnels, error } = await C.funnels(cs.filter((c) => inMeta(c.status, c.platform)));
   const campaigns: AdsCampaignRow[] = cs.map((c) => {
     const f = funnels.get(c.id);
     const ch = byId.get(c.channelId)!;
     const thread = c.rootMsgId ?? c.cardMsgId;
     return {
       id: c.id,
+      platform: c.platform,
       title: c.title,
       status: c.status,
       imported: c.imported,
@@ -699,6 +813,15 @@ export const adsOverviewFn = createServerFn({ method: "GET" }).handler(async () 
       hasPending: !!c.pending,
     };
   });
+  // Las de Google que creó @ads: «#N · ver hilo» en la sección de Google (si quien mira ve su room).
+  if (google) {
+    const own = new Map(cs.filter((c) => c.googleCampaignId).map((c) => [c.googleCampaignId!, c]));
+    google.campaigns = google.campaigns.map((g) => {
+      const c = own.get(g.id);
+      const ch = c ? byId.get(c.channelId) : null;
+      return c && ch ? { ...g, ownId: c.id, threadUrl: campaignLink(ch.slug, c.rootMsgId ?? c.cardMsgId ?? null, c.id) } : g;
+    });
+  }
   return {
     installed,
     isOwner: !!me.isOwner,

@@ -1168,6 +1168,15 @@ async function migrate(): Promise<void> {
   // Último estado de revisión de Meta que se avisó en el hilo (approved | in_review |
   // rejected | with_issues): el aviso sale UNA vez por cambio. NULL = aún no se revisa.
   await addColumn("gt_ads_campaigns", "review_state", "TEXT");
+  // Google Ads (2026-10-22): campañas de BÚSQUEDA con el mismo ciclo que Meta (propuesta →
+  // crear en pausa → prender/pausar/presupuesto). `platform` = meta | google; en una de Google
+  // `proposal_json` lleva la propuesta de Búsqueda y estos ids son los que devuelve gs.
+  await addColumn("gt_ads_campaigns", "platform", "TEXT NOT NULL DEFAULT 'meta'");
+  await addColumn("gt_ads_campaigns", "google_campaign_id", "TEXT");
+  await addColumn("gt_ads_campaigns", "google_ad_group_id", "TEXT");
+  await addColumn("gt_ads_campaigns", "google_ad_id", "TEXT");
+  await addColumn("gt_ads_campaigns", "google_budget_id", "TEXT");
+  await exec("CREATE UNIQUE INDEX IF NOT EXISTS gt_ads_campaigns_google ON gt_ads_campaigns(google_campaign_id) WHERE google_campaign_id IS NOT NULL");
   // El reporte automático (9:00 y 21:00 CDMX por default). Una sola fila por espacio;
   // `last_digest` = huella del último publicado: si nada cambió, no se publica otro.
   await exec(`CREATE TABLE IF NOT EXISTS gt_ads_schedule (

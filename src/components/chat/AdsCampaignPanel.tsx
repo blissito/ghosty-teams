@@ -7,7 +7,7 @@ import { useCallback, useState } from "react";
 import { Check, Link as LinkIcon } from "lucide-react";
 import { useT } from "../../i18n";
 import { adsCreativeFn, adsProposalCardFn } from "../../server/apps/ads";
-import { inMeta } from "../../server/apps/ads-flow";
+import { inMeta, isLive } from "../../server/apps/ads-flow";
 import { campaignLink } from "../../lib/ads-links";
 import { AdsProposalView } from "./AdsProposalCard";
 import { AdsCampaignCard } from "./AdsCampaignCard";
@@ -25,6 +25,9 @@ export function AdsCampaignPanel({ campaignId, channelId, version }: { campaignI
   const [tab, setTab] = useState<Tab>("proposal");
   const [copied, setCopied] = useState(false);
   if (!st) return <div className="m-4 h-40 animate-pulse rounded-xl bg-surface-2 motion-reduce:animate-none" />;
+  // Meta: ubicaciones y cambios pendientes. Google: sólo la tarjeta viva y su propuesta.
+  const meta = inMeta(st.status, st.platform);
+  const live = isLive(st.status);
 
   const copyLink = async () => {
     try {
@@ -51,8 +54,8 @@ export function AdsCampaignPanel({ campaignId, channelId, version }: { campaignI
   return (
     <div className="space-y-2 p-3">
       <div className="flex items-center gap-1" role="tablist">
-        {tabBtn("proposal", inMeta(st.status) ? t("Campaña") : t("Propuesta"))}
-        {inMeta(st.status) && tabBtn("placements", t("Ubicaciones"))}
+        {tabBtn("proposal", live ? t("Campaña") : t("Propuesta"))}
+        {meta && tabBtn("placements", t("Ubicaciones"))}
         {creative && tabBtn("creative", t("Creativo"))}
         <button
           type="button"
@@ -63,7 +66,7 @@ export function AdsCampaignPanel({ campaignId, channelId, version }: { campaignI
           {copied ? <Check size={14} className="text-brand" /> : <LinkIcon size={14} />} {copied ? t("¡Copiado!") : t("Copiar enlace")}
         </button>
       </div>
-      {tab === "placements" && inMeta(st.status) ? (
+      {tab === "placements" && meta ? (
         <AdsPlacements campaignId={campaignId} channelId={channelId} />
       ) : tab === "creative" && creative ? (
         <div className="space-y-2">
@@ -82,7 +85,17 @@ export function AdsCampaignPanel({ campaignId, channelId, version }: { campaignI
         </div>
       ) : (
         <>
-          {inMeta(st.status) ? (
+          {live && st.platform === "google" ? (
+            <>
+              <AdsCampaignCard card={{ campaignId }} channelId={channelId} />
+              <details className="rounded-lg border border-border px-3 py-2 text-xs">
+                <summary className="cursor-pointer text-muted">{t("Propuesta original")} (v{st.version})</summary>
+                <div className="mt-2">
+                  <AdsProposalView campaignId={campaignId} channelId={channelId} initialVersion={version} layout="panel" />
+                </div>
+              </details>
+            </>
+          ) : meta ? (
             <>
               {/* Ya existe en Meta: embudo y [Prender]/[Pausar]/[Presupuesto]; abajo, lo que HOY
                   tiene Meta, editable como cambios pendientes. La propuesta original, plegada. */}

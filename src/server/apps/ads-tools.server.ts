@@ -4,7 +4,9 @@
 //
 // NINGUNA gasta dinero. Leen (cuenta, intereses, alcance, números) y la única que escribe
 // deja una PROPUESTA: la plataforma publica su tarjeta y una persona decide con los botones.
-// Google Ads sólo se LEE (`ads_google_*`); pausar o reanudar lo hace el dueño en /ads.
+// Google Ads: se leen sus campañas (`ads_google_campaigns`/`insights`) y @ads PROPONE campañas
+// de Búsqueda (`ads_google_proposal_submit`); crear en pausa, prender, pausar y cambiar presupuesto
+// los pica una persona en la tarjeta, igual que en Meta.
 import { notaNombres, type ConnectorTool, type ToolChannel } from "../connectors/impl";
 import type { ToolDest } from "../connectors/tool-token.server";
 import { isInstalled } from "./installed.server";
@@ -62,6 +64,25 @@ async function googleAllowed(dest: ToolDest | null): Promise<string | null> {
   return null;
 }
 
+const GOOGLE_LINK_HINT = "Google Ads no está conectado: el dueño lo conecta en Ghosty Ads (/ads).";
+
+/** Las tools que escriben o buscan en Google: room de la app + cuenta vinculada. */
+async function googleGate(dest: ToolDest | null): Promise<{ ok: false; error: string } | null> {
+  const no = await googleAllowed(dest);
+  if (no) return { ok: false, error: no };
+  const { googleStatus } = await import("./ads-gs.server");
+  const st = await googleStatus();
+  if (st.link?.status !== "linked") return { ok: false, error: st.error ? `${GOOGLE_LINK_HINT} (${st.error})` : GOOGLE_LINK_HINT };
+  return null;
+}
+
+/** id de Google → #N de las campañas que creó Ghosty. */
+async function ownGoogleIds(): Promise<Map<string, number>> {
+  const { dbq } = await import("../../dbq.server");
+  const rows = await dbq("SELECT id, google_campaign_id FROM gt_ads_campaigns WHERE google_campaign_id IS NOT NULL", []).catch(() => []);
+  return new Map(rows.map((r) => [String(r.google_campaign_id), Number(r.id)]));
+}
+
 /** Hilo del turno: la raíz si estamos en uno; si no, el mensaje que invocó. */
 function threadRoot(dest: ToolDest | null): number | null {
   if (!dest?.channelId) return null;
@@ -80,6 +101,8 @@ async function resolveTarget(
   campaignId: unknown,
   fresh: boolean,
   mode: "proposal" | "live" | "any" = "proposal",
+  /** Sólo campañas de esa plataforma (una propuesta de Meta no es versión de una de Google). */
+  platform?: "meta" | "google",
 ): Promise<{ campaign: import("./ads-campaigns.server").Campaign | null } | { error: string }> {
   const C = await import("./ads-campaigns.server");
   const n = Number(campaignId);
@@ -89,10 +112,11 @@ async function resolveTarget(
     return { campaign: c };
   }
   if (fresh) return { campaign: null };
+  const samePlatform = (c: { platform: string }) => !platform || c.platform === platform;
   const inThread = root ? await C.campaignOfThread(channelId, root) : null;
-  if (inThread) return { campaign: inThread };
+  if (inThread && samePlatform(inThread)) return { campaign: inThread };
   const fits = (s: string) => (mode === "proposal" ? s === "proposal" : mode === "live" ? s === "paused" || s === "active" : s !== "cancelled");
-  const candidates = (await C.campaignsOf([channelId])).filter((c) => fits(c.status));
+  const candidates = (await C.campaignsOf([channelId])).filter((c) => fits(c.status) && samePlatform(c));
   if (candidates.length === 1) return { campaign: candidates[0] };
   if (candidates.length > 1)
     return {
@@ -161,18 +185,20 @@ function tools(dest: ToolDest | null): ConnectorTool[] {
     {
       name: "ads_account_info",
       description:
-        "Ghosty Ads: la cuenta de anuncios y la página de Facebook conectadas en este espacio, y cuántas campañas hay en este room. " +
+        "Ghosty Ads: la cuenta de anuncios y la página de Facebook conectadas en este espacio, si Google Ads está vinculado (y su moneda), y cuántas campañas hay en este room. " +
         "Llámala antes de proponer: si Meta no está conectado, dile a la persona que el dueño lo conecte en Ajustes → Apps → Ghosty Ads.",
       inputSchema: { type: "object", properties: {} },
       handler: async () => {
-        const { metaStatus } = await import("./ads-gs.server");
-        const st = await metaStatus();
+        const { metaStatus, googleStatus } = await import("./ads-gs.server");
+        const [st, g] = await Promise.all([metaStatus(), googleStatus()]);
         const cs = await roomCampaigns(dest);
+        const gLinked = g.link?.status === "linked";
         return {
           connected: st.connected,
           adAccount: st.adAccount,
           page: st.page,
           ...(st.error ? { error: st.error } : {}),
+          google: gLinked ? { linked: true, account: g.link!.name, customerId: g.link!.customerId, currency: g.link!.currency } : { linked: false, hint: GOOGLE_LINK_HINT },
           campaignsInRoom: cs.length,
           ...(st.connected ? {} : { hint: "Meta no está conectado: el dueño lo conecta en Ajustes → Apps → Ghosty Ads." }),
         };
@@ -262,9 +288,11 @@ function tools(dest: ToolDest | null): ConnectorTool[] {
         // ¿A qué campaña va? `campaign_id` (desde cualquier hilo del room) > la del hilo > la
         // única propuesta abierta del room. Nunca se duplica una propuesta por pedir un ajuste
         // desde otro hilo (así nació la #5, casi igual a la #4).
-        const target = await resolveTarget(dest.channelId, root0, a.campaign_id, !!a.new_campaign);
+        const target = await resolveTarget(dest.channelId, root0, a.campaign_id, !!a.new_campaign, "proposal", "meta");
         if ("error" in target) return { ok: false, error: target.error };
         const open0 = target.campaign;
+        if (open0?.platform === "google")
+          return { ok: false, error: `la #${open0.id} es una campaña de Google: ajústala con ads_google_proposal_submit, o pasa new_campaign: true para una de Meta` };
         if (open0 && open0.status !== "proposal" && Number(a.campaign_id) > 0)
           return {
             ok: false,
@@ -367,6 +395,11 @@ function tools(dest: ToolDest | null): ConnectorTool[] {
         const c = target.campaign;
         if (!c || (c.status !== "paused" && c.status !== "active"))
           return { ok: false, error: "no encuentro una campaña en pausa o activa; pasa su `campaign_id`" };
+        if (c.platform === "google")
+          return {
+            ok: false,
+            error: `la #${c.id} es de Google Ads: su presupuesto y prender/pausar los pica una persona en su tarjeta (publícala con ads_campaign_show). Para cambiar títulos, palabras o zonas, propón una campaña nueva con ads_google_proposal_submit y new_campaign: true.`,
+          };
         const { parseLiveChange, liveChangeDiff } = await import("./ads-proposal");
         const wantsAd = a.message != null || a.media_url != null || a.headline != null || a.cta != null;
         const detail = await C.liveDetail(c);
@@ -431,7 +464,7 @@ function tools(dest: ToolDest | null): ConnectorTool[] {
         const target = await resolveTarget(dest.channelId, threadRoot(dest), a.campaign_id, false, "live");
         if ("error" in target) return { ok: false, error: target.error };
         const c = target.campaign;
-        if (!c?.metaCampaignId) return { ok: false, error: "esa campaña todavía no existe en Meta; una propuesta se ve en su propia tarjeta" };
+        if (!c?.metaCampaignId && !c?.googleCampaignId) return { ok: false, error: "esa campaña todavía no existe en Meta ni en Google; una propuesta se ve en su propia tarjeta" };
         const C = await import("./ads-campaigns.server");
         const here = threadRoot(dest);
         await C.postAsAds(dest.channelId, here, C.adsCampaignFence(c.id));
@@ -495,6 +528,23 @@ function tools(dest: ToolDest | null): ConnectorTool[] {
         if ("error" in target) return { ok: false, error: target.error };
         const c = target.campaign;
         if (!c) return { ok: false, error: "este room no tiene campañas; propón una con ads_proposal_submit" };
+        if (c.platform === "google" && c.google) {
+          const gv = await C.listGoogleVersions(c.id);
+          const { policy, ...proposal } = c.google;
+          return {
+            campaignId: c.id,
+            platform: "google",
+            status: c.status,
+            version: gv[0]?.version ?? 1,
+            changedFields: gv[0]?.changedFields ?? [],
+            editedBy: gv[0]?.editedBy ?? C.AGENT_EDITOR,
+            proposal,
+            ...(policy?.length ? { policy } : {}),
+            ...(c.error ? { error: c.error } : {}),
+            googleCampaignId: c.googleCampaignId,
+            versions: gv.map((v) => ({ version: v.version, editedBy: v.editedBy, changedFields: v.changedFields, createdAt: v.createdAt })),
+          };
+        }
         const versions = await C.listVersions(c.id);
         const { estimate, previewSrc: _s, previewNote, ...proposal } = c.proposal;
         const { CTA_LABELS, CTA_DEFAULT } = await import("./ads-proposal");
@@ -526,9 +576,10 @@ function tools(dest: ToolDest | null): ConnectorTool[] {
         return {
           items: cs.slice(0, 50).map((c) => ({
             id: c.id,
+            platform: c.platform,
             title: c.title,
             status: c.status,
-            statusLabel: adsStatusLabel(c.status),
+            statusLabel: adsStatusLabel(c.status, c.platform),
             dailyBudget: c.proposal.dailyBudget ?? null,
             endTime: c.proposal.endTime || null,
             imported: c.imported,
@@ -549,33 +600,42 @@ function tools(dest: ToolDest | null): ConnectorTool[] {
         const n = Number(a.campaign_id);
         const pick = n > 0 ? all.filter((c) => c.id === n) : all.filter((c) => c.status === "active" || c.status === "paused");
         if (n > 0 && !pick.length) return { ok: false, error: `no hay campaña #${n} en este room` };
-        const live = pick.filter((c) => inMeta(c.status));
-        if (!live.length) return { items: [], note: "Ninguna campaña de este room existe todavía en Meta." };
+        const live = pick.filter((c) => inMeta(c.status, c.platform));
+        const googleOnes = pick.filter((c) => c.platform === "google" && c.googleCampaignId).map((c) => ({ id: c.id, googleCampaignId: c.googleCampaignId }));
+        const googleNote = googleOnes.length ? { google: googleOnes, googleNote: "Las de Google se miden con ads_google_insights y su googleCampaignId." } : {};
+        if (!live.length) return { items: [], note: "Ninguna campaña de este room existe todavía en Meta.", ...googleNote };
         const C = await import("./ads-campaigns.server");
         const { byId, error } = await C.funnels(live);
         return {
           items: live.map((c) => ({ id: c.id, title: c.title, status: c.status, ...byId.get(c.id) })),
           ...(error ? { partialError: error } : {}),
           currency: "MXN",
+          ...googleNote,
         };
       },
     },
     {
       name: "ads_google_campaigns",
       description:
-        "Ghosty Ads: las campañas de Google Ads de la cuenta vinculada (no viven en un room ni tienen #N): id, nombre, estado " +
-        "(ACTIVE, PAUSED, ENDED, NOT_ELIGIBLE, SUSPENDED), presupuesto diario y motivos de Google. Sólo lectura: crearlas se hace en Google Ads " +
-        "y pausarlas o reanudarlas lo hace el dueño en /ads. Si no hay cuenta vinculada, dile que la vincule en Ajustes → Apps → Ghosty Ads.",
+        "Ghosty Ads: las campañas de Google Ads de la cuenta vinculada: id, nombre, estado (ACTIVE, PAUSED, ENDED, NOT_ELIGIBLE, " +
+        "SUSPENDED), presupuesto diario y motivos de Google. Las que creó Ghosty traen su #N (`ownId`). También puedes PROPONER campañas " +
+        "de Búsqueda con ads_google_proposal_submit. Si no hay cuenta vinculada, dile al dueño que la conecte en Ghosty Ads (/ads).",
       inputSchema: { type: "object", properties: {} },
       handler: async () => {
         const no = await googleAllowed(dest);
         if (no) return { ok: false, error: no };
         const { googleAds, googleStatus } = await import("./ads-gs.server");
         const st = await googleStatus();
-        if (st.link?.status !== "linked") return { linked: false, hint: "Google Ads no está vinculado: el dueño lo hace en Ajustes → Apps → Ghosty Ads.", ...(st.error ? { error: st.error } : {}) };
+        if (st.link?.status !== "linked") return { linked: false, hint: GOOGLE_LINK_HINT, ...(st.error ? { error: st.error } : {}) };
         const r = await googleAds("campaigns");
         if (!r.ok) return r;
-        return { account: st.link.name, customerId: st.link.customerId, currency: st.link.currency, items: r.items };
+        const own = await ownGoogleIds();
+        return {
+          account: st.link.name,
+          customerId: st.link.customerId,
+          currency: st.link.currency,
+          items: r.items.map((i) => (own.has(i.id) ? { ...i, ownId: own.get(i.id) } : i)),
+        };
       },
     },
     {
@@ -598,6 +658,152 @@ function tools(dest: ToolDest | null): ConnectorTool[] {
         return googleAds("insights", { campaignIds: ids, days: Number(a.days) || 30 });
       },
     },
+    {
+      name: "ads_google_location_search",
+      description:
+        "Ghosty Ads (Google): busca ubicaciones REALES de Google Ads (país, estado, ciudad, municipio), p.ej. «Guadalajara», «Coyoacán». " +
+        "Devuelve id, nombre, tipo y país. Usa sólo estos ids en `locations` de ads_google_proposal_submit y en keyword_ideas.",
+      inputSchema: { type: "object", properties: { q: { type: "string", description: "Nombre del lugar" } }, required: ["q"] },
+      handler: async (_sub, a) => {
+        const gate = await googleGate(dest);
+        if (gate) return gate;
+        const q = String(a.q ?? "").trim().slice(0, 80);
+        if (q.length < 2) return { ok: false, error: "escribe qué lugar buscar en `q`" };
+        const { googleAds } = await import("./ads-gs.server");
+        const r = await googleAds("locations", { q });
+        return r.ok ? { items: (r.locations ?? []).slice(0, 20) } : { ok: false, error: r.error };
+      },
+    },
+    {
+      name: "ads_google_keyword_ideas",
+      description:
+        "Ghosty Ads (Google): ideas de palabras clave con su VOLUMEN real de búsquedas al mes, competencia y rango de puja, para las " +
+        "ubicaciones de la campaña. Dale 2–5 semillas cortas (el servicio como lo busca la gente) y, si hay, la página del negocio. " +
+        "Elige 5–20 con volumen y con intención de compra; evita las genéricas.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          seeds: { type: "array", items: { type: "string" }, description: "Semillas, p.ej. [\"plomero urgente\", \"destapar caño\"]" },
+          url: { type: "string", description: "Página del negocio (opcional)" },
+          location_ids: { type: "array", items: { type: "string" }, description: "Ids de ads_google_location_search (México si no mandas)" },
+        },
+        required: ["seeds"],
+      },
+      handler: async (_sub, a) => {
+        const gate = await googleGate(dest);
+        if (gate) return gate;
+        const seeds = (Array.isArray(a.seeds) ? a.seeds : [])
+          .map((x) => String(x).trim().slice(0, 80))
+          .filter(Boolean)
+          .slice(0, 10);
+        if (!seeds.length) return { ok: false, error: "manda al menos una semilla en `seeds`" };
+        const ids = (Array.isArray(a.location_ids) ? a.location_ids : []).map((x) => String(x).replace(/\D/g, "")).filter(Boolean);
+        const url = String(a.url ?? "").trim();
+        const { googleAds } = await import("./ads-gs.server");
+        const r = await googleAds("keyword_ideas", { seeds, ...(/^https:\/\//.test(url) ? { url } : {}), locationIds: ids.length ? ids : ["2484"] });
+        return r.ok ? { ideas: (r.ideas ?? []).slice(0, 30) } : { ok: false, error: r.error };
+      },
+    },
+    {
+      name: "ads_google_proposal_submit",
+      description:
+        "SÓLO @ads. Entrega la propuesta de una campaña de BÚSQUEDA de Google Ads (anuncio de texto adaptable): la plataforma publica en el hilo " +
+        "la tarjeta con la vista previa como sale en Google, las palabras con su volumen, las negativas, las zonas, la medición y el techo de " +
+        "gasto, con [Crear en pausa] y [Cancelar] para una PERSONA. No crea ni gasta nada. En una propuesta abierta del hilo, manda sólo lo que " +
+        "cambia: se guarda como versión nueva de la MISMA tarjeta. Concordancia sólo frase o exacta; sin `negatives` van las base.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          campaign_id: { type: "number", description: "La propuesta de Google que ajustas (#N)" },
+          new_campaign: { type: "boolean", description: "true SÓLO si de verdad es una campaña nueva" },
+          name: { type: "string", description: "Nombre de la campaña (se ve en Google Ads)" },
+          final_url: { type: "string", description: "Página https a la que llega quien da clic" },
+          path1: { type: "string", description: "Ruta visible 1 (≤15, opcional), p.ej. agentes" },
+          path2: { type: "string", description: "Ruta visible 2 (≤15, opcional)" },
+          headlines: { type: "array", items: { type: "string" }, description: "10 a 15 títulos de ≤30 caracteres, distintos, en la voz del negocio" },
+          descriptions: { type: "array", items: { type: "string" }, description: "4 descripciones de ≤90 caracteres" },
+          keywords: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: { text: { type: "string" }, match: { type: "string", enum: ["phrase", "exact"] }, volume: { type: "number" } },
+              required: ["text"],
+            },
+            description: "Palabras clave (1–50) con su volumen de ads_google_keyword_ideas; match phrase (default) o exact",
+          },
+          negatives: { type: "array", items: { type: "string" }, description: "Palabras negativas; sin esto van las base (gratis, empleo, trabajo, curso, pdf, qué es)" },
+          locations: {
+            type: "array",
+            items: { type: "object", properties: { id: { type: "string" }, name: { type: "string" } }, required: ["id", "name"] },
+            description: "Ubicaciones de ads_google_location_search (México si no mandas ni radio)",
+          },
+          radius: {
+            type: "object",
+            properties: { lat: { type: "number" }, lng: { type: "number" }, km: { type: "number" }, label: { type: "string" } },
+            description: "Radio alrededor del negocio (1–80 km), opcional",
+          },
+          phone: { type: "string", description: "Teléfono del negocio: extensión de llamada + medición de llamadas. Sin él, la campaña va sin medición" },
+          daily_budget: { type: "number", description: "Presupuesto diario en la moneda de la cuenta (20–50,000)" },
+          max_cpc: { type: "number", description: "Tope por clic (opcional)" },
+          end_date: { type: "string", description: "Fin AAAA-MM-DD (opcional, ≤90 días)" },
+        },
+      },
+      handler: async (sub, a) => {
+        if (dest?.handle && dest.handle !== ADS_HANDLE) return { ok: false, error: "sólo @ads propone campañas" };
+        if (!dest?.channelId) return { ok: false, error: "las campañas se proponen en un room, no en un DM" };
+        const gate = await googleGate(dest);
+        if (gate) return gate;
+        const G = await import("./ads-google-proposal");
+        const C = await import("./ads-campaigns.server");
+        const root0 = threadRoot(dest);
+        const target = await resolveTarget(dest.channelId, root0, a.campaign_id, !!a.new_campaign, "proposal", "google");
+        if ("error" in target) return { ok: false, error: target.error };
+        const open0 = target.campaign;
+        if (open0 && open0.platform !== "google") return { ok: false, error: `la #${open0.id} es de Meta: pasa new_campaign: true para proponer una de Google` };
+        if (open0 && open0.status !== "proposal" && Number(a.campaign_id) > 0)
+          return { ok: false, error: `la campaña #${open0.id} ya está en Google Ads (${open0.status}): para cambiar textos o palabras propón una nueva con new_campaign: true` };
+        const isVersion = !!open0?.google && open0.status === "proposal";
+        // Un agente que manda `negatives: []` en una nueva quiere las base, no ninguna.
+        const input = { ...a, ...(!isVersion && Array.isArray(a.negatives) && !a.negatives.length ? { negatives: undefined } : {}) };
+        const p = G.parseGoogleProposal(isVersion ? G.mergeGoogleSubmit(open0!.google!, input) : input, Date.now(), { baseNegatives: !isVersion });
+        if (typeof p === "string") return { ok: false, error: p };
+        const { googleStatus } = await import("./ads-gs.server");
+        const currency = (await googleStatus()).link?.currency ?? null;
+        const max = G.googleMaxTotal(p.dailyBudget, p.endDate, Date.now());
+        const extra = {
+          maxTotal: max.total,
+          maxTotalDays: max.days,
+          currency,
+          ...(p.phone ? {} : { warning: "Sin teléfono no hay medición de llamadas: pide uno si el negocio contesta por teléfono." }),
+        };
+        if (isVersion && open0) {
+          try {
+            const elsewhere = open0.rootMsgId !== root0 ? { channelId: dest.channelId, parentId: root0 } : null;
+            const r = await C.saveGoogleVersion(open0, p, { editedBy: C.AGENT_EDITOR, display: "@ads" }, elsewhere);
+            return { ok: true, campaignId: open0.id, version: r.version, ...extra, note: `La tarjeta de la propuesta #${open0.id} ya muestra la v${r.version} (misma tarjeta). Di en una línea qué cambió.` };
+          } catch (e) {
+            return { ok: false, error: e instanceof Error ? e.message : String(e) };
+          }
+        }
+        const { dbq } = await import("../../dbq.server");
+        const rows = await dbq(
+          `INSERT INTO gt_ads_campaigns (channel_id, root_msg_id, title, status, proposal_json, requested_by, platform)
+           VALUES (?, ?, ?, 'proposal', ?, ?, 'google') RETURNING id`,
+          [dest.channelId, root0, p.name.slice(0, 120), JSON.stringify(p), sub],
+        );
+        const id = Number(rows[0].id);
+        await C.recordFirstVersion(id, p, C.AGENT_EDITOR);
+        const msgId = await C.postAsAds(dest.channelId, root0, C.adsProposalFence(id));
+        if (msgId) await dbq("UPDATE gt_ads_campaigns SET card_msg_id = ?, root_msg_id = COALESCE(root_msg_id, ?) WHERE id = ?", [msgId, msgId, id]);
+        return {
+          ok: true,
+          campaignId: id,
+          version: 1,
+          ...extra,
+          note: `Tarjeta de la propuesta #${id} (Google Búsqueda) publicada. Una persona decide con [Crear en pausa] o [Cancelar]: no digas que la creaste. Si piden cambios, vuelve a llamar ads_google_proposal_submit en este hilo con sólo lo que cambia. Di en una línea qué revisar.`,
+        };
+      },
+    },
   ];
 }
 
@@ -613,15 +819,36 @@ export async function adsContext(dest: ToolDest | null, toolChannel: ToolChannel
     const c = await C.campaignOfThread(dest.channelId, root).catch(() => null);
     if (c) {
       const { adsStatusLabel } = await import("./ads-flow");
-      parts.push(`Campaña de ESTE hilo: #${c.id} «${c.title}», ${adsStatusLabel(c.status).toLowerCase()}${c.error ? ` (error: ${c.error})` : ""}.`);
-      if (c.status === "paused" || c.status === "active") {
+      parts.push(
+        `Campaña de ESTE hilo: #${c.id} «${c.title}» (${c.platform === "google" ? "Google Ads, Búsqueda" : "Meta"}), ${adsStatusLabel(c.status, c.platform).toLowerCase()}${c.error ? ` (error: ${c.error})` : ""}.`,
+      );
+      if (c.platform === "google") {
+        if (c.status === "proposal" && c.google) {
+          const gv = await C.listGoogleVersions(c.id).catch(() => []);
+          const { summarizeGoogleProposal, describeGoogleChanges } = await import("./ads-google-proposal");
+          const { policy: _p, ...current } = c.google;
+          if (gv[0]) parts.push(`La tarjeta va en la v${gv[0].version}; ads_google_proposal_submit aquí guarda la siguiente versión en la MISMA tarjeta y lo que no mandes se queda como está.`);
+          parts.push(`Propuesta de Google VIGENTE (no la preguntes): ${summarizeGoogleProposal(current)}.`);
+          const humans = gv.filter((v) => v.editedBy !== C.AGENT_EDITOR).slice(0, 3);
+          if (humans.length)
+            parts.push(
+              "Ediciones a mano: " +
+                humans.map((h) => `${h.editedBy} en la v${h.version} (cambió ${describeGoogleChanges(h.changedFields)})`).join("; ") +
+                ". Respétalas en la siguiente versión.",
+            );
+        }
+        if (c.status === "error" && c.google?.policy?.length)
+          parts.push("Google rechazó piezas por política (campo policy de ads_proposal_get): reescribe SÓLO esas y manda la versión nueva; la persona le da «Reintentar».");
+        if (c.status === "paused" || c.status === "active")
+          parts.push("Es una CAMPAÑA EN GOOGLE ADS: prender, pausar y cambiar presupuesto los pica una persona en su tarjeta (ads_campaign_show la publica). Sus números: ads_google_insights con su googleCampaignId.");
+      } else if (c.status === "paused" || c.status === "active") {
         parts.push(
           `Es una CAMPAÑA EN META (no una propuesta): lee lo real con ads_proposal_get (campo live). Para cambiar segmentación, fecha, ubicaciones ` +
             `o el anuncio usa ads_campaign_change_propose (quedan pendientes; una persona los aplica).` +
             (c.pending ? ` Ya hay cambios pendientes de ${c.pending.proposedBy}: no los repitas.` : ""),
         );
       }
-      if (c.status === "proposal") {
+      if (c.status === "proposal" && c.platform !== "google") {
         const versions = await C.listVersions(c.id).catch(() => []);
         // Las ediciones humanas desde la última versión de @ads (si no hay, la humana más reciente).
         const lastAgent = versions.findIndex((v) => v.editedBy === C.AGENT_EDITOR);
@@ -642,7 +869,7 @@ export async function adsContext(dest: ToolDest | null, toolChannel: ToolChannel
     }
   }
   parts.push(
-    "Tus tools (ads_account_info, ads_proposal_get, ads_campaign_change_propose, ads_campaign_show, ads_pending_show, ads_review_status, ads_interest_search, ads_location_search, ads_delivery_estimate, ads_proposal_submit, ads_campaigns_list, ads_insights, ads_google_campaigns, ads_google_insights) ya están disponibles en este turno: LLÁMALAS; ninguna gasta." +
+    "Tus tools (ads_account_info, ads_proposal_get, ads_campaign_change_propose, ads_campaign_show, ads_pending_show, ads_review_status, ads_interest_search, ads_location_search, ads_delivery_estimate, ads_proposal_submit, ads_campaigns_list, ads_insights, ads_google_campaigns, ads_google_insights, ads_google_location_search, ads_google_keyword_ideas, ads_google_proposal_submit) ya están disponibles en este turno: LLÁMALAS; ninguna gasta." +
       notaNombres(toolChannel) +
       "]",
   );

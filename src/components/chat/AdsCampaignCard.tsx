@@ -69,6 +69,9 @@ export function AdsCampaignCard({
   if (!st) return null;
   const f = st.funnel;
   const canTouch = st.status === "active" || st.status === "paused";
+  const google = st.platform === "google";
+  const g = st.google;
+  const gMoney = (n: number | null | undefined) => (n == null ? "—" : `${mxn(n)} ${g?.currency ?? "MXN"}`);
 
   const run = async (p: Pending) => {
     setBusy(true);
@@ -88,11 +91,18 @@ export function AdsCampaignCard({
     p.action === "activate"
       ? {
           title: t("¿Prender la campaña #{n}?").replace("{n}", String(st.campaignId)),
-          body: t("Empieza a gastar hasta {d} al día en Meta, hasta que alguien la pause o llegue su fecha de fin.").replace("{d}", mxn(st.dailyBudget)),
+          body: (google
+            ? t("Empieza a gastar hasta {d} al día en Google Ads, hasta que alguien la pause o llegue su fecha de fin.")
+            : t("Empieza a gastar hasta {d} al día en Meta, hasta que alguien la pause o llegue su fecha de fin.")
+          ).replace("{d}", google ? gMoney(st.dailyBudget) : mxn(st.dailyBudget)),
           label: t("Prender"),
         }
       : p.action === "pause"
-        ? { title: t("¿Pausar la campaña #{n}?").replace("{n}", String(st.campaignId)), body: t("Deja de gastar y de salir en Meta. La puedes prender otra vez."), label: t("Pausar") }
+        ? {
+            title: t("¿Pausar la campaña #{n}?").replace("{n}", String(st.campaignId)),
+            body: google ? t("Deja de gastar y de salir en Google Ads. La puedes prender otra vez.") : t("Deja de gastar y de salir en Meta. La puedes prender otra vez."),
+            label: t("Pausar"),
+          }
         : {
             title: t("¿Cambiar el presupuesto de la campaña #{n}?").replace("{n}", String(st.campaignId)),
             body: t("Pasa de {a} a {b} al día.").replace("{a}", mxn(st.dailyBudget)).replace("{b}", mxn(p.amount ?? 0)),
@@ -105,7 +115,8 @@ export function AdsCampaignCard({
       <div className="min-w-0 flex-1 p-3">
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="rounded border border-border px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-muted">{t("Campaña")} #{st.campaignId}</span>
-          <span className={`text-[11px] font-semibold ${st.status === "active" ? "text-emerald-600" : "text-muted"}`}>{t(adsStatusLabel(st.status))}</span>
+          {google && <span className="rounded bg-surface-3 px-1.5 py-0.5 text-[10px] font-semibold text-muted">{t("Google · Búsqueda")}</span>}
+          <span className={`text-[11px] font-semibold ${st.status === "active" ? "text-emerald-600" : "text-muted"}`}>{t(adsStatusLabel(st.status, st.platform))}</span>
           {st.imported && <span className="text-[11px] text-muted">· {t("importada")}</span>}
         </div>
         <p className="mt-1 text-sm font-semibold text-ink">{st.title}</p>
@@ -113,7 +124,30 @@ export function AdsCampaignCard({
           {st.dailyBudget ? `${mxn(st.dailyBudget)} ${t("al día")}` : "—"}
           {st.endTime ? ` · ${t("hasta el")} ${new Date(st.endTime).toLocaleDateString("es-MX", { day: "numeric", month: "short" })}` : ""}
         </p>
-        {f ? (
+        {google ? (
+          g?.stats ? (
+            <ol className="mt-2 flex flex-wrap items-stretch gap-1 text-xs">
+              {(
+                [
+                  [t("Gasto"), gMoney(g.stats.spend)],
+                  [t("Clics"), String(g.stats.clicks)],
+                  [t("Conversiones"), String(g.stats.conversions)],
+                ] as [string, string][]
+              ).map(([k, v], i) => (
+                <li key={k} className="flex items-center gap-1">
+                  {i > 0 && <span className="text-muted" aria-hidden="true">→</span>}
+                  <span className="rounded-md bg-surface-3 px-2 py-1">
+                    <span className="block text-[10px] text-muted">{k}</span>
+                    <span className="font-semibold tabular-nums text-ink">{v}</span>
+                  </span>
+                </li>
+              ))}
+              <li className="self-end pl-1 text-[10px] text-muted">{t("últimos 30 días")}</li>
+            </ol>
+          ) : (
+            <p className="mt-2 text-xs text-muted">{g?.error ?? t("Sin números todavía.")}</p>
+          )
+        ) : f ? (
           <div className="mt-2 flex flex-wrap items-end justify-between gap-3">
             <FunnelRow f={f} />
             <div className="text-right">
@@ -124,7 +158,7 @@ export function AdsCampaignCard({
         ) : (
           <p className="mt-2 text-xs text-muted">{st.funnelError ?? t("Sin números todavía.")}</p>
         )}
-        {st.funnelError && f && <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-400">{st.funnelError}</p>}
+        {!google && st.funnelError && f && <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-400">{st.funnelError}</p>}
         {canTouch && (
           <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
             {st.status === "paused" ? (
@@ -185,6 +219,11 @@ export function AdsCampaignCard({
               <button type="button" onClick={() => onOpen(st.campaignId, st.title)} className={`${btn} border-brand text-brand hover:bg-brand/10`}>
                 {t("Abrir")}
               </button>
+            )}
+            {g?.url && (
+              <a href={g.url} target="_blank" rel="noreferrer" className="ml-auto text-xs text-muted hover:text-ink">
+                {t("Abrir en Google Ads")} ↗
+              </a>
             )}
             {st.adsManagerUrl && (
               <a href={st.adsManagerUrl} target="_blank" rel="noreferrer" className="ml-auto text-xs text-muted hover:text-ink">
@@ -252,7 +291,13 @@ export function AdsReportCard({ card, channelId }: { card: { reportId: number };
           <ul className="mt-1 divide-y divide-border">
             {st.google.items.map((g) => (
               <li key={g.id} className="flex items-baseline justify-between gap-2 py-1.5 text-xs">
-                <span className="truncate font-semibold text-ink">{g.name}</span>
+                {g.threadUrl ? (
+                  <a href={g.threadUrl} className="truncate font-semibold text-ink hover:underline">
+                    #{g.ownId} {g.name}
+                  </a>
+                ) : (
+                  <span className="truncate font-semibold text-ink">{g.name}</span>
+                )}
                 <span className="shrink-0 tabular-nums text-muted">
                   {mxn(g.spend)} · {g.clicks} {t("clics")} · {g.conversions} {t("conversiones")}
                 </span>

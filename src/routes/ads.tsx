@@ -4,7 +4,8 @@
 //  - «Nueva campaña» lleva al room de @ads; «Importar campaña existente» trae una de la
 //    cuenta de Meta sin tocarla (sólo el dueño).
 //  - Google Ads (si la cuenta está vinculada): sus campañas con gasto, clics y conversiones de
-//    30 días; el dueño las pausa o reanuda con confirmación. Se crean en Google Ads, no aquí.
+//    30 días; el dueño las pausa o reanuda con confirmación. Las de Búsqueda que propone @ads se
+//    crean en pausa desde su tarjeta y aquí llevan «#N · ver hilo».
 //  - Automático (dueño): el reporte de las 9:00 y 21:00, con «Correr ahora».
 // Misma forma que /factory: el loader sólo resuelve auth; los datos llegan por server fns.
 import { createFileRoute, Link } from "@tanstack/react-router";
@@ -144,6 +145,11 @@ function AdsPage() {
               {data.campaigns.map((c) => (
                 <li key={c.id} className="group relative flex items-center gap-3 px-3 py-2.5 hover:bg-surface-2">
                   <span className="w-10 shrink-0 font-mono text-xs text-muted">#{c.id}</span>
+                  <span
+                    className={`shrink-0 rounded px-1.5 text-[10px] font-semibold uppercase ${c.platform === "google" ? "bg-surface-3 text-muted" : "bg-brand/12 text-brand"}`}
+                  >
+                    {c.platform === "google" ? "Google" : "Meta"}
+                  </span>
                   <div className="min-w-0 flex-1">
                     <a href={c.threadUrl ?? "#"} className="block truncate text-sm font-medium text-ink after:absolute after:inset-0 after:content-['']">
                       {c.title}
@@ -165,7 +171,7 @@ function AdsPage() {
                     </span>
                   )}
                   <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLS[c.status] ?? "bg-surface-3 text-muted"}`}>
-                    {t(adsStatusLabel(c.status))}
+                    {t(adsStatusLabel(c.status, c.platform))}
                   </span>
                 </li>
               ))}
@@ -415,7 +421,14 @@ function GoogleSection({ g, isOwner, justConnected, onChange }: { g: NonNullable
                 <li key={c.id} className="flex items-center gap-3 px-3 py-2.5">
                   <span className="shrink-0 rounded bg-surface-3 px-1.5 text-[10px] font-semibold uppercase text-muted">Google</span>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-ink">{c.name}</p>
+                    <p className="truncate text-sm font-medium text-ink">
+                      {c.name}
+                      {c.ownId && c.threadUrl && (
+                        <a href={c.threadUrl} className="ml-1.5 text-[11px] font-semibold text-brand hover:underline">
+                          #{c.ownId} · {t("ver hilo")}
+                        </a>
+                      )}
+                    </p>
                     <p className="truncate text-[11px] text-muted">
                       {c.dailyBudget ? `${money(c.dailyBudget)} ${t("al día")} · ` : ""}
                       {t("gasto")} {money(c.spend)} · {c.clicks} {t("clics")} · {c.conversions} {t("conversiones")}

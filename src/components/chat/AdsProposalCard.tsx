@@ -29,10 +29,13 @@ import {
 import ConfirmModal from "../ConfirmModal";
 import { compactSummary } from "../../lib/ads-links";
 import { useAdsCard } from "./useAdsCard";
+import { EditableText } from "./AdsEditableText";
+import { GoogleProposalView } from "./AdsGoogleProposal";
 
 export { useAdsCard };
 
-type State = NonNullable<Awaited<ReturnType<typeof adsProposalCardFn>>>;
+export type AdsProposalState = NonNullable<Awaited<ReturnType<typeof adsProposalCardFn>>>;
+type State = AdsProposalState;
 type OldVersion = State["versions"][number];
 
 const btn = "rounded-md border px-2.5 py-1 text-xs font-medium transition disabled:opacity-50";
@@ -81,10 +84,11 @@ export function AdsProposalCard({
   });
   return (
     <div className="mt-0.5 flex max-w-xl items-center gap-2 rounded-lg px-3 py-2 gt-card">
-      <span aria-hidden="true">📣</span>
+      <span aria-hidden="true">{st.platform === "google" ? "🔎" : "📣"}</span>
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm text-ink">
-          <b>{summary}</b> · <span className={STATUS_TEXT[st.status] ?? "text-muted"}>{t(adsStatusLabel(st.status))}</span>
+          {st.platform === "google" && <span className="font-semibold text-muted">{t("Google · Búsqueda")} · </span>}
+          <b>{summary}</b> · <span className={STATUS_TEXT[st.status] ?? "text-muted"}>{t(adsStatusLabel(st.status, st.platform))}</span>
         </p>
         <p className="truncate text-[11px] text-muted">{st.title}</p>
       </div>
@@ -141,6 +145,9 @@ export function AdsProposalView({
     if (old) setShowVersions(true);
   }, [st, initialVersion]);
   if (!st) return null;
+  // Google (Búsqueda): su propia vista, con el mismo estado y los mismos botones.
+  if (st.platform === "google" && st.googleData)
+    return <GoogleProposalView st={st} data={st.googleData} refresh={refresh} layout={layout} initialVersion={initialVersion} />;
 
   const shown = viewing
     ? { proposal: viewing.proposal, estimate: viewing.estimate, previewSrc: viewing.previewSrc, previewNote: viewing.previewNote, version: viewing.version }
@@ -417,83 +424,6 @@ export function AdsProposalView({
         />
       )}
     </div>
-  );
-}
-
-/** Texto que se edita con un clic: textarea (o input) con [Guardar] [Cancelar]. */
-function EditableText({
-  value,
-  editable,
-  label,
-  className,
-  onSave,
-  multiline,
-  inline,
-  placeholder,
-}: {
-  value: string;
-  editable: boolean;
-  label: string;
-  className?: string;
-  onSave: (v: string) => Promise<void>;
-  multiline?: boolean;
-  inline?: boolean;
-  placeholder?: string;
-}) {
-  const t = useT();
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(value);
-  const [saving, setSaving] = useState(false);
-  if (editing) {
-    return (
-      <span className={`${inline ? "inline-flex" : "flex"} w-full flex-col gap-1`}>
-        <textarea
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          rows={multiline ? 4 : 1}
-          aria-label={label}
-          autoFocus
-          className="w-full rounded-md border border-border bg-surface px-2 py-1 text-sm text-ink"
-        />
-        <span className="flex gap-1.5">
-          <button
-            type="button"
-            disabled={saving || draft.trim() === value.trim()}
-            onClick={async () => {
-              setSaving(true);
-              try {
-                await onSave(draft.trim());
-                setEditing(false);
-              } catch {
-                /* el error lo enseña la tarjeta; el editor sigue abierto */
-              } finally {
-                setSaving(false);
-              }
-            }}
-            className={`${btn} border-brand text-brand hover:bg-brand/10`}
-          >
-            {saving ? t("Guardando…") : t("Guardar")}
-          </button>
-          <button type="button" disabled={saving} onClick={() => setEditing(false)} className="px-1 text-xs text-muted hover:text-ink">
-            {t("Cancelar")}
-          </button>
-        </span>
-      </span>
-    );
-  }
-  if (!editable) return value ? <span className={`${inline ? "" : "block"} ${className ?? ""}`}>{value}</span> : null;
-  return (
-    <button
-      type="button"
-      title={t("Clic para editar")}
-      onClick={() => {
-        setDraft(value);
-        setEditing(true);
-      }}
-      className={`${inline ? "inline" : "block w-full"} cursor-text rounded text-left decoration-dotted underline-offset-2 hover:underline ${value ? (className ?? "") : "text-xs text-muted"}`}
-    >
-      {value || placeholder}
-    </button>
   );
 }
 

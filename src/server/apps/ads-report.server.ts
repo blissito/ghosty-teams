@@ -17,7 +17,12 @@ export type AdsSchedule = { enabled: boolean; hours: number[]; tz: string; nextA
 
 export type AdsReportItem = { id: number; title: string; status: string; funnel: Funnel; threadId: number | null };
 /** Google Ads: las campañas activas de la cuenta vinculada con sus números de 30 días. */
-export type AdsReportGoogle = { account: string | null; currency: string | null; items: { id: string; name: string; spend: number; clicks: number; conversions: number }[] };
+/** Las que creó @ads llevan su #N (`ownId`) y su hilo para abrirlas desde el reporte. */
+export type AdsReportGoogle = {
+  account: string | null;
+  currency: string | null;
+  items: { id: string; name: string; spend: number; clicks: number; conversions: number; ownId?: number; threadId?: number | null }[];
+};
 export type AdsReportData = { at: number; items: AdsReportItem[]; google?: AdsReportGoogle | null };
 
 async function googleForReport(): Promise<AdsReportGoogle | null> {
@@ -26,9 +31,22 @@ async function googleForReport(): Promise<AdsReportGoogle | null> {
   if (st.link?.status !== "linked") return null;
   const [cs, ins] = await Promise.all([googleAds("campaigns"), googleAds("insights", { days: 30 })]);
   if (!cs.ok || !ins.ok) return null;
+  const own = new Map(
+    (await dbq("SELECT id, google_campaign_id, root_msg_id, card_msg_id FROM gt_ads_campaigns WHERE google_campaign_id IS NOT NULL", []).catch(() => [])).map((r) => [
+      String(r.google_campaign_id),
+      { id: Number(r.id), threadId: r.root_msg_id != null ? Number(r.root_msg_id) : r.card_msg_id != null ? Number(r.card_msg_id) : null },
+    ]),
+  );
   const items = (cs.items ?? [])
     .filter((c) => c.status === "ACTIVE")
-    .map((c) => ({ id: c.id, name: c.name, spend: ins.byCampaign[c.id]?.spend ?? 0, clicks: ins.byCampaign[c.id]?.clicks ?? 0, conversions: Math.round((ins.byCampaign[c.id]?.conversions ?? 0) * 10) / 10 }));
+    .map((c) => ({
+      id: c.id,
+      name: c.name,
+      spend: ins.byCampaign[c.id]?.spend ?? 0,
+      clicks: ins.byCampaign[c.id]?.clicks ?? 0,
+      conversions: Math.round((ins.byCampaign[c.id]?.conversions ?? 0) * 10) / 10,
+      ...(own.has(c.id) ? { ownId: own.get(c.id)!.id, threadId: own.get(c.id)!.threadId } : {}),
+    }));
   return items.length ? { account: st.link.name, currency: st.link.currency, items } : null;
 }
 
@@ -162,7 +180,8 @@ export async function runReport(ns: string, opts: { force: boolean }): Promise<{
       c = await C.applyAdsEvent(c, "end").catch(() => c);
       continue;
     }
-    if (c.status === "active") campaigns.push(c);
+    // Las de Google van en su sección (googleForReport, con su #N): no se cuentan dos veces.
+    if (c.status === "active" && c.platform !== "google") campaigns.push(c);
   }
   const google = await googleForReport().catch(() => null);
   if (!campaigns.length && !google) return { posted: false, reason: "no hay campañas activas" };

@@ -7,6 +7,10 @@
 // Nunca lanza: devuelve `{ ok: false, error }` con un error en español que se puede enseñar
 // tal cual (a la persona en la tarjeta, o al modelo en una tool).
 import type { Proposal, Targeting } from "./ads-proposal";
+import type { GoogleProposal, GooglePolicyIssue } from "./ads-google-proposal";
+
+/** La propuesta de Búsqueda tal como la recibe gs (sin `platform` ni volúmenes). */
+type GoogleProposalForGs = Omit<GoogleProposal, "platform">;
 
 export type GsResult<T> = ({ ok: true } & T) | { ok: false; error: string };
 
@@ -118,6 +122,10 @@ export type GoogleAccount = { customerId: string; name: string; currency: string
 export type GoogleStatus = { configured: boolean; serviceAccount: string | null; mcc: string | null; link: GoogleLink | null };
 export type GoogleCampaign = { id: string; name: string; status: string; configured: string | null; reasons: string[]; channel: string | null; dailyBudget: number | null };
 export type GoogleInsights = { spend: number; impressions: number; clicks: number; conversions: number; conversionsValue: number };
+export type GoogleGeoSuggestion = { id: string; name: string; canonicalName: string; type: string; countryCode: string };
+export type GoogleKeywordIdea = { text: string; avgMonthlySearches: number | null; competition: string | null; lowBid: number | null; highBid: number | null };
+/** Una falla de Google Ads: con `policy` cuando un título o descripción violó una política. */
+export type GoogleResult<T> = ({ ok: true } & T) | { ok: false; error: string; policy?: GooglePolicyIssue[] };
 
 type GoogleOps = {
   status: [Record<string, never>, GoogleStatus];
@@ -129,12 +137,22 @@ type GoogleOps = {
   campaigns: [Record<string, never>, { items: GoogleCampaign[] }];
   insights: [{ campaignIds?: string[]; days?: number }, { desde: string; hasta: string; currency: string | null; byCampaign: Record<string, GoogleInsights> }];
   set_status: [{ campaignId: string; status: "ACTIVE" | "PAUSED"; by: string }, Record<string, never>];
+  // Campañas de Búsqueda (2026-10-22): buscar zonas e ideas de palabras, validar (validateOnly),
+  // crear EN PAUSA en un solo mutate y cambiar el presupuesto. Crear/presupuesto los pica una persona.
+  locations: [{ q: string }, { locations: GoogleGeoSuggestion[] }];
+  keyword_ideas: [{ seeds: string[]; url?: string; locationIds: string[] }, { ideas: GoogleKeywordIdea[] }];
+  validate: [{ proposal: GoogleProposalForGs }, Record<string, never>];
+  create_paused: [{ proposal: GoogleProposalForGs; requestedBy: string }, { campaignId: string; adGroupId: string; adId: string; budgetId: string; measured: boolean }];
+  set_budget: [{ campaignId: string; dailyBudget: number; by: string }, Record<string, never>];
 };
 export type GoogleAdsOp = keyof GoogleOps;
 
-export async function googleAds<K extends GoogleAdsOp>(op: K, args: GoogleOps[K][0] = {} as GoogleOps[K][0]): Promise<GsResult<GoogleOps[K][1]>> {
+/** Cuánto se espera a gs por operación: crear hace validateOnly + el mutate real. */
+const GOOGLE_TIMEOUT: Partial<Record<GoogleAdsOp, number>> = { create_paused: 120_000, set_status: 60_000, set_budget: 60_000, validate: 60_000 };
+
+export async function googleAds<K extends GoogleAdsOp>(op: K, args: GoogleOps[K][0] = {} as GoogleOps[K][0]): Promise<GoogleResult<GoogleOps[K][1]>> {
   const t0 = Date.now();
-  let r: GsResult<GoogleOps[K][1]>;
+  let r: GoogleResult<GoogleOps[K][1]>;
   try {
     const { nativeRuntimeBase, partnerHeaders } = await import("../ghosty-runtime.server");
     const { currentNamespace } = await import("../tenant.server");
@@ -145,13 +163,14 @@ export async function googleAds<K extends GoogleAdsOp>(op: K, args: GoogleOps[K]
       method: "POST",
       headers: partnerHeaders(body, await currentNamespace()),
       body,
-      signal: AbortSignal.timeout(op === "set_status" ? 60_000 : 30_000),
+      signal: AbortSignal.timeout(GOOGLE_TIMEOUT[op] ?? 30_000),
     });
     const j = (await res.json().catch(() => null)) as ({ ok?: boolean; error?: string } & Record<string, unknown>) | null;
     if (res.status === 404 && !j?.error) r = { ok: false, error: "Ghosty Studio todavía no tiene la conexión con Google Ads" };
     else if (!j) r = { ok: false, error: `Ghosty Studio no contestó bien (${res.status})` };
-    else if (!res.ok || j.ok === false) r = { ok: false, error: String(j.error ?? `error ${res.status}`) };
-    else r = { ...(j as object), ok: true } as GsResult<GoogleOps[K][1]>;
+    else if (!res.ok || j.ok === false)
+      r = { ok: false, error: String(j.error ?? `error ${res.status}`), ...(Array.isArray(j.policy) ? { policy: j.policy as GooglePolicyIssue[] } : {}) };
+    else r = { ...(j as object), ok: true } as GoogleResult<GoogleOps[K][1]>;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     r = { ok: false, error: /timeout|aborted/i.test(msg) ? "Google Ads tardó demasiado en contestar; inténtalo otra vez" : `no pude hablar con Ghosty Studio: ${msg}` };
