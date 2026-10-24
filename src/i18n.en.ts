@@ -2443,6 +2443,8 @@ export const en: Record<string, string> = {
   "Este paso no dejó captura": "This step left no screenshot",
   "Tomar el control": "Take control",
   "Te necesito aquí": "I need you here",
+  "Escribir en el navegador del agente": "Type in the agent's browser",
+  "Es una foto de cómo quedó: el navegador ya se cerró y no se puede controlar.": "This is a snapshot of how it ended: the browser is closed and can't be controlled.",
   "Tienes el control.": "You're in control.",
   "El agente espera; esto no se guarda en el replay.": "The agent is waiting; this isn't saved in the replay.",
   "Devolver el control": "Give control back",
