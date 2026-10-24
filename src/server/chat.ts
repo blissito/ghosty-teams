@@ -656,7 +656,7 @@ export const computerBrowserFn = createServerFn({ method: "POST" })
     });
     const out = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok) throw new Error(res.status === 410 ? "El navegador ya se cerró." : String(out.error ?? `error ${res.status}`));
-    return out as { liveUrl: string; inputUrl?: string; releaseUrl?: string; viewport?: { width: number; height: number } | null };
+    return out as { liveUrl: string; inputUrl?: string; releaseUrl?: string; viewport?: { width: number; height: number } | null; livekit?: { wsUrl: string; token: string } };
   });
 
 // Catch-up (lossless): mensajes del room con id > sinceId. El cliente lo llama al

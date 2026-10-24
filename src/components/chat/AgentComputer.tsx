@@ -29,7 +29,7 @@ export function AgentComputerPanel({ messageId, agentName, handle, replay }: { m
       onWatch={(sessionId) => computerBrowserFn({ data: { id: messageId, sessionId, op: "watch" } })}
       onTakeover={async (sessionId) => {
         const r = await computerBrowserFn({ data: { id: messageId, sessionId, op: "takeover" } });
-        return { liveUrl: r.liveUrl, inputUrl: r.inputUrl ?? "", releaseUrl: r.releaseUrl ?? "", viewport: r.viewport ?? null };
+        return { liveUrl: r.liveUrl, inputUrl: r.inputUrl ?? "", releaseUrl: r.releaseUrl ?? "", viewport: r.viewport ?? null, ...(r.livekit ? { livekit: r.livekit } : {}) };
       }}
     />
   );
