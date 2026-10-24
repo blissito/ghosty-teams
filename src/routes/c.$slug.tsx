@@ -159,7 +159,7 @@ import { parseVersionLine } from "../lib/ads-links";
 import { showSystemNotification } from "../utils/system-notification";
 import { marcarCierre, limpiarCierre } from "../lib/panel-cerrando";
 import { setComputerSteps } from "../lib/computer-store";
-import { isPlumbing, type AgentStep } from "@ghostystudio/computer";
+import { worthWatching, type AgentStep } from "@ghostystudio/computer";
 import { playNotificationSound, playGhostySound, playSelfSound, playMentionSound, playDmSound, playReadySound, playDeleteSound, playArtifactOpen, playArtifactClose, playArtifactReady } from "../utils/notificationSound";
 
 // Menciones que cuentan como "a ti": tu @handle o una grupal (@all/@channel/…).
@@ -2985,7 +2985,9 @@ function ChannelPage() {
    * un documento ni a lo que abriste tú.
    */
   const autoOpenComputer = (id: number, steps: AgentStep[]) => {
-    if (!steps.some((x) => !isPlumbing(x.tool))) return;
+    // Sólo si vale la pena mirarlo (turno largo, una espera o un fallo): un turno corto de leer
+    // deja su comprobante debajo de la respuesta y no abre nada.
+    if (!worthWatching(steps, Date.now())) return;
     if (!draftEsMio(id) || draftDismissedRef.current.has(id)) return;
     const msg = findMessageInCaches(id);
     if (!belongsToOpenConversation(msg, openDmId, channel.id)) return;

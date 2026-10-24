@@ -8,7 +8,7 @@ import { useT } from "../../i18n";
 import { useComputerSteps } from "../../lib/computer-store";
 import { computerBrowserFn } from "../../server/chat";
 
-export function AgentComputerPanel({ messageId, agentName }: { messageId: number; agentName?: string }) {
+export function AgentComputerPanel({ messageId, agentName, replay }: { messageId: number; agentName?: string; replay?: boolean }) {
   const t = useT();
   // En vivo mientras el turno de la burbuja siga (entre tool y tool también), o haya un paso corriendo.
   const { steps, loaded, live: turnLive } = useComputerSteps(messageId);
@@ -19,6 +19,7 @@ export function AgentComputerPanel({ messageId, agentName }: { messageId: number
       steps={steps}
       live={live}
       agentName={agentName}
+      autoplay={replay && !live}
       t={t}
       onWatch={(sessionId) => computerBrowserFn({ data: { id: messageId, sessionId, op: "watch" } })}
       onTakeover={async (sessionId) => {

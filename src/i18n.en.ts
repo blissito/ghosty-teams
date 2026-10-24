@@ -1925,7 +1925,6 @@ export const en: Record<string, string> = {
   "Nota para @build": "Note for @build",
   "Qué cambiar en el plan": "What to change in the plan",
   "@check revisa sólo": "@check reviews only",
-  "Aplicar": "Apply",
   "No se aplica sola: revisa la nota antes.": "It's never applied on its own: check the note first.",
   "Cancelado.": "Cancelled.",
   "Cancelado: el PR se cerró en GitHub sin merge.": "Cancelled: the PR was closed on GitHub without merging.",
@@ -2449,4 +2448,8 @@ export const en: Record<string, string> = {
   "Se cerró el navegador (expiró o terminó el turno).": "The browser closed (it expired or the turn ended).",
   "Navegador del agente en vivo": "Agent's browser, live",
   "Conectando con el navegador…": "Connecting to the browser…",
+  "Ver cómo lo revisé": "See how I checked it",
+  "Ver cómo lo hice": "See how I did it",
+  "En vivo": "Live",
+  "Captura": "Screenshot",
 };

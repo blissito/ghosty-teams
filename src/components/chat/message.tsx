@@ -2967,7 +2967,7 @@ export function MessageRow({
               const cc = extractComputerCard(m.body);
               return ts || cc ? (
                 <>
-                  {ts ? <ToolGroup tools={ts} vivo={turns.has(m.id)} /> : null}
+                  {ts && !(cc && !turns.has(m.id)) ? <ToolGroup tools={ts} vivo={turns.has(m.id)} /> : null}
                   {cc ? <ComputerCard messageId={m.id} card={cc} vivo={turns.has(m.id)} agentName={m.sender} /> : null}
                 </>
               ) : null;
@@ -3149,6 +3149,9 @@ export function MessageRow({
               {(() => {
                 const ts = extractToolState(m.body);
                 const cc = extractComputerCard(m.body);
+                // Terminado, la computadora va DEBAJO de la respuesta como comprobante y cubre la
+                // lista de herramientas (los pasos siguen en el panel). Mientras trabaja, arriba.
+                if (cc && !turns.has(m.id)) return null;
                 return ts || cc ? (
                   <>
                     {ts ? <ToolGroup tools={ts} vivo={turns.has(m.id)} /> : null}
@@ -3217,6 +3220,11 @@ export function MessageRow({
                 }}
               />
               ) : null}
+              {(() => {
+                // Comprobante del turno terminado: «▶ Ver cómo lo revisé» justo debajo de lo que afirma.
+                const cc = !turns.has(m.id) ? extractComputerCard(m.body) : null;
+                return cc ? <ComputerCard messageId={m.id} card={cc} vivo={false} agentName={m.sender} /> : null;
+              })()}
               {(() => {
                 // Va DESPUES de la prosa, no antes: la resena es el contenido y la
                 // tarjeta es su pie accionable. Al reves se lee como si el PR fuera el
@@ -3518,7 +3526,7 @@ function ComputerCard({ messageId, card, vivo, agentName }: { messageId: number;
       steps={steps}
       live={vivo && card.live}
       t={tr}
-      onOpen={() => onOpenArtifact?.({ kind: "computer", title: tr("Computadora del agente"), messageId, agentName })}
+      onOpen={(replay) => onOpenArtifact?.({ kind: "computer", title: tr("Computadora del agente"), messageId, agentName, replay })}
     />
   );
 }
