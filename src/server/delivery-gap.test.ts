@@ -3,6 +3,12 @@ import { deliveryGapNotice, hayHuecoPrevio, GAP_MARK } from "./delivery-gap";
 
 // Los casos salen de la conversación REAL que lo destapó (business, DM 6, 2026-08-24).
 describe("deliveryGapNotice", () => {
+  it("una oferta en pregunta no es entrega (recordatorio, 24-oct)", () => {
+    const real =
+      "Ahora sí quedó: el recordatorio está programado para mañana domingo 25 de octubre a las 6:00 pm, hora de la Ciudad de México.\n\nVa a salir aquí, en este chat. También actualicé la nota en mi memoria.\n¿Te lo mando también por correo, por si las notificaciones del celular están apagadas?";
+    expect(deliveryGapNotice(real, false)).toBe("");
+    expect(deliveryGapNotice("Listo. Te lo mando en PDF.", false)).not.toBe("");
+  });
   it("no confunde «solo dejo» con «lo dejo» (@ads, 26-sep)", () => {
     const real =
       "Ese botón me toca dármelo a mí de dientes para afuera, pero la acción real la hace una persona: abre la tarjeta de «GV · Tablero gratis · Messenger · sep26» en el panel y toca [Aplicar en Meta] ahí. Yo solo dejo los cambios pendientes, no los aplico.";

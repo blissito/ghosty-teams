@@ -3291,6 +3291,9 @@ async function runAgentTurnInner(opts: {
   // La computadora del agente: cada tool es un PASO con su resultado (`@ghostystudio/computer`).
   // Se manda entero y agrupado (700 ms) al caller y a `gt_computer`; el cierre lo manda ya.
   let steps: AgentStep[] = [];
+  // «Trabajó N» es lo que tardó el TURNO: medido de paso a paso, un comando de medio segundo
+  // en un turno de 40 s salía «Trabajó 0 s» (24-oct) y el contador no decía nada.
+  const turnT0 = Date.now();
   let stepsTimer: ReturnType<typeof setTimeout> | null = null;
   // `live` = el turno de esta burbuja sigue (entre tool y tool también): la vista en vivo del
   // navegador se sostiene con eso, no con «hay un paso corriendo».
@@ -3335,8 +3338,8 @@ async function runAgentTurnInner(opts: {
   const computerCard = (allDone: boolean) => {
     const real = steps.filter((x) => !isPlumbing(x.tool));
     if (!real.length) return null;
-    const start = Math.min(...real.map((x) => x.startedAt));
-    const end = Math.max(...real.map((x) => x.endedAt ?? x.startedAt));
+    const start = Math.min(turnT0, ...real.map((x) => x.startedAt));
+    const end = Math.max(allDone ? Date.now() : 0, ...real.map((x) => x.endedAt ?? x.startedAt));
     return { n: real.length, err: real.filter((x) => x.status === "error").length, ms: Math.max(0, end - start), live: !allDone };
   };
 

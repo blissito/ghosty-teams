@@ -90,8 +90,19 @@ const LLEVA_ALGO = [
 function anuncia(re: RegExp, i: number, prosa: string): boolean {
   const m = re.exec(prosa);
   if (!m) return false;
+  if (enPregunta(prosa, m.index)) return false;
   if (!AMBIGUOS.includes(i)) return true;
   return ENTREGABLE.test(prosa.slice(m.index, m.index + m[0].length + VENTANA));
+}
+
+/** ¿El anuncio cae dentro de una pregunta? «¿Te lo mando también por correo?» es una OFERTA,
+ *  no una entrega: el 24-oct disparó el aviso bajo la confirmación de un recordatorio y el
+ *  reintento automático quemó un turno entero para que el agente explicara que no había archivo. */
+function enPregunta(prosa: string, at: number): boolean {
+  const before = prosa.slice(0, at);
+  const open = before.lastIndexOf("¿");
+  if (open < 0 || /[.!?\n]/.test(before.slice(open + 1))) return false;
+  return /^[^.!\n]*\?/.test(prosa.slice(at));
 }
 
 /**
