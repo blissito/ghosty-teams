@@ -127,7 +127,7 @@ export async function createReminder(r: Omit<Reminder, "id">): Promise<Reminder>
   await dbq(
     `INSERT INTO gc_reminders (id, ns, owner_sub, channel_id, dm_id, topic, agent_handle, agent_name, agent_avatar, text, due_at, repeat, tz, email, email_cc)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    [id, await nsOf(), r.ownerSub, r.channelId, r.dmId, r.topic, r.agentHandle, r.agentName, r.agentAvatar, r.text, r.dueAt, r.repeat, r.tz, r.email ? 1 : 0, r.emailCc.length ? JSON.stringify(r.emailCc) : null]
+    [id, await nsOf(), r.ownerSub, r.channelId, r.dmId, r.topic ?? "", r.agentHandle, r.agentName, r.agentAvatar, r.text, r.dueAt, r.repeat, r.tz, r.email ? 1 : 0, r.emailCc.length ? JSON.stringify(r.emailCc) : null]
   );
   return { ...r, id };
 }
@@ -192,7 +192,9 @@ function toReminder(r: Record<string, string | null>): Reminder {
     // Se conserva el NULL: es el dato honesto ("este recordatorio no va a ningún canal").
     // Con un `?? "general"` aquí, una fila de DM se volvía a leer como si tuviera destino
     // de canal — que es exactamente la confusión que costó tiempo al diagnosticar esto.
-    topic: r.topic ?? null,
+    // En un DM la columna guarda "" (es NOT NULL y SQLite no aplica el DEFAULT a un NULL
+    // explícito: el 24-oct eso tiraba TODO recordatorio de DM con «NOT NULL constraint failed»).
+    topic: r.channel_id == null ? null : r.topic || null,
     agentHandle: r.agent_handle!,
     agentName: r.agent_name || "Ghosty",
     agentAvatar: r.agent_avatar || "",
