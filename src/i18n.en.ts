@@ -2436,4 +2436,7 @@ export const en: Record<string, string> = {
   "Editando archivo": "Editing file",
   "Publicando": "Publishing",
   "Ejecutando comando": "Running command",
+  "Ocultar detalle técnico": "Hide technical details",
+  "Ver detalle técnico": "Show technical details",
+  "No salió bien": "It didn't go well",
 };

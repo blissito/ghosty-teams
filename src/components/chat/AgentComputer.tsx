@@ -97,7 +97,7 @@ export function AgentComputer({ steps: allSteps, live, agentName }: { steps: Age
           {/* Lo que el agente dijo que iba a hacer; el comando ya se ve abajo, en la terminal. */}
           <p className="text-sm leading-snug text-ink">
             <span className="font-bold">{step.intent ?? t(stepVerb(step))}</span>
-            {step.detail && <span className="ml-1.5 font-mono text-xs text-muted">{step.detail}</span>}
+            {step.detail && step.kind !== "terminal" && <span className="ml-1.5 font-mono text-xs text-muted">{step.detail}</span>}
           </p>
         </div>
       </div>
@@ -180,7 +180,7 @@ export function AgentComputer({ steps: allSteps, live, agentName }: { steps: Age
           <StatusDot status={step.status} running={running} />
           <span className="min-w-0 flex-1 truncate">
             <span className="font-bold">{t(stepVerb(step))}</span>
-            {step.detail && <span className="text-muted"> · {step.detail}</span>}
+            {step.detail && step.kind !== "terminal" && <span className="text-muted"> · {step.detail}</span>}
             {repeats > 1 && <span className="ml-1 rounded-full bg-surface-2 px-1.5 font-mono text-muted">×{repeats}</span>}
           </span>
           <span className="shrink-0 font-mono text-faint">
@@ -253,8 +253,49 @@ function PlanStrip({ todos, live }: { todos: StepTodo[]; live: boolean }) {
   );
 }
 
-/** Terminal: los comandos del turno hasta el paso elegido, con su salida; el actual resaltado. */
-function TerminalView({ steps, idx, running }: ViewProps) {
+/**
+ * Terminal: la terminal cruda es lo que más se odia de estos paneles («cognitive overload»,
+ * investigación de EasyBits 23-oct). Por default se ve la frase del paso y cómo salió; los
+ * comandos con su salida quedan detrás de «Ver detalle técnico».
+ */
+function TerminalView(p: ViewProps) {
+  const t = useT();
+  const [raw, setRaw] = useState(false);
+  const { step, running } = p;
+  if (raw) {
+    return (
+      <div className="flex h-full flex-col">
+        <div className="min-h-0 flex-1">
+          <RawTerminal {...p} />
+        </div>
+        <button type="button" onClick={() => setRaw(false)} className="border-t border-border bg-card px-3 py-1.5 text-xs font-semibold text-muted hover:text-ink">
+          {t("Ocultar detalle técnico")}
+        </button>
+      </div>
+    );
+  }
+  const failed = step.status === "error" || (step.result?.exitCode ?? 0) !== 0;
+  // De la salida sólo la última línea con letras: «3 passed», «Deployed to …».
+  const gist = step.result?.summary?.split("\n").map((l) => l.trim()).filter((l) => /[\p{L}\p{N}]/u.test(l)).pop();
+  return (
+    <div className="grid h-full place-items-center overflow-auto p-6 text-center">
+      <div className="min-w-0 max-w-md">
+        <Terminal className={`mx-auto size-10 text-brand ${running ? "animate-pulse" : ""}`} />
+        <p className="mt-3 text-sm font-bold text-ink">{step.intent ?? t(stepVerb(step))}</p>
+        <p className={`mt-1 text-xs ${failed ? "text-red-500" : "text-muted"}`}>
+          {running ? t("Trabajando…") : failed ? t("No salió bien") : t("Listo")}
+          {!running && gist && <span className="text-muted"> · {gist.length > 140 ? gist.slice(0, 139) + "…" : gist}</span>}
+        </p>
+        <button type="button" onClick={() => setRaw(true)} className="mt-4 rounded-full border border-border px-3 py-1 text-xs font-semibold text-muted hover:border-brand/50 hover:text-ink">
+          {t("Ver detalle técnico")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Los comandos del turno hasta el paso elegido, con su salida; el actual resaltado. */
+function RawTerminal({ steps, idx, running }: ViewProps) {
   const t = useT();
   const lines = useMemo(() => steps.slice(0, idx + 1).map((s, i) => ({ s, i })).filter(({ s }) => s.kind === "terminal"), [steps, idx]);
   const end = useRef<HTMLDivElement>(null);

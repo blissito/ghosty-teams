@@ -3531,7 +3531,7 @@ function ComputerCard({ messageId, card, vivo, agentName }: { messageId: number;
           {card.err > 0 && <span className="ml-1.5 font-normal text-red-500">· {tr("{n} con error", { n: card.err })}</span>}
         </span>
         <span className="block truncate text-muted">
-          {now ? `${now.intent ?? tr(stepVerb(now))}${now.detail ? ` · ${now.detail}` : ""}` : tr("Ver la computadora del agente")}
+          {now ? `${now.intent ?? tr(stepVerb(now))}${now.detail && now.kind !== "terminal" ? ` · ${now.detail}` : ""}` : tr("Ver la computadora del agente")}
         </span>
       </span>
       {live ? <span className="size-2 shrink-0 animate-pulse rounded-full bg-green-500" /> : <ChevronRight size={14} className="shrink-0 text-muted" />}
