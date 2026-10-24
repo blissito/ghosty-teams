@@ -2172,7 +2172,7 @@ function ChannelPage() {
       case "computer:steps":
         // La computadora del agente: los pasos van al store (tarjeta y panel leen de ahí) y,
         // si el turno es tuyo, el panel se abre solo en cuanto hay trabajo que mirar.
-        setComputerSteps(ev.id, ev.steps);
+        setComputerSteps(ev.id, ev.steps, ev.live === true);
         autoOpenComputer(ev.id, ev.steps);
         break;
       case "message:body": {

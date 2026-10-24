@@ -3224,7 +3224,7 @@ async function runAgentTurnInner(opts: {
   onToolNames?: (names: string[]) => void;
   /** La computadora del agente: los pasos del turno (con resultado) de la burbuja `messageId`,
    *  enteros en cada cambio y agrupados. El caller los publica en vivo al room; aquí se guardan. */
-  emitComputer?: (messageId: number, steps: AgentStep[]) => void;
+  emitComputer?: (messageId: number, steps: AgentStep[], live: boolean) => void;
   /** Causa del fallo de transporte, si el turno murió. `null` = entregó.
    *  Lo consumen chat.ts/dm.ts para marcar el turno como fallido en vez de `done`. */
 }): Promise<{ id: number; reply: string; failure?: string | null; toolsCorridas?: string[]; plan?: { id: number; body: string }; attachmentsFailed?: { name: string; reason: string }[] }> {
@@ -3292,13 +3292,15 @@ async function runAgentTurnInner(opts: {
   // Se manda entero y agrupado (700 ms) al caller y a `gt_computer`; el cierre lo manda ya.
   let steps: AgentStep[] = [];
   let stepsTimer: ReturnType<typeof setTimeout> | null = null;
-  const flushSteps = async () => {
+  // `live` = el turno de esta burbuja sigue (entre tool y tool también): la vista en vivo del
+  // navegador se sostiene con eso, no con «hay un paso corriendo».
+  const flushSteps = async (live = true) => {
     if (stepsTimer) clearTimeout(stepsTimer);
     stepsTimer = null;
     if (!steps.length) return;
     const mid = await ensure();
     const snap = steps;
-    opts.emitComputer?.(mid, snap);
+    opts.emitComputer?.(mid, snap, live);
     const db = await import("./db.server");
     await db.saveComputerSteps(mid, JSON.stringify(snap)).catch(() => {});
   };
@@ -3653,7 +3655,7 @@ async function runAgentTurnInner(opts: {
     if (!narration().trim()) return;
     opts.emitBody(shellId, closedBody);
     await opts.closeBubble?.(shellId, closedBody);
-    await flushSteps();
+    await flushSteps(false);
     steps = [];
     const newId = await opts.createFollowUp(shellId);
     shellP = Promise.resolve(newId);
@@ -3712,7 +3714,7 @@ async function runAgentTurnInner(opts: {
       // Lo que siga «running» al cerrar ya no corre: cierra con el turno.
       const now = Date.now();
       steps = steps.map((x) => (x.status === "running" ? { ...x, status: opts.signal?.aborted ? "error" : "ok", endedAt: now } : x));
-      await flushSteps().catch(() => {});
+      await flushSteps(false).catch(() => {});
     }
   }
   // STEER: no hay turno que cerrar acá. `id` sale 0 y el llamador borra la cáscara que

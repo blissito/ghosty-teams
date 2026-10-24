@@ -6,11 +6,15 @@ import type { AgentStep } from "@ghostystudio/computer";
 import { getComputerStepsFn } from "../server/chat";
 
 const byMessage = new Map<number, AgentStep[]>();
+// Si el turno de la burbuja sigue (lo dice cada `computer:steps`; lo leído de la base ya terminó).
+const liveTurn = new Map<number, boolean>();
 const listeners = new Set<() => void>();
 const loading = new Set<number>();
 
-export function setComputerSteps(messageId: number, steps: AgentStep[]): void {
+export function setComputerSteps(messageId: number, steps: AgentStep[], live = false): void {
   byMessage.set(messageId, steps);
+  liveTurn.set(messageId, live);
+  if (liveTurn.size > 60) liveTurn.delete(liveTurn.keys().next().value!);
   // Tope: una pestaña abierta todo el día no debe guardar los pasos de cada turno.
   if (byMessage.size > 60) byMessage.delete(byMessage.keys().next().value!);
   for (const l of listeners) l();
@@ -24,7 +28,7 @@ function subscribe(l: () => void) {
 const EMPTY: AgentStep[] = [];
 
 /** Los pasos de una burbuja; si no llegaron en vivo, los pide una vez a la base. */
-export function useComputerSteps(messageId: number): { steps: AgentStep[]; loaded: boolean } {
+export function useComputerSteps(messageId: number): { steps: AgentStep[]; loaded: boolean; live: boolean } {
   const steps = useSyncExternalStore(subscribe, () => byMessage.get(messageId) ?? EMPTY, () => EMPTY);
   const loaded = byMessage.has(messageId);
   useEffect(() => {
@@ -40,5 +44,5 @@ export function useComputerSteps(messageId: number): { steps: AgentStep[]; loade
       })
       .finally(() => loading.delete(messageId));
   }, [messageId, loaded]);
-  return { steps, loaded };
+  return { steps, loaded, live: liveTurn.get(messageId) === true };
 }

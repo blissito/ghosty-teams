@@ -623,6 +623,41 @@ export const getComputerStepsFn = createServerFn({ method: "GET" })
     return { steps: raw ? (JSON.parse(raw) as import("@ghostystudio/computer").AgentStep[]) : [] };
   });
 
+// La computadora del agente: mirar en vivo o tomar el control del navegador de la caja. gs da un
+// pase firmado (`/api/v2/fleet-agents/:id/browser/:op`, HMAC de partner) y el navegador de la
+// persona habla con él directo. Mirar: quien ve el hilo. Tomar el control: sólo quien pidió el turno.
+export const computerBrowserFn = createServerFn({ method: "POST" })
+  .validator((d: { id: number; sessionId: string; op: "watch" | "takeover" }) => d)
+  .handler(async ({ data }) => {
+    const db = await import("../db.server");
+    const user = await sessionUser();
+    const msg = await db.getMessage(data.id);
+    if (!user || !msg || !(await threadVisibleFor(msg, { sub: user.sub, isOwner: !!user.isOwner }, db))) throw new Error("no autorizado");
+    if (data.op !== "watch" && data.op !== "takeover") throw new Error("op desconocida");
+    if (data.op === "takeover") {
+      const { dbq } = await import("../dbq.server");
+      const [t] = await dbq("SELECT invoker_sub FROM gt_turns WHERE message_id = ? OR shell_id = ? LIMIT 1", [data.id, data.id]).catch(() => []);
+      const invoker = t?.invoker_sub ? String(t.invoker_sub) : null;
+      if (invoker && invoker !== user.sub && !user.isOwner) throw new Error("Sólo quien le pidió el trabajo al agente puede tomar el control.");
+    }
+    const { resolvedAgents } = await import("../agents.server");
+    const agent = (await resolvedAgents()).find((a) => a.handle === msg.agent_handle);
+    if (!agent || agent.backend.kind !== "fleet") throw new Error("este agente no tiene navegador en la caja");
+    const { runtimeFor } = await import("./agent-runtime.server");
+    const rt = await runtimeFor(agent.backend);
+    if (rt.transport !== "http") throw new Error("este agente no tiene navegador en la caja");
+    const body = JSON.stringify({ sessionId: data.sessionId });
+    const res = await fetch(`${rt.base}/api/v2/fleet-agents/${encodeURIComponent(agent.backend.id)}/browser/${data.op}`, {
+      method: "POST",
+      headers: rt.headers(body, agent.backend.token),
+      body,
+      signal: AbortSignal.timeout(30_000),
+    });
+    const out = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) throw new Error(res.status === 410 ? "El navegador ya se cerró." : String(out.error ?? `error ${res.status}`));
+    return out as { liveUrl: string; inputUrl?: string; releaseUrl?: string; viewport?: { width: number; height: number } | null };
+  });
+
 // Catch-up (lossless): mensajes del room con id > sinceId. El cliente lo llama al
 // (re)conectar / volver a la pestaña para rellenar lo que el SSE pudiera haber perdido.
 export const getMessagesSince = createServerFn({ method: "GET" })
@@ -1558,7 +1593,7 @@ export const askAgentAs = createServerOnlyFn(async (me: SessionMe | null, data: 
     // Checklist incremental: reemplaza el body con la lista re-pintada (previas ✓, actual ⚡).
     // Además PERSISTE con throttle: sin esto, un refresh a media respuesta deja una cáscara
     // muda aunque el worker siga trabajando (el bus no tiene buffer).
-    emitComputer: (mid, steps) => bus.publish(bus.ch.room(ns, channel.id), { t: "computer:steps", id: mid, steps }),
+    emitComputer: (mid, steps, live) => bus.publish(bus.ch.room(ns, channel.id), { t: "computer:steps", id: mid, steps, live }),
     emitBody: (mid, body) => {
       bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id: mid, body });
       flusher.offer(mid, body);
