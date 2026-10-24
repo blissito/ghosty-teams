@@ -2442,6 +2442,7 @@ export const en: Record<string, string> = {
   "Cargando la página…": "Loading the page…",
   "Este paso no dejó captura": "This step left no screenshot",
   "Tomar el control": "Take control",
+  "Te necesito aquí": "I need you here",
   "Tienes el control.": "You're in control.",
   "El agente espera; esto no se guarda en el replay.": "The agent is waiting; this isn't saved in the replay.",
   "Devolver el control": "Give control back",

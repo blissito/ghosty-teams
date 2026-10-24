@@ -1502,6 +1502,8 @@ export const askAgentAs = createServerOnlyFn(async (me: SessionMe | null, data: 
   const origenDelTurno = await reqOrigin().catch(() => "");
   // Uso Limitado del destino: la autoridad del turno para el servidor MCP (igual que el claim `lu`).
   const luDelTurno = await import("./limited-use.server").then((m) => m.destLimitedUse(destDelTurno, agent)).catch(() => false);
+  // Último pedido de ayuda avisado (`emitComputer`): un push por pedido, no por cada repintado.
+  let askedHuman = "";
   const register = (mid: number) => {
     if (registeredId === mid) return;
     registeredId = mid;
@@ -1593,7 +1595,31 @@ export const askAgentAs = createServerOnlyFn(async (me: SessionMe | null, data: 
     // Checklist incremental: reemplaza el body con la lista re-pintada (previas ✓, actual ⚡).
     // Además PERSISTE con throttle: sin esto, un refresh a media respuesta deja una cáscara
     // muda aunque el worker siga trabajando (el bus no tiene buffer).
-    emitComputer: (mid, steps, live) => bus.publish(bus.ch.room(ns, channel.id), { t: "computer:steps", id: mid, steps, live }),
+    emitComputer: (mid, steps, live) => {
+      bus.publish(bus.ch.room(ns, channel.id), { t: "computer:steps", id: mid, steps, live });
+      // El agente espera a la persona (`cloud_browser_ask_human`): push a quien pidió el turno, una
+      // vez por pedido. Si está mirando el room igual le sirve: el aviso dice qué hacer.
+      const ask = steps.find((st) => st.status === "running" && st.browser?.needsHuman);
+      const askKey = ask ? `${ask.id}:${ask.browser!.needsHuman}` : "";
+      if (ask && askKey !== askedHuman && poster?.sub) {
+        askedHuman = askKey;
+        void import("./notify.server")
+          .then(({ notify }) =>
+            notify(
+              {
+                kind: "turn",
+                recipients: [poster.sub!],
+                title: `${name} te necesita`,
+                body: ask.browser!.needsHuman!,
+                url: data.parentId != null ? `/c/${channel.slug}?thread=${data.parentId}` : `/c/${channel.slug}`,
+                tag: `ask:${mid}`,
+              },
+              ns,
+            ),
+          )
+          .catch(() => {});
+      }
+    },
     emitBody: (mid, body) => {
       bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id: mid, body });
       flusher.offer(mid, body);
