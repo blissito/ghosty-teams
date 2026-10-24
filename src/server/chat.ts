@@ -1,4 +1,5 @@
 import { createServerFn, createServerOnlyFn } from "@tanstack/react-start";
+import { pendingAsk } from "@ghostystudio/computer";
 import type { RtEvent } from "./bus.server";
 import type { SessionUser } from "../users.server";
 import type { Channel } from "../db.server";
@@ -1599,8 +1600,8 @@ export const askAgentAs = createServerOnlyFn(async (me: SessionMe | null, data: 
       bus.publish(bus.ch.room(ns, channel.id), { t: "computer:steps", id: mid, steps, live });
       // El agente espera a la persona (`cloud_browser_ask_human`): push a quien pidió el turno, una
       // vez por pedido. Si está mirando el room igual le sirve: el aviso dice qué hacer.
-      const ask = steps.find((st) => st.status === "running" && st.browser?.needsHuman);
-      const askKey = ask ? `${ask.id}:${ask.browser!.needsHuman}` : "";
+      const ask = pendingAsk(steps);
+      const askKey = ask?.key ?? "";
       if (ask && askKey !== askedHuman && poster?.sub) {
         askedHuman = askKey;
         void import("./notify.server")
@@ -1610,7 +1611,7 @@ export const askAgentAs = createServerOnlyFn(async (me: SessionMe | null, data: 
                 kind: "turn",
                 recipients: [poster.sub!],
                 title: `${name} te necesita`,
-                body: ask.browser!.needsHuman!,
+                body: ask.text,
                 url: data.parentId != null ? `/c/${channel.slug}?thread=${data.parentId}` : `/c/${channel.slug}`,
                 tag: `ask:${mid}`,
               },

@@ -5,7 +5,7 @@
 import { PERSONA_ALIASES } from "./server/apps/factory-roles";
 import { hasIds, nodeIndex } from "./lib/artifact-ids";
 import { extractTodos, renderTodosBlock, stripStepsBlock, stripToolBlock, type TodoItem } from "./lib/ebdoc";
-import { attachFrame, isPlumbing, lastIntent, MAX_STEPS, normalizeStepResult, stepKind, upsertStep, type AgentStep, type BrowserFrame, type StepResult } from "@ghostystudio/computer";
+import { attachTurnFrame, isPlumbing, lastIntent, MAX_STEPS, normalizeStepResult, stepKind, upsertStep, type AgentStep, type BrowserFrame, type StepResult } from "@ghostystudio/computer";
 import { ARTIFACT_DESIGN_GUIDE } from "./server/prompts/artifact-design";
 import { parseScope, type ToolScope } from "./server/connectors/tool-token.server";
 
@@ -3496,8 +3496,7 @@ async function runAgentTurnInner(opts: {
     try {
       const storage = await import("./server/storage.server");
       const up = await storage.put({ blob: new Blob([Buffer.from(ev.data, "base64")]), contentType: ev.mimeType ?? "image/jpeg", fileName: "navegador.jpg" });
-      const { tool, ...frame } = ev.frame;
-      steps = attachFrame(steps, { ...frame, url: frame.url ?? "", title: frame.title ?? "", image: `/api/attachment/${encodeURIComponent(up.key)}` }, ev.id, tool);
+      steps = attachTurnFrame(steps, ev.frame, `/api/attachment/${encodeURIComponent(up.key)}`, ev.id);
       queueSteps();
     } catch (e) {
       console.warn(`[computer] captura del navegador: ${(e as Error).message}`);
