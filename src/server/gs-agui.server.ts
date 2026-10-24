@@ -15,7 +15,7 @@
 // turno y se le dan todos los streams de ese turno, no uno por stream.
 import type { MediaPart, SubEvent, ToolEvent, TruncatedEvent } from "../agents.server";
 import type { TodoItem } from "../lib/ebdoc";
-import { cleanStepResult, type StepResult } from "../lib/agent-steps";
+import { cleanStepResult, type StepResult } from "@ghostystudio/computer";
 
 /** El `content` de un TOOL_CALL_RESULT: gs manda ahí el `result` del worker en JSON (vacío si no hay). */
 function resultOf(content: unknown): StepResult | undefined {
@@ -487,6 +487,12 @@ export class AguiTurnReader {
         // TodoWrite, con id propio para no pisar la fila de la tool que lo cambió.
         const todos = Array.isArray(v.todos) ? (v.todos as TodoItem[]) : [];
         if (todos.length && this.first(`todos:${JSON.stringify(todos)}`)) await this.h.onTool?.({ name: "TodoWrite", id: `${String(v.toolCallId ?? "plan")}:plan`, phase: "start", todos });
+        return null;
+      }
+      case "ghosty.browser": {
+        // Captura del navegador de la caja (`cloud_browser_*`) para la computadora del agente.
+        if (typeof v.data !== "string" || !v.data || !v.frame || typeof v.frame !== "object") return null;
+        await this.h.onTool?.({ ...(v.toolCallId ? { id: String(v.toolCallId) } : {}), phase: "frame", frame: v.frame, data: v.data, mimeType: typeof v.mimeType === "string" ? v.mimeType : "image/jpeg" });
         return null;
       }
       case "ghosty.injected":

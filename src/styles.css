@@ -7,6 +7,8 @@
    Sin el @source, las clases internas de Streamdown quedan inertes → layout roto. */
 @import "streamdown/styles.css";
 @source "../node_modules/streamdown/dist";
+/* La computadora del agente (@ghostystudio/computer): CSS propio `.gc-`, mapeado a los tokens abajo. */
+@import "@ghostystudio/computer/styles.css";
 
 /* ── Design tokens ──────────────────────────────────────────────
    Theme por default = "ghosty" (morado, estilo EasyBits).
@@ -744,3 +746,16 @@ body[data-mantenimiento="1"] .gt-app {
   background: color-mix(in srgb, var(--color-border) 55%, transparent);
 }
 
+/* ── La computadora del agente (@ghostystudio/computer) ──────────────────
+   Sus variables apuntan a los tokens de Teams: sigue el tema y el modo oscuro solo. */
+.gc-scope {
+  --gc-bg: var(--color-card);
+  --gc-bg-2: var(--color-surface);
+  --gc-hover: var(--color-surface-2);
+  --gc-border: var(--color-border);
+  --gc-ink: var(--color-ink);
+  --gc-muted: var(--color-muted);
+  --gc-faint: var(--color-faint);
+  --gc-brand: var(--color-brand);
+  --gc-brand-soft: color-mix(in srgb, var(--color-brand) 14%, transparent);
+}

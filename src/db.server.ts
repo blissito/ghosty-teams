@@ -182,7 +182,7 @@ export async function setMessageModel(messageId: number, model: string): Promise
   await dbq("UPDATE gc_messages SET turn_model = ? WHERE id = ?", [model.slice(0, 80), messageId]);
 }
 
-// ── La computadora del agente (`lib/agent-steps.ts`) ───────────────────────────────────────────
+// ── La computadora del agente (`@ghostystudio/computer`) ───────────────────────────────────────────
 
 export async function saveComputerSteps(messageId: number, stepsJson: string): Promise<void> {
   await dbq(

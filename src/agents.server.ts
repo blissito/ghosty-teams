@@ -5,7 +5,7 @@
 import { PERSONA_ALIASES } from "./server/apps/factory-roles";
 import { hasIds, nodeIndex } from "./lib/artifact-ids";
 import { extractTodos, renderTodosBlock, stripStepsBlock, stripToolBlock, type TodoItem } from "./lib/ebdoc";
-import { isPlumbing, lastIntent, MAX_STEPS, normalizeStepResult, stepKind, upsertStep, type AgentStep, type StepResult } from "./lib/agent-steps";
+import { attachFrame, isPlumbing, lastIntent, MAX_STEPS, normalizeStepResult, stepKind, upsertStep, type AgentStep, type BrowserFrame, type StepResult } from "@ghostystudio/computer";
 import { ARTIFACT_DESIGN_GUIDE } from "./server/prompts/artifact-design";
 import { parseScope, type ToolScope } from "./server/connectors/tool-token.server";
 
@@ -1593,9 +1593,14 @@ export type SubEvent = {
 };
 // `progress` = latido de gs mientras una tool sigue abierta (`elapsedMs`): una tool larga
 // (Bash con build/tests) no emite nada por minutos y la burbuja parecía colgada (3-oct).
-// `command` (inicio) y `result` (cierre): la computadora del agente (`lib/agent-steps.ts`) pinta la terminal,
+// `command` (inicio) y `result` (cierre): la computadora del agente (`@ghostystudio/computer`) pinta la terminal,
 // los resultados de una búsqueda o el diff. Sólo los manda claude-worker vía gs.
-export type ToolEvent = { name?: string; id?: string; phase?: "start" | "end" | "progress"; ok?: boolean; detail?: string; command?: string; result?: StepResult; todos?: TodoItem[]; sub?: SubEvent; elapsedMs?: number };
+// `phase: "frame"`: captura del navegador de la caja (`cloud_browser_*`), aparte del cierre de la tool;
+// `data` en base64 se sube al almacenamiento privado y el paso guarda su ruta.
+export type ToolEvent = {
+  name?: string; id?: string; phase?: "start" | "end" | "progress" | "frame"; ok?: boolean; detail?: string; command?: string; result?: StepResult; todos?: TodoItem[]; sub?: SubEvent; elapsedMs?: number;
+  frame?: Omit<BrowserFrame, "image"> & { tool?: string }; data?: string; mimeType?: string;
+};
 
 /**
  * El turno NO terminó: lo cortó el runtime (se acabaron los pasos o el presupuesto, o la
@@ -3283,7 +3288,7 @@ async function runAgentTurnInner(opts: {
   let todosAt = planPrevio?.asOf ?? 0;
   const renderTodos = (): string => (todos ? renderTodosBlock({ todos, asOf: todosAt }) : "");
 
-  // La computadora del agente: cada tool es un PASO con su resultado (`lib/agent-steps.ts`).
+  // La computadora del agente: cada tool es un PASO con su resultado (`@ghostystudio/computer`).
   // Se manda entero y agrupado (700 ms) al caller y a `gt_computer`; el cierre lo manda ya.
   let steps: AgentStep[] = [];
   let stepsTimer: ReturnType<typeof setTimeout> | null = null;
@@ -3479,7 +3484,22 @@ async function runAgentTurnInner(opts: {
       opts.emitDelta(await ensure(), chunk); // fallback legacy (append)
     }
   };
+  /** Captura del navegador de la caja: a Tigris privado (`/api/attachment/<key>`, sólo con sesión)
+   *  y al paso que la tomó. Nunca a un bucket público: trae lo que el agente vio. */
+  const trackFrame = async (ev: ToolEvent) => {
+    if (!ev.data || !ev.frame) return;
+    try {
+      const storage = await import("./server/storage.server");
+      const up = await storage.put({ blob: new Blob([Buffer.from(ev.data, "base64")]), contentType: ev.mimeType ?? "image/jpeg", fileName: "navegador.jpg" });
+      const { tool, ...frame } = ev.frame;
+      steps = attachFrame(steps, { ...frame, url: frame.url ?? "", title: frame.title ?? "", image: `/api/attachment/${encodeURIComponent(up.key)}` }, ev.id, tool);
+      queueSteps();
+    } catch (e) {
+      console.warn(`[computer] captura del navegador: ${(e as Error).message}`);
+    }
+  };
   const onTool = async (ev: ToolEvent) => {
+    if (ev.phase === "frame") return trackFrame(ev);
     if (ev.phase === "progress") {
       const entry = ev.id ? idToEntry.get(ev.id) : undefined;
       if (!entry || (ev.id && entry.ended.has(ev.id))) return;

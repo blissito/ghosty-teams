@@ -620,7 +620,7 @@ export const getComputerStepsFn = createServerFn({ method: "GET" })
     const msg = await db.getMessage(data.id);
     if (!(await threadVisibleFor(msg, user ? { sub: user.sub, isOwner: !!user.isOwner } : null, db))) throw new Error("no autorizado");
     const raw = await db.getComputerSteps(data.id);
-    return { steps: raw ? (JSON.parse(raw) as import("../lib/agent-steps").AgentStep[]) : [] };
+    return { steps: raw ? (JSON.parse(raw) as import("@ghostystudio/computer").AgentStep[]) : [] };
   });
 
 // Catch-up (lossless): mensajes del room con id > sinceId. El cliente lo llama al

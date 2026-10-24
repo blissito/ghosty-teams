@@ -42,7 +42,7 @@ describe("AguiTurnReader", () => {
         { type: "TOOL_CALL_END", toolCallId: "b" },
         { type: "TOOL_CALL_RESULT", messageId: `${R}:tb`, toolCallId: "b", content: JSON.stringify({ summary: "3 passed", exitCode: 0 }) },
         { type: "CUSTOM", name: "ghosty.todos", value: { toolCallId: "u", todos } },
-        { type: "CUSTOM", name: "ghosty.todos", value: { toolCallId: "u", todos } },
+        { type: "CUSTOM", name: "ghosty.browser", value: { toolCallId: "o", data: "JPEG", mimeType: "image/jpeg", frame: { tool: "cloud_browser_open", url: "https://x.com", title: "X", sessionId: "s1" } } },
         { type: "RUN_FINISHED", threadId: "g", runId: R, result: "", outcome: { type: "success" } },
       ]),
       { idleMs: 5_000 },
@@ -51,6 +51,7 @@ describe("AguiTurnReader", () => {
       { name: "Bash", id: "b", phase: "start", detail: "npm test", command: "npm test -- --run" },
       { id: "b", phase: "end", ok: true, result: { summary: "3 passed", exitCode: 0 } },
       { name: "TodoWrite", id: "u:plan", phase: "start", todos },
+      { id: "o", phase: "frame", frame: { tool: "cloud_browser_open", url: "https://x.com", title: "X", sessionId: "s1" }, data: "JPEG", mimeType: "image/jpeg" },
     ]);
   });
 

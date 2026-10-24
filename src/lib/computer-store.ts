@@ -2,7 +2,7 @@
 // evento `computer:steps` del room (en vivo) o, al abrir el panel de un turno viejo, la lectura
 // de `gt_computer`. La tarjeta del checklist y el panel leen del mismo lugar.
 import { useEffect, useSyncExternalStore } from "react";
-import type { AgentStep } from "./agent-steps";
+import type { AgentStep } from "@ghostystudio/computer";
 import { getComputerStepsFn } from "../server/chat";
 
 const byMessage = new Map<number, AgentStep[]>();

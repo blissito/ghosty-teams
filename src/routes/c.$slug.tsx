@@ -159,7 +159,7 @@ import { parseVersionLine } from "../lib/ads-links";
 import { showSystemNotification } from "../utils/system-notification";
 import { marcarCierre, limpiarCierre } from "../lib/panel-cerrando";
 import { setComputerSteps } from "../lib/computer-store";
-import { isPlumbing, type AgentStep } from "../lib/agent-steps";
+import { isPlumbing, type AgentStep } from "@ghostystudio/computer";
 import { playNotificationSound, playGhostySound, playSelfSound, playMentionSound, playDmSound, playReadySound, playDeleteSound, playArtifactOpen, playArtifactClose, playArtifactReady } from "../utils/notificationSound";
 
 // Menciones que cuentan como "a ti": tu @handle o una grupal (@all/@channel/…).
