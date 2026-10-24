@@ -8,7 +8,10 @@ import { useT } from "../../i18n";
 import { useComputerSteps } from "../../lib/computer-store";
 import { computerBrowserFn } from "../../server/chat";
 
-export function AgentComputerPanel({ messageId, agentName, replay }: { messageId: number; agentName?: string; replay?: boolean }) {
+/** Los roles de la fábrica trabajan con código: ellos sí ven la terminal y el diff técnico. */
+const DEV_HANDLES = new Set(["plan", "build", "check", "arqui"]);
+
+export function AgentComputerPanel({ messageId, agentName, handle, replay }: { messageId: number; agentName?: string; handle?: string; replay?: boolean }) {
   const t = useT();
   // En vivo mientras el turno de la burbuja siga (entre tool y tool también), o haya un paso corriendo.
   const { steps, loaded, live: turnLive } = useComputerSteps(messageId);
@@ -20,6 +23,8 @@ export function AgentComputerPanel({ messageId, agentName, replay }: { messageId
       live={live}
       agentName={agentName}
       autoplay={replay && !live}
+      // Fuera de la fábrica, en palabras de persona: la terminal queda tras «Ver detalles técnicos».
+      technical={!!handle && DEV_HANDLES.has(handle)}
       t={t}
       onWatch={(sessionId) => computerBrowserFn({ data: { id: messageId, sessionId, op: "watch" } })}
       onTakeover={async (sessionId) => {

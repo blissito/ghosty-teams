@@ -198,7 +198,7 @@ export type ArtifactView =
   | { kind: "run"; title: string; runId: number; channelId: number }
   // La computadora del agente: los pasos (con resultado) del turno de la burbuja `messageId`.
   // `replay`: abierta desde el comprobante de un turno terminado → se repite desde el primer paso.
-  | { kind: "computer"; title: string; messageId: number; agentName?: string; replay?: boolean }
+  | { kind: "computer"; title: string; messageId: number; agentName?: string; handle?: string; replay?: boolean }
   // Un sprint de la fábrica: tickets, detalle, ediciones y aprobación (SprintCard expandida).
   | { kind: "sprint"; title: string; sprintId: number; channelId: number }
   // Un subagente del turno: tarea, contadores, pasos y resultado (SubagentPanel).
@@ -2432,7 +2432,7 @@ export default function ArtifactPanel({
                     ) : artifact.kind === "run" ? (
                       <RunPanel runId={artifact.runId} channelId={artifact.channelId} />
                     ) : artifact.kind === "computer" ? (
-                      <AgentComputerPanel messageId={artifact.messageId} agentName={artifact.agentName} replay={artifact.replay} />
+                      <AgentComputerPanel messageId={artifact.messageId} agentName={artifact.agentName} handle={artifact.handle} replay={artifact.replay} />
                     ) : artifact.kind === "campaign" ? (
                       <AdsCampaignPanel
                         campaignId={artifact.campaignId}

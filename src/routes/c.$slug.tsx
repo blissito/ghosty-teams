@@ -2995,7 +2995,7 @@ function ChannelPage() {
     if (cur?.kind === "computer" && cur.messageId === id) return;
     if (cur && (panelManualRef.current || cur.kind !== "computer")) return;
     if (!cur) playArtifactOpen();
-    setOpenArtifact({ kind: "computer", title: t("Computadora del agente"), messageId: id, agentName: msg?.sender || undefined });
+    setOpenArtifact({ kind: "computer", title: t("Computadora del agente"), messageId: id, agentName: msg?.sender || undefined, handle: msg?.agent_handle ?? undefined });
   };
   // Link directo `?campaign=N`: abre la campaña en el panel igual que [Abrir], cuando el hilo
   // del link ya está abierto y en el siguiente cuadro (abrirlo a media hidratación dejaba el

@@ -2968,7 +2968,7 @@ export function MessageRow({
               return ts || cc ? (
                 <>
                   {ts && !(cc && !turns.has(m.id)) ? <ToolGroup tools={ts} vivo={turns.has(m.id)} /> : null}
-                  {cc ? <ComputerCard messageId={m.id} card={cc} vivo={turns.has(m.id)} agentName={m.sender} /> : null}
+                  {cc ? <ComputerCard messageId={m.id} card={cc} vivo={turns.has(m.id)} agentName={m.sender} handle={m.agent_handle ?? undefined} /> : null}
                 </>
               ) : null;
             })()}
@@ -3155,7 +3155,7 @@ export function MessageRow({
                 return ts || cc ? (
                   <>
                     {ts ? <ToolGroup tools={ts} vivo={turns.has(m.id)} /> : null}
-                    {cc ? <ComputerCard messageId={m.id} card={cc} vivo={turns.has(m.id)} agentName={m.sender} /> : null}
+                    {cc ? <ComputerCard messageId={m.id} card={cc} vivo={turns.has(m.id)} agentName={m.sender} handle={m.agent_handle ?? undefined} /> : null}
                   </>
                 ) : null;
               })()}
@@ -3223,7 +3223,7 @@ export function MessageRow({
               {(() => {
                 // Comprobante del turno terminado: «▶ Ver cómo lo revisé» justo debajo de lo que afirma.
                 const cc = !turns.has(m.id) ? extractComputerCard(m.body) : null;
-                return cc ? <ComputerCard messageId={m.id} card={cc} vivo={false} agentName={m.sender} /> : null;
+                return cc ? <ComputerCard messageId={m.id} card={cc} vivo={false} agentName={m.sender} handle={m.agent_handle ?? undefined} /> : null;
               })()}
               {(() => {
                 // Va DESPUES de la prosa, no antes: la resena es el contenido y la
@@ -3515,7 +3515,7 @@ export function TodoCard({ msgId, plan, vivo }: { msgId: number; plan: TodoState
  * La tarjeta de la computadora del agente (bliss, 23-oct: «en la tarjeta»): cuánto lleva o
  * cuánto trabajó, cuántos pasos y, en vivo, qué está haciendo ahora. Al tocarla abre el panel.
  */
-function ComputerCard({ messageId, card, vivo, agentName }: { messageId: number; card: ComputerCardData; vivo: boolean; agentName?: string }) {
+function ComputerCard({ messageId, card, vivo, agentName, handle }: { messageId: number; card: ComputerCardData; vivo: boolean; agentName?: string; handle?: string }) {
   const tr = useT();
   const { onOpenArtifact } = useContext(ChatCtx);
   // Los pasos en vivo (si llegaron) dicen qué hace AHORA; el cuerpo sólo trae el resumen.
@@ -3526,7 +3526,7 @@ function ComputerCard({ messageId, card, vivo, agentName }: { messageId: number;
       steps={steps}
       live={vivo && card.live}
       t={tr}
-      onOpen={(replay) => onOpenArtifact?.({ kind: "computer", title: tr("Computadora del agente"), messageId, agentName, replay })}
+      onOpen={(replay) => onOpenArtifact?.({ kind: "computer", title: tr("Computadora del agente"), messageId, agentName, handle, replay })}
     />
   );
 }
