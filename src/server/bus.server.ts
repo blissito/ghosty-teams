@@ -42,6 +42,8 @@ export type RtEvent =
   // Body autoritativo al terminar el stream (reconcilia por si se perdió un delta;
   // NO es una edición → no marca edited_at).
   | { t: "message:body"; id: number; body: string }
+  // La computadora del agente: los pasos enteros de la burbuja `id` (agrupados cada 700 ms).
+  | { t: "computer:steps"; id: number; steps: import("../lib/agent-steps").AgentStep[] }
   // Estado de un turno de agente EN VUELO: corriendo o esperando su lugar en la cola,
   // y cuándo empezó. Sin esto, N turnos encolados se pintaban como N "pensando…"
   // idénticos y no había dónde colgar el botón de Detener.

@@ -5,6 +5,7 @@
 import { PERSONA_ALIASES } from "./server/apps/factory-roles";
 import { hasIds, nodeIndex } from "./lib/artifact-ids";
 import { extractTodos, renderTodosBlock, stripStepsBlock, stripToolBlock, type TodoItem } from "./lib/ebdoc";
+import { isPlumbing, lastIntent, MAX_STEPS, normalizeStepResult, stepKind, upsertStep, type AgentStep, type StepResult } from "./lib/agent-steps";
 import { ARTIFACT_DESIGN_GUIDE } from "./server/prompts/artifact-design";
 import { parseScope, type ToolScope } from "./server/connectors/tool-token.server";
 
@@ -1592,7 +1593,9 @@ export type SubEvent = {
 };
 // `progress` = latido de gs mientras una tool sigue abierta (`elapsedMs`): una tool larga
 // (Bash con build/tests) no emite nada por minutos y la burbuja parecía colgada (3-oct).
-export type ToolEvent = { name?: string; id?: string; phase?: "start" | "end" | "progress"; ok?: boolean; detail?: string; todos?: TodoItem[]; sub?: SubEvent; elapsedMs?: number };
+// `command` (inicio) y `result` (cierre): la computadora del agente (`lib/agent-steps.ts`) pinta la terminal,
+// los resultados de una búsqueda o el diff. Sólo los manda claude-worker vía gs.
+export type ToolEvent = { name?: string; id?: string; phase?: "start" | "end" | "progress"; ok?: boolean; detail?: string; command?: string; result?: StepResult; todos?: TodoItem[]; sub?: SubEvent; elapsedMs?: number };
 
 /**
  * El turno NO terminó: lo cortó el runtime (se acabaron los pasos o el presupuesto, o la
@@ -3214,6 +3217,9 @@ async function runAgentTurnInner(opts: {
   /** Cada tool NUEVA del turno (nombres crudos). Se persisten mientras corre: si un deploy
    *  lo mata, la continuación sabe qué ya se ejecutó en vez de «no hay registro». */
   onToolNames?: (names: string[]) => void;
+  /** La computadora del agente: los pasos del turno (con resultado) de la burbuja `messageId`,
+   *  enteros en cada cambio y agrupados. El caller los publica en vivo al room; aquí se guardan. */
+  emitComputer?: (messageId: number, steps: AgentStep[]) => void;
   /** Causa del fallo de transporte, si el turno murió. `null` = entregó.
    *  Lo consumen chat.ts/dm.ts para marcar el turno como fallido en vez de `done`. */
 }): Promise<{ id: number; reply: string; failure?: string | null; toolsCorridas?: string[]; plan?: { id: number; body: string }; attachmentsFailed?: { name: string; reason: string }[] }> {
@@ -3277,6 +3283,56 @@ async function runAgentTurnInner(opts: {
   let todosAt = planPrevio?.asOf ?? 0;
   const renderTodos = (): string => (todos ? renderTodosBlock({ todos, asOf: todosAt }) : "");
 
+  // La computadora del agente: cada tool es un PASO con su resultado (`lib/agent-steps.ts`).
+  // Se manda entero y agrupado (700 ms) al caller y a `gt_computer`; el cierre lo manda ya.
+  let steps: AgentStep[] = [];
+  let stepsTimer: ReturnType<typeof setTimeout> | null = null;
+  const flushSteps = async () => {
+    if (stepsTimer) clearTimeout(stepsTimer);
+    stepsTimer = null;
+    if (!steps.length) return;
+    const mid = await ensure();
+    const snap = steps;
+    opts.emitComputer?.(mid, snap);
+    const db = await import("./db.server");
+    await db.saveComputerSteps(mid, JSON.stringify(snap)).catch(() => {});
+  };
+  const queueSteps = () => {
+    stepsTimer ??= setTimeout(() => void flushSteps(), 700);
+  };
+  const trackStep = (ev: ToolEvent) => {
+    if (!ev.id || ev.sub || ev.name?.startsWith("gs_subagent_child")) return;
+    if (ev.phase === "end") {
+      if (!steps.some((x) => x.id === ev.id)) return;
+      const result = normalizeStepResult(ev.result);
+      steps = upsertStep(steps, { id: ev.id, status: ev.ok === false ? "error" : "ok", endedAt: Date.now(), ...(result ? { result } : {}), ...(ev.todos?.length ? { todos: ev.todos } : {}) });
+    } else {
+      if (steps.length >= MAX_STEPS && !steps.some((x) => x.id === ev.id)) return;
+      const tool = ev.name ?? "tool";
+      const intent = isPlumbing(tool) ? undefined : lastIntent(acc.slice(segStart));
+      steps = upsertStep(steps, {
+        id: ev.id,
+        tool,
+        kind: stepKind(tool),
+        status: isPlumbing(tool) ? "ok" : "running",
+        startedAt: steps.find((x) => x.id === ev.id)?.startedAt ?? Date.now(),
+        ...(ev.detail ? { detail: ev.detail.slice(0, 300) } : {}),
+        ...(ev.command ? { command: ev.command.slice(0, 2000) } : {}),
+        ...(intent ? { intent } : {}),
+        ...(ev.todos?.length ? { todos: ev.todos } : {}),
+      });
+    }
+    queueSteps();
+  };
+  /** Lo que la tarjeta del checklist dice de la computadora: pasos de trabajo, fallas y tiempo. */
+  const computerCard = (allDone: boolean) => {
+    const real = steps.filter((x) => !isPlumbing(x.tool));
+    if (!real.length) return null;
+    const start = Math.min(...real.map((x) => x.startedAt));
+    const end = Math.max(...real.map((x) => x.endedAt ?? x.startedAt));
+    return { n: real.length, err: real.filter((x) => x.status === "error").length, ms: Math.max(0, end - start), live: !allDone };
+  };
+
   // El checklist ES el indicador de "trabajando" (reemplaza el "pensando…"). Si hay
   // actividad pero aún ninguna tool semántica, muestra "⏳ Trabajando…" para que el
   // usuario vea feedback YA, no un "pensando" colgado.
@@ -3298,9 +3354,10 @@ async function runAgentTurnInner(opts: {
   const renderToolBlock = (allDone: boolean): string => {
     // Al cerrar el turno, un subagente sin `end` (worker viejo, corte) ya no corre.
     const subs = [...subagents.values()].map((x) => (allDone && x.status === "running" ? { ...x, status: "done" as const } : x));
+    const computer = computerCard(allDone);
     const emit = (arr: { label: string; status: string; n?: number }[]) =>
-      "```gt-tools\n" + JSON.stringify(subs.length ? { tools: arr, subagents: subs } : { tools: arr }) + "\n```\n\n";
-    if (!tools.length && subs.length) return emit([]);
+      "```gt-tools\n" + JSON.stringify({ tools: arr, ...(subs.length ? { subagents: subs } : {}), ...(computer ? { computer } : {}) }) + "\n```\n\n";
+    if (!tools.length && (subs.length || computer)) return emit([]);
     if (tools.length) {
       return emit(
         tools.map((tl) => {
@@ -3431,6 +3488,7 @@ async function runAgentTurnInner(opts: {
       return;
     }
     anyActivity = true;
+    trackStep(ev);
     // Última acción de un subagente hijo (gs, `detail` = «tool|detalle»): no es una tool del
     // padre, sólo actualiza el detalle de SU fila — «Busqué en la web · nytimes.com» mientras
     // corre; al cerrar, la duración lo reemplaza. Tools ocultas (plumbing) no cambian nada.
@@ -3575,6 +3633,8 @@ async function runAgentTurnInner(opts: {
     if (!narration().trim()) return;
     opts.emitBody(shellId, closedBody);
     await opts.closeBubble?.(shellId, closedBody);
+    await flushSteps();
+    steps = [];
     const newId = await opts.createFollowUp(shellId);
     shellP = Promise.resolve(newId);
     // La burbuja nueva empieza limpia: el checklist y los pasos de la anterior se quedan allá.
@@ -3629,6 +3689,10 @@ async function runAgentTurnInner(opts: {
       // Un pintado rezagado pisaría el body final que publica el caller: se cancela aquí,
       // pase lo que pase (detenido, steer o normal).
       cancelPaint();
+      // Lo que siga «running» al cerrar ya no corre: cierra con el turno.
+      const now = Date.now();
+      steps = steps.map((x) => (x.status === "running" ? { ...x, status: opts.signal?.aborted ? "error" : "ok", endedAt: now } : x));
+      await flushSteps().catch(() => {});
     }
   }
   // STEER: no hay turno que cerrar acá. `id` sale 0 y el llamador borra la cáscara que

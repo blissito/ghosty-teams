@@ -182,6 +182,20 @@ export async function setMessageModel(messageId: number, model: string): Promise
   await dbq("UPDATE gc_messages SET turn_model = ? WHERE id = ?", [model.slice(0, 80), messageId]);
 }
 
+// ── La computadora del agente (`lib/agent-steps.ts`) ───────────────────────────────────────────
+
+export async function saveComputerSteps(messageId: number, stepsJson: string): Promise<void> {
+  await dbq(
+    "INSERT INTO gt_computer (message_id, steps_json, updated_at) VALUES (?, ?, ?) ON CONFLICT(message_id) DO UPDATE SET steps_json = excluded.steps_json, updated_at = excluded.updated_at",
+    [messageId, stepsJson, Date.now()],
+  );
+}
+
+export async function getComputerSteps(messageId: number): Promise<string | null> {
+  const [r] = await dbq("SELECT steps_json FROM gt_computer WHERE message_id = ?", [messageId]);
+  return r ? String(r.steps_json) : null;
+}
+
 // ── Uso Limitado (`limited-use.server.ts`) ──────────────────────────────────────────────────────
 
 /** La conversación recibió datos de Google ahora (guarda la ÚLTIMA vez: con ella se sabe si el turno
@@ -2290,6 +2304,7 @@ export async function updateChannel(
 }
 
 export async function deleteChannel(id: number): Promise<void> {
+  await dbq("DELETE FROM gt_computer WHERE message_id IN (SELECT id FROM gc_messages WHERE channel_id = ?)", [id]);
   await dbq("DELETE FROM gc_messages WHERE channel_id = ?", [id]);
   await dbq("DELETE FROM gc_channel_members WHERE channel_id = ?", [id]);
   await dbq("DELETE FROM gt_room_repos WHERE channel_id = ?", [id]);
@@ -2703,7 +2718,7 @@ export async function deleteMessage(id: number): Promise<void> {
   // el subquery), luego los mensajes. Cubre attachments, reacciones, stars, pins y
   // artefactos del root y de cada respuesta.
   const scope = "message_id = ? OR message_id IN (SELECT id FROM gc_messages WHERE parent_id = ?)";
-  for (const table of ["gc_attachments", "gc_reactions", "gc_stars", "gc_pins"]) {
+  for (const table of ["gc_attachments", "gc_reactions", "gc_stars", "gc_pins", "gt_computer"]) {
     await dbq(`DELETE FROM ${table} WHERE ${scope}`, [id, id]);
   }
   // ⚠️ Los ARTEFACTOS no se borran: se ARCHIVAN (2026-08-03).

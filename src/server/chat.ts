@@ -610,6 +610,19 @@ export const setThreadArchivedFn = createServerFn({ method: "POST" })
     return { ok: true as const };
   });
 
+// La computadora del agente: los pasos guardados de una burbuja (el panel los pide al abrirse;
+// lo que siga en vivo llega por `computer:steps`). Mismo permiso que ver el hilo.
+export const getComputerStepsFn = createServerFn({ method: "GET" })
+  .validator((d: { id: number }) => d)
+  .handler(async ({ data }) => {
+    const db = await import("../db.server");
+    const user = await sessionUser();
+    const msg = await db.getMessage(data.id);
+    if (!(await threadVisibleFor(msg, user ? { sub: user.sub, isOwner: !!user.isOwner } : null, db))) throw new Error("no autorizado");
+    const raw = await db.getComputerSteps(data.id);
+    return { steps: raw ? (JSON.parse(raw) as import("../lib/agent-steps").AgentStep[]) : [] };
+  });
+
 // Catch-up (lossless): mensajes del room con id > sinceId. El cliente lo llama al
 // (re)conectar / volver a la pestaña para rellenar lo que el SSE pudiera haber perdido.
 export const getMessagesSince = createServerFn({ method: "GET" })
@@ -1545,6 +1558,7 @@ export const askAgentAs = createServerOnlyFn(async (me: SessionMe | null, data: 
     // Checklist incremental: reemplaza el body con la lista re-pintada (previas ✓, actual ⚡).
     // Además PERSISTE con throttle: sin esto, un refresh a media respuesta deja una cáscara
     // muda aunque el worker siga trabajando (el bus no tiene buffer).
+    emitComputer: (mid, steps) => bus.publish(bus.ch.room(ns, channel.id), { t: "computer:steps", id: mid, steps }),
     emitBody: (mid, body) => {
       bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id: mid, body });
       flusher.offer(mid, body);

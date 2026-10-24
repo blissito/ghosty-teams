@@ -15,6 +15,17 @@
 // turno y se le dan todos los streams de ese turno, no uno por stream.
 import type { MediaPart, SubEvent, ToolEvent, TruncatedEvent } from "../agents.server";
 import type { TodoItem } from "../lib/ebdoc";
+import { cleanStepResult, type StepResult } from "../lib/agent-steps";
+
+/** El `content` de un TOOL_CALL_RESULT: gs manda ahí el `result` del worker en JSON (vacío si no hay). */
+function resultOf(content: unknown): StepResult | undefined {
+  if (typeof content !== "string" || !content.startsWith("{")) return undefined;
+  try {
+    return cleanStepResult(JSON.parse(content));
+  } catch {
+    return undefined;
+  }
+}
 
 /** Lo que el turno cuenta mientras corre. Todos opcionales menos el texto. */
 export type AguiHandlers = {
@@ -191,6 +202,7 @@ export class AguiTurnReader {
   /** Inicio retenido hasta saber su `ghosty.tool` (el rótulo llega justo después). */
   private pendingStart: string | null = null;
   private toolDetail = new Map<string, string>();
+  private toolCommand = new Map<string, string>();
   private started = new Set<string>();
   /** Cuándo arrancó cada tool: el reloj de la fila lo lleva Teams (gs ya no manda `progress`). */
   private startAt = new Map<string, number>();
@@ -272,14 +284,15 @@ export class AguiTurnReader {
     if (this.started.has(id)) return;
     this.started.add(id);
     this.startAt.set(id, Date.now());
-    await this.h.onTool?.({ name: this.toolNames.get(id), id, phase: "start", detail: this.toolDetail.get(id) });
+    const command = this.toolCommand.get(id);
+    await this.h.onTool?.({ name: this.toolNames.get(id), id, phase: "start", detail: this.toolDetail.get(id), ...(command ? { command } : {}) });
   }
 
-  private async endTool(id: string, ok: boolean): Promise<void> {
+  private async endTool(id: string, ok: boolean, result?: StepResult): Promise<void> {
     this.awaitingResult.delete(id);
     if (this.ended.has(id)) return;
     this.ended.add(id);
-    await this.h.onTool?.({ id, phase: "end", ok });
+    await this.h.onTool?.({ id, phase: "end", ok, ...(result ? { result } : {}) });
   }
 
   private async closeAwaiting(): Promise<void> {
@@ -389,7 +402,7 @@ export class AguiTurnReader {
               }
             }
           } else if (m.role === "tool" && typeof m.toolCallId === "string" && this.started.has(m.toolCallId)) {
-            await this.endTool(m.toolCallId, !m.error);
+            await this.endTool(m.toolCallId, !m.error, resultOf(m.content));
           }
         }
         return null;
@@ -435,7 +448,7 @@ export class AguiTurnReader {
       }
       case "TOOL_CALL_RESULT": {
         const id = String(ev.toolCallId ?? "");
-        if (id) await this.endTool(id, !(ev.metadata?.error === true || (typeof ev.error === "string" && ev.error)));
+        if (id) await this.endTool(id, !(ev.metadata?.error === true || (typeof ev.error === "string" && ev.error)), resultOf(ev.content));
         return null;
       }
       case "STATE_SNAPSHOT":
@@ -465,7 +478,15 @@ export class AguiTurnReader {
         if (!id) return null;
         const detail = typeof v.detail === "string" ? v.detail : typeof v.path === "string" ? v.path : undefined;
         if (detail) this.toolDetail.set(id, detail);
+        if (typeof v.command === "string" && v.command) this.toolCommand.set(id, v.command);
         if (this.pendingStart === id) await this.flushStart();
+        return null;
+      }
+      case "ghosty.todos": {
+        // El plan que cambió al CERRAR una tool (TaskCreate/TaskUpdate): se entrega como el de
+        // TodoWrite, con id propio para no pisar la fila de la tool que lo cambió.
+        const todos = Array.isArray(v.todos) ? (v.todos as TodoItem[]) : [];
+        if (todos.length && this.first(`todos:${JSON.stringify(todos)}`)) await this.h.onTool?.({ name: "TodoWrite", id: `${String(v.toolCallId ?? "plan")}:plan`, phase: "start", todos });
         return null;
       }
       case "ghosty.injected":

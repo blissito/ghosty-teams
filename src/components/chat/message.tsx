@@ -70,7 +70,9 @@ import type { Message, Attachment, Artifact, CustomEmoji } from "../../db.server
 import { forwardTargetsFn, forwardMessageFn } from "../../server/forward";
 import { readReceiptsFn} from "../../server/reads";
 import { agentMetaFn, type AgentMeta } from "../../server/agent-meta";
-import { SmilePlus, Pencil, ArrowLeft, Reply, Square, Ban, CircleHelp, ShieldAlert, Github, Circle, Asterisk, ListChecks, MessageCircle, ArrowRight } from "lucide-react";
+import { SmilePlus, Pencil, ArrowLeft, Reply, Square, Ban, CircleHelp, ShieldAlert, Github, Circle, Asterisk, ListChecks, MessageCircle, ArrowRight, Monitor, ChevronRight } from "lucide-react";
+import { useComputerSteps } from "../../lib/computer-store";
+import { formatWorked, isPlumbing, stepVerb } from "../../lib/agent-steps";
 import { useRtSubscribe } from "../../utils/rt-bus";
 import { PlanCard } from "./PlanCard";
 import { RunCard, RunFossil } from "./RunCard";
@@ -90,7 +92,7 @@ import { registerModalEsc } from "../../utils/modal-esc";
 import { useScrollLock } from "../../utils/scroll-lock";
 import { type ArtifactView, viewFromAttachment } from "../../components/ArtifactPanel";
 import { FxOverlay } from "./FxOverlay";
-import { extractFx, extractEbDoc, bubbleWithoutEbDoc, extractToolState, extractSubagents, extractSteps, extractTodos, extractAlert, extractAsk, extractPermission, extractAllPr, extractAllGh, extractTask, extractTests, extractPlanCard, extractRunCard, extractRunFossil, extractRelay, type RelayData, extractVerdictCard, extractPreviewErrorCard, extractSprintCard, extractAsksCard, extractAdsProposalCard, extractAdsCampaignCard, extractAdsReportCard, extractAdsPendingCard, parseAskUserMd, type ToolState, type TodoState, type AlertCardData, type AskCardData, type PermissionCardData, type GhCardData, type PrCardData, type TaskCardData, type TestsCardData } from "../../lib/ebdoc";
+import { extractFx, extractEbDoc, bubbleWithoutEbDoc, extractToolState, extractComputerCard, type ComputerCardData, extractSubagents, extractSteps, extractTodos, extractAlert, extractAsk, extractPermission, extractAllPr, extractAllGh, extractTask, extractTests, extractPlanCard, extractRunCard, extractRunFossil, extractRelay, type RelayData, extractVerdictCard, extractPreviewErrorCard, extractSprintCard, extractAsksCard, extractAdsProposalCard, extractAdsCampaignCard, extractAdsReportCard, extractAdsPendingCard, parseAskUserMd, type ToolState, type TodoState, type AlertCardData, type AskCardData, type PermissionCardData, type GhCardData, type PrCardData, type TaskCardData, type TestsCardData } from "../../lib/ebdoc";
 import { SubagentList } from "./SubagentList";
 import { prCardStateFn, runCardActionFn, taskCardStateFn, runTaskCardActionFn } from "../../server/connectors";
 import { answerAgentAskFn } from "../../server/agent-ask";
@@ -2962,7 +2964,13 @@ export function MessageRow({
             </span>
             {(() => {
               const ts = extractToolState(m.body);
-              return ts ? <ToolGroup tools={ts} vivo={turns.has(m.id)} /> : null;
+              const cc = extractComputerCard(m.body);
+              return ts || cc ? (
+                <>
+                  {ts ? <ToolGroup tools={ts} vivo={turns.has(m.id)} /> : null}
+                  {cc ? <ComputerCard messageId={m.id} card={cc} vivo={turns.has(m.id)} agentName={m.sender} /> : null}
+                </>
+              ) : null;
             })()}
             {(() => {
               const subs = extractSubagents(m.body);
@@ -3140,7 +3148,13 @@ export function MessageRow({
               })()}
               {(() => {
                 const ts = extractToolState(m.body);
-                return ts ? <ToolGroup tools={ts} vivo={turns.has(m.id)} /> : null;
+                const cc = extractComputerCard(m.body);
+                return ts || cc ? (
+                  <>
+                    {ts ? <ToolGroup tools={ts} vivo={turns.has(m.id)} /> : null}
+                    {cc ? <ComputerCard messageId={m.id} card={cc} vivo={turns.has(m.id)} agentName={m.sender} /> : null}
+                  </>
+                ) : null;
               })()}
               {(() => {
                 const subs = extractSubagents(m.body);
@@ -3486,6 +3500,42 @@ export function TodoCard({ msgId, plan, vivo }: { msgId: number; plan: TodoState
       })}
       {hora ? <div className="mt-1 text-[10px] italic text-muted/70">{tr("tareas a las {h}", { h: hora })}</div> : null}
     </div>
+  );
+}
+
+/**
+ * La tarjeta de la computadora del agente (bliss, 23-oct: «en la tarjeta»): cuánto lleva o
+ * cuánto trabajó, cuántos pasos y, en vivo, qué está haciendo ahora. Al tocarla abre el panel.
+ */
+function ComputerCard({ messageId, card, vivo, agentName }: { messageId: number; card: ComputerCardData; vivo: boolean; agentName?: string }) {
+  const tr = useT();
+  const { onOpenArtifact } = useContext(ChatCtx);
+  const live = vivo && card.live;
+  // Los pasos en vivo (si llegaron) dicen qué hace AHORA; el cuerpo sólo trae el resumen.
+  const { steps } = useComputerSteps(messageId);
+  const work = steps.filter((x) => !isPlumbing(x.tool));
+  const now = live ? work[work.length - 1] : undefined;
+  const n = Math.max(card.n, work.length);
+  return (
+    <button
+      type="button"
+      onClick={() => onOpenArtifact?.({ kind: "computer", title: tr("Computadora del agente"), messageId, agentName })}
+      className="mb-1.5 flex w-full max-w-md items-center gap-2.5 rounded-lg border border-border bg-surface-2/50 px-2.5 py-2 text-left text-xs transition hover:border-brand/50 hover:bg-surface-3/40"
+    >
+      <span className="grid size-7 shrink-0 place-items-center rounded-md bg-brand/10 text-brand">
+        <Monitor size={14} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block font-semibold text-ink">
+          {live ? tr("Trabajando · {n} pasos", { n }) : tr("Trabajó {t} · {n} pasos", { t: formatWorked(card.ms), n })}
+          {card.err > 0 && <span className="ml-1.5 font-normal text-red-500">· {tr("{n} con error", { n: card.err })}</span>}
+        </span>
+        <span className="block truncate text-muted">
+          {now ? `${now.intent ?? tr(stepVerb(now))}${now.detail ? ` · ${now.detail}` : ""}` : tr("Ver la computadora del agente")}
+        </span>
+      </span>
+      {live ? <span className="size-2 shrink-0 animate-pulse rounded-full bg-green-500" /> : <ChevronRight size={14} className="shrink-0 text-muted" />}
+    </button>
   );
 }
 

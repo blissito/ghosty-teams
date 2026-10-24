@@ -31,6 +31,29 @@ const R = "teams:run-1";
 const started = { type: "RUN_STARTED", threadId: "g", runId: R, timestamp: 1 };
 
 describe("AguiTurnReader", () => {
+  test("computadora del agente: comando al empezar, result del worker al cerrar y plan de TaskUpdate", async () => {
+    const h = harness();
+    const todos = [{ content: "Probar", status: "in_progress" }];
+    await h.reader.read(
+      sse([
+        started,
+        { type: "TOOL_CALL_START", toolCallId: "b", toolCallName: "Bash", parentMessageId: `${R}:a0` },
+        { type: "CUSTOM", name: "ghosty.tool", value: { toolCallId: "b", title: "Bash", detail: "npm test", command: "npm test -- --run" } },
+        { type: "TOOL_CALL_END", toolCallId: "b" },
+        { type: "TOOL_CALL_RESULT", messageId: `${R}:tb`, toolCallId: "b", content: JSON.stringify({ summary: "3 passed", exitCode: 0 }) },
+        { type: "CUSTOM", name: "ghosty.todos", value: { toolCallId: "u", todos } },
+        { type: "CUSTOM", name: "ghosty.todos", value: { toolCallId: "u", todos } },
+        { type: "RUN_FINISHED", threadId: "g", runId: R, result: "", outcome: { type: "success" } },
+      ]),
+      { idleMs: 5_000 },
+    );
+    expect(h.tools).toEqual([
+      { name: "Bash", id: "b", phase: "start", detail: "npm test", command: "npm test -- --run" },
+      { id: "b", phase: "end", ok: true, result: { summary: "3 passed", exitCode: 0 } },
+      { name: "TodoWrite", id: "u:plan", phase: "start", todos },
+    ]);
+  });
+
   test("texto, herramienta con rótulo y cierre autoritativo", async () => {
     const h = harness();
     const out = await h.reader.read(

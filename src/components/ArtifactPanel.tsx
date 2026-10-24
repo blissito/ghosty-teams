@@ -1,3 +1,4 @@
+import { AgentComputerPanel } from "./chat/AgentComputer";
 import { RunPanel } from "./chat/RunPanel";
 import { SprintCard } from "./chat/SprintCard";
 import { SubagentPanel } from "./chat/SubagentPanel";
@@ -195,6 +196,8 @@ export type ArtifactView =
   | { kind: "campaign"; title: string; campaignId: number; channelId: number; version?: number }
   // Un pedido de la Software Factory: etapas, plan, veredicto y bitácora (RunPanel).
   | { kind: "run"; title: string; runId: number; channelId: number }
+  // La computadora del agente: los pasos (con resultado) del turno de la burbuja `messageId`.
+  | { kind: "computer"; title: string; messageId: number; agentName?: string }
   // Un sprint de la fábrica: tickets, detalle, ediciones y aprobación (SprintCard expandida).
   | { kind: "sprint"; title: string; sprintId: number; channelId: number }
   // Un subagente del turno: tarea, contadores, pasos y resultado (SubagentPanel).
@@ -775,6 +778,8 @@ export default function ArtifactPanel({
                       ? `campaign:${artifact.campaignId}`
                       : artifact.kind === "run"
                         ? `run:${artifact.runId}`
+                        : artifact.kind === "computer"
+                          ? `computer:${artifact.messageId}`
                         : artifact.kind === "sprint"
                           ? `sprint:${artifact.sprintId}`
                         : artifact.kind === "subagent"
@@ -1285,6 +1290,7 @@ export default function ArtifactPanel({
     artifact.kind === "artifact" ||
     artifact.kind === "campaign" ||
     artifact.kind === "run" ||
+    artifact.kind === "computer" ||
     artifact.kind === "sprint" ||
     artifact.kind === "subagent"
       ? undefined
@@ -2424,6 +2430,8 @@ export default function ArtifactPanel({
                       <SubagentPanel runId={artifact.runId} handle={artifact.handle} preview={artifact.preview} />
                     ) : artifact.kind === "run" ? (
                       <RunPanel runId={artifact.runId} channelId={artifact.channelId} />
+                    ) : artifact.kind === "computer" ? (
+                      <AgentComputerPanel messageId={artifact.messageId} agentName={artifact.agentName} />
                     ) : artifact.kind === "campaign" ? (
                       <AdsCampaignPanel
                         campaignId={artifact.campaignId}

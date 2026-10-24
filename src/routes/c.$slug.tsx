@@ -158,6 +158,8 @@ import { extractEbDoc, extractEbPatches, draftTitle, extractAdsProposalCard } fr
 import { parseVersionLine } from "../lib/ads-links";
 import { showSystemNotification } from "../utils/system-notification";
 import { marcarCierre, limpiarCierre } from "../lib/panel-cerrando";
+import { setComputerSteps } from "../lib/computer-store";
+import { isPlumbing, type AgentStep } from "../lib/agent-steps";
 import { playNotificationSound, playGhostySound, playSelfSound, playMentionSound, playDmSound, playReadySound, playDeleteSound, playArtifactOpen, playArtifactClose, playArtifactReady } from "../utils/notificationSound";
 
 // Menciones que cuentan como "a ti": tu @handle o una grupal (@all/@channel/…).
@@ -2167,6 +2169,12 @@ function ChannelPage() {
         driveDraftFromBody(ev.id, nb); // artefacto en vivo si hay ```eb-doc```
         break;
       }
+      case "computer:steps":
+        // La computadora del agente: los pasos van al store (tarjeta y panel leen de ahí) y,
+        // si el turno es tuyo, el panel se abre solo en cuanto hay trabajo que mirar.
+        setComputerSteps(ev.id, ev.steps);
+        autoOpenComputer(ev.id, ev.steps);
+        break;
       case "message:body": {
         // Body autoritativo al terminar el stream (reconcilia deltas perdidos). PERO si
         // llega EN BLANCO y ya había texto streameado, NO lo borres: deepseek/ghosty-gc a
@@ -2969,6 +2977,23 @@ function ChannelPage() {
     if (cur && (panelManualRef.current || cur.kind !== "draft")) return;
     if (!cur) playArtifactOpen();
     setOpenArtifact(view);
+  };
+  /**
+   * La computadora del agente se abre SOLA (bliss, 23-oct) en cuanto el turno usa su primera
+   * herramienta de trabajo. Mismas reglas que un borrador: sólo en la pantalla de quien pidió
+   * el turno, sólo en la conversación abierta, no vuelve si la cerraste y no le quita el panel a
+   * un documento ni a lo que abriste tú.
+   */
+  const autoOpenComputer = (id: number, steps: AgentStep[]) => {
+    if (!steps.some((x) => !isPlumbing(x.tool))) return;
+    if (!draftEsMio(id) || draftDismissedRef.current.has(id)) return;
+    const msg = findMessageInCaches(id);
+    if (!belongsToOpenConversation(msg, openDmId, channel.id)) return;
+    const cur = openArtifactRef.current;
+    if (cur?.kind === "computer" && cur.messageId === id) return;
+    if (cur && (panelManualRef.current || cur.kind !== "computer")) return;
+    if (!cur) playArtifactOpen();
+    setOpenArtifact({ kind: "computer", title: t("Computadora del agente"), messageId: id, agentName: msg?.sender || undefined });
   };
   // Link directo `?campaign=N`: abre la campaña en el panel igual que [Abrir], cuando el hilo
   // del link ya está abierto y en el siguiente cuadro (abrirlo a media hidratación dejaba el

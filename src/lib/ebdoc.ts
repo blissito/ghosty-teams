@@ -1069,6 +1069,25 @@ export function extractToolState(body: string): ToolState[] | null {
   }
 }
 
+/** La tarjeta de la computadora del agente que viaja en el mismo ```gt-tools```: pasos de
+ *  trabajo, cuántos fallaron, cuánto lleva y si el turno sigue. */
+export type ComputerCardData = { n: number; err: number; ms: number; live: boolean };
+
+export function extractComputerCard(body: string): ComputerCardData | null {
+  const open = body.match(/```gt-tools[^\n]*\n/);
+  if (!open || open.index == null) return null;
+  const rest = body.slice(open.index + open[0].length);
+  const closeIdx = rest.indexOf("```");
+  if (closeIdx === -1) return null;
+  try {
+    const c = (JSON.parse(rest.slice(0, closeIdx).trim()) as { computer?: Partial<ComputerCardData> }).computer;
+    if (!c || typeof c.n !== "number" || c.n < 1) return null;
+    return { n: c.n, err: Number(c.err) || 0, ms: Number(c.ms) || 0, live: c.live === true };
+  } catch {
+    return null;
+  }
+}
+
 // ── Pasos de la narración ────────────────────────────────────────────────────────
 // Lo que el agente va contando ENTRE tools ("saco el brandkit", "ya tengo la
 // paleta") son pasos del trabajo, no la respuesta. Concatenados se leían como un

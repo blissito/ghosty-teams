@@ -628,6 +628,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
       emitDelta: (mid, chunk) => fanout({ t: "message:delta", id: mid, chunk, channelId: null, parentId: null, dmId: data.id }),
       // Mismo tratamiento que en rooms: persistir mientras escribe (si no, un refresh a
       // media respuesta deja la cáscara muda) y anunciar el paso en curso.
+      emitComputer: (mid, steps) => fanout({ t: "computer:steps", id: mid, steps }),
       emitBody: (mid, body) => {
         fanout({ t: "message:body", id: mid, body });
         flusher.offer(mid, body);

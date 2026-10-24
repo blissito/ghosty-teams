@@ -1473,6 +1473,14 @@ async function migrate(): Promise<void> {
   await addColumn("gt_turns", "last_seq", "INTEGER");
   // Por qué falló, cuando falló. Sin esto un turno muerto y uno interrumpido se ven igual.
   await addColumn("gt_turns", "error", "TEXT");
+  // La computadora del agente (23-oct): los pasos del turno con su resultado, por burbuja.
+  // Aparte de `gc_messages` porque pesan (hasta 300 pasos con ≤4 KB de resultado cada uno) y
+  // sólo se leen al abrir el panel.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_computer (
+    message_id  INTEGER PRIMARY KEY,
+    steps_json  TEXT NOT NULL,
+    updated_at  INTEGER NOT NULL
+  )`);
   // Con qué RETOMARLO SOLO tras un deploy (2026-09-23): el destino firmado del turno y el
   // origen del tenant. El barrido corre fuera de un request, y sin origen las tools del
   // turno retomado no tendrían de dónde colgarse (ver `reqOrigin`).
