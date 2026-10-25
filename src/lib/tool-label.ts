@@ -32,6 +32,12 @@ export const TOOL_LABELS: Record<string, { ing: string; done: string }> = {
   deploy_document: { ing: "Publicando el documento", done: "Publiqué el documento" },
   create_website: { ing: "Creando el sitio", done: "Creé el sitio" },
   WebSearch: { ing: "Buscando en la web", done: "Busqué en la web" },
+  // El navegador de la caja (MCP `ghosty` de gs): los mismos rótulos que /c (`cloud-browser-defs.ts`).
+  cloud_browser_open: { ing: "Abriendo la página", done: "Abrí la página" },
+  cloud_browser_act: { ing: "Usando la página", done: "Usé la página" },
+  cloud_browser_look: { ing: "Mirando la página", done: "Miré la página" },
+  cloud_browser_ask_human: { ing: "Esperando tu ayuda", done: "Te pedí ayuda en la página" },
+  cloud_browser_close: { ing: "Cerrando el navegador", done: "Cerré el navegador" },
   research_search: { ing: "Investigando en la web", done: "Investigué en la web" },
   // GS Tools SDK (code-mode): el worker mapea el comando Bash real (`node …/image.mjs`)
   // a estos ids semánticos → burbujas nítidas estilo Claude Code aunque el trabajo corra
