@@ -952,25 +952,32 @@ const ALL_TOOLS: ConnectorTool[] = [
       }
       const full = String(repo?.full_name ?? "");
       const owner = String(repo?.owner?.login ?? "");
-      // Al crearlo con el token de la persona NO entra solo a una instalación de «repos elegidos»:
-      // se agrega a la instalación de Ghosty en esa cuenta (con acceso a «todos», ya está).
+      // Al crearlo con el token de la persona NO entra solo a una instalación de «repos elegidos», y
+      // GitHub no deja agregarlo con este token (PUT /user/installations/../repositories sólo acepta
+      // PAT clásicos). Con «All repositories» entra solo; si no, se le da la liga EXACTA de su
+      // instalación para marcarlo (un clic) — nunca «instala la app» si ya está instalada.
       const inst = await api(sub, "/user/installations");
       const mine = ((inst?.installations ?? []) as any[]).find((i) => String(i?.account?.login ?? "").toLowerCase() === owner.toLowerCase());
-      let enApp = false;
-      if (mine) {
-        if (mine.repository_selection === "all") enApp = true;
-        else enApp = !(await api(sub, `/user/installations/${mine.id}/repositories/${repo.id}`, { method: "PUT" }))?.error;
+      let aviso: string | null = null;
+      if (!mine) {
+        aviso = `El repo se creó, pero la app de Ghosty no está instalada en ${owner}: sin eso no puedo escribir en él. Pásale a la persona esta liga para instalarla y elegir el repo: ${INSTALL_URL}`;
+      } else if (mine.repository_selection !== "all") {
+        const added = await api(sub, `/user/installations/${mine.id}/repositories/${repo.id}`, { method: "PUT" });
+        if (added?.error) {
+          const url = String(mine?.account?.type ?? "") === "Organization"
+            ? `https://github.com/organizations/${owner}/settings/installations/${mine.id}`
+            : `https://github.com/settings/installations/${mine.id}`;
+          aviso =
+            `El repo se creó. La app de Ghosty YA está instalada en ${owner}, pero sólo con repos elegidos, y GitHub no me deja agregar este repo yo solo. ` +
+            `Pásale esta liga: ahí marca ${full} en «Only select repositories» (o elige «All repositories» para que los repos que yo cree entren solos) y guarda: ${url}`;
+        }
       }
       return {
         repo: full,
         url: repo?.html_url,
         defaultBranch: repo?.default_branch ?? "main",
         private: repo?.private,
-        ...(enApp
-          ? {}
-          : {
-              aviso: `El repo se creó, pero la app de Ghosty no está instalada en ${owner}: sin eso no puedo escribir en él. Pásale a la persona esta liga para instalarla y elegir el repo: ${INSTALL_URL}`,
-            }),
+        ...(aviso ? { aviso } : {}),
       };
     },
   },
