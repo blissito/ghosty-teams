@@ -4,16 +4,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // tres cosas que, de romperse, dejan un 👀 clavado o lo ponen donde no toca — y ninguna de
 // las tres se ve mirando la pantalla, porque el turno cierra en verde igual.
 
-const setReaction = vi.fn(async () => ({ count: 1 }));
+const setReaction = vi.fn(async (..._a: unknown[]) => ({ count: 1 }));
 const getMessage = vi.fn(async (id: number) => ({ id, channel_id: 7, dm_id: null }));
-const publishToAudience = vi.fn(async () => {});
+const publishToAudience = vi.fn(async (..._a: unknown[]) => {});
 
 vi.mock("../db.server", () => ({
-  setReaction: (...a: unknown[]) => setReaction(...(a as [])),
+  setReaction: (...a: unknown[]) => setReaction(...a),
   getMessage: (id: number) => getMessage(id),
 }));
 vi.mock("./chat", () => ({
-  publishToAudience: (...a: unknown[]) => publishToAudience(...(a as [])),
+  publishToAudience: (...a: unknown[]) => publishToAudience(...a),
 }));
 
 const ack = await import("./agent-ack.server");
