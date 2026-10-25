@@ -239,7 +239,7 @@ export const CONNECTORS: ConnectorDef[] = [
     id: "github",
     name: "GitHub",
     blurb:
-      "Deja que @ghosty trabaje en tus repos: lee issues y PRs, revisa código, escribe en una rama y abre pull requests.",
+      "Deja que @ghosty trabaje en tus repos: lee issues y PRs, revisa código, abre pull requests, crea repos y publica apps. Al instalar, elige «All repositories» para que Ghosty pueda crear repos por ti.",
     icon: "github",
     type: "Web",
     status: "available",
@@ -247,7 +247,7 @@ export const CONNECTORS: ConnectorDef[] = [
     // el estado de la cuenta y muestra la pantalla que toca.
     manage: {
       url: `https://github.com/apps/${process.env.GITHUB_APP_SLUG ?? "ghosty-studio"}/installations/new`,
-      label: "Elegir repos",
+      label: "Dar acceso a repos",
     },
     oauth: {
       // Es una GitHub APP en flujo user-to-server, no una OAuth App. La

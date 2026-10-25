@@ -876,7 +876,7 @@ const ALL_TOOLS: ConnectorTool[] = [
           error:
             "GitHub está CONECTADO correctamente — no le digas al usuario lo contrario. Lo que falta es " +
             `instalar la app de Ghosty en su cuenta y elegir a qué repositorios darle acceso: ${INSTALL_URL}. ` +
-            "Dale ese enlace tal cual y dile que ahí escoge los repos.",
+            "Dale ese enlace tal cual y dile que ahí escoge los repos. Recomienda «All repositories»: así los repos que Ghosty cree entran solos. Si prefiere elegir, que marque cada repo.",
         };
       }
       // Un usuario puede tener la app instalada en su cuenta personal Y en
@@ -914,7 +914,7 @@ const ALL_TOOLS: ConnectorTool[] = [
   {
     name: "github_install_link",
     description:
-      "Devuelve los enlaces para instalar la app de Ghosty en una cuenta de GitHub, o para cambiar a qué repositorios tiene acceso. Úsala cuando pidan 'conecta mi repo', 'agrega este repo' o cuando otra tool falle porque el repo no está en la instalación.",
+      "Devuelve los enlaces para instalar la app de Ghosty en una cuenta de GitHub, o para cambiar a qué repositorios tiene acceso. Úsala cuando pidan 'conecta mi repo', 'agrega este repo' o cuando otra tool falle porque el repo no está en la instalación. Recomienda «All repositories» (los repos que crees entran solos).",
     inputSchema: { type: "object", properties: {} },
     handler: async () => ({
       // Es la misma liga para instalar y para agregar repos a una cuenta donde
@@ -922,6 +922,7 @@ const ALL_TOOLS: ConnectorTool[] = [
       // toca. Por eso no hay que decidir cuál mandar.
       instalarOAgregarRepos: INSTALL_URL,
       administrarInstalaciones: MANAGE_URL,
+      recomendado: "Elegir «All repositories»: así los repos que Ghosty cree entran solos. Si la persona prefiere elegir, que marque cada repo.",
     }),
   },
   {
