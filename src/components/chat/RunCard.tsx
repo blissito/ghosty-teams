@@ -760,23 +760,23 @@ function RunCardBody({ card, channelId, inPanel, msgId }: { card: RunCardData; c
               {t("Preview esperando lugar…")}
             </span>
           )}
+          {/* Soltada: su caja se fue sin commit nuevo. Se crea bajo demanda al abrirla (sin permiso
+              ni confirmación): el clic la vuelve a construir y la tarjeta pasa a «en camino». */}
           {st.preview?.state === "released" && (
-            <span className="inline-flex items-center gap-2 rounded-full bg-surface-3 py-1 pl-3 pr-1 text-xs text-muted" title={st.preview.error ?? undefined}>
-              {t("Preview soltada")}
-              <button
-                type="button"
-                disabled={busy}
-                onClick={async () => {
-                  setBusy(true);
-                  await factoryRetryPreviewFn({ data: { runId: st.runId } }).catch(() => {});
-                  setBusy(false);
-                  refresh();
-                }}
-                className="rounded-full bg-surface px-2 py-0.5 font-semibold text-ink hover:bg-surface-3 disabled:opacity-50"
-              >
-                {t("Levantar")}
-              </button>
-            </span>
+            <button
+              type="button"
+              disabled={busy}
+              title={t("Se vuelve a construir al abrirla")}
+              onClick={async () => {
+                setBusy(true);
+                await factoryRetryPreviewFn({ data: { runId: st.runId } }).catch(() => {});
+                setBusy(false);
+                refresh();
+              }}
+              className="rounded-full border border-emerald-600 px-3 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-600/10 disabled:opacity-50 dark:text-emerald-400"
+            >
+              {t("Ver preview")} ↻
+            </button>
           )}
           {st.preview?.state === "needs_env" && st.repo && (
             <span className="inline-flex items-center gap-2 rounded-full bg-amber-500/15 py-1 pl-3 pr-1 text-xs">

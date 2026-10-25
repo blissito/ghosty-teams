@@ -2178,7 +2178,7 @@ const PLATFORM_RETRY_S = 30 * 60;
 /** Lo más que una preview espera lugar sin commit nuevo; después queda «soltada». */
 export const PREVIEW_WAITING_MAX_S = 6 * 3600;
 /** El motivo de una preview soltada (tarjeta, @check y el check de GitHub). */
-const RELEASED_NOTE = "se soltó sin commit nuevo (dio lugar a otra caja o caducó); «Levantar» la vuelve a construir";
+const RELEASED_NOTE = "se soltó sin commit nuevo (dio lugar a otra caja o caducó); se vuelve a construir al abrirla o cuando @check la pide";
 
 /** Cada cuánto se mira un pedido según su preview (ms). */
 export function previewCheckEvery(state: unknown): number {
@@ -2318,7 +2318,7 @@ async function announceRunPreview(row: Record<string, any>, P: typeof import("./
       // «soltada» y NO se reconstruye sola. Antes se borraba el estado y el siguiente tick la
       // levantaba otra vez sacando a otra preview: en business 9 pedidos en revisión desde hace
       // días se turnaban los lugares cada ~21 min sin que nadie empujara nada (25-oct). Vuelve
-      // con un push nuevo, «Levantar» en la tarjeta o cuando @check la pide.
+      // con un push nuevo, al abrirla desde la tarjeta o cuando @check la pide.
       await dbq("UPDATE gt_factory_runs SET preview_state = 'released', preview_url = NULL, preview_phase = 'ready', preview_error = ? WHERE id = ?", [RELEASED_NOTE, run.id]).catch(() => {});
       void refreshRoom(run.channelId);
       return;
