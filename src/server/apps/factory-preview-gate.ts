@@ -5,7 +5,7 @@
 // lo que falla. Aquí vive la regla pura; la aplican `factory_check_verdict` y `mergeRun`.
 import type { BumpLevel } from "../../lib/dependabot";
 
-export type PreviewGateState = "none" | "pending" | "ready" | "failed" | "needs_env" | "off" | "waiting";
+export type PreviewGateState = "none" | "pending" | "ready" | "failed" | "needs_env" | "off" | "waiting" | "released";
 
 /** La sección «Criterios de aceptación» del plan (hasta el siguiente encabezado ##). */
 export function acceptanceSection(planMd: string): string {
@@ -45,6 +45,7 @@ const STATE_TEXT: Record<PreviewGateState, string> = {
   needs_env: "espera las variables del repo",
   off: "apagada",
   waiting: "espera lugar para levantarse",
+  released: "se soltó (su caja ya no existe)",
 };
 
 /** El estado en palabras para la tarjeta y los errores («falló: <motivo>»). */
@@ -62,6 +63,8 @@ export function previewGateBlock(
   headSha: string | null,
 ): { reason: string; waits: boolean } | null {
   if (p.state === "ready" && (!headSha || p.sha === headSha)) return null;
+  // Soltada después de estar lista en ESTE commit: ya se probó ahí; soltar la caja no lo deshace.
+  if (p.state === "released" && p.sha && p.sha === headSha) return null;
   const state = p.state === "ready" ? "pending" : p.state; // lista, pero de un commit viejo
   // Esperar lugar también se resuelve solo (el tick la levanta al liberarse uno).
   return { reason: previewStateText({ state, error: p.error }), waits: state === "pending" || state === "waiting" };

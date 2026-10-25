@@ -1201,6 +1201,9 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         }
         if (!run.prUrl) return { ok: true, state: "none", note: "el pedido todavía no tiene PR" };
         const R = await import("./factory-runs.server");
+        // Soltada (su caja se fue sin commit nuevo): pedirla aquí ES la acción explícita que la
+        // vuelve a construir; el tick ya no la levanta solo (25-oct).
+        if ((await R.runPreview(run.id)).state === "released") await R.retryPreviews({ runId: run.id, force: true });
         // `fresh`: tras un push la fila sigue «lista» con la caja vieja; @check revisaba la anterior.
         const p = await R.runPreview(run.id, { fresh: true });
         const required = await R.previewRequired(run);

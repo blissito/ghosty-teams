@@ -2001,6 +2001,8 @@ export const en: Record<string, string> = {
   "Ver preview": "Open preview",
   "Preview en camino…": "Preview on its way…",
   "Preview esperando lugar…": "Preview waiting for a slot…",
+  "Preview soltada": "Preview released",
+  "Levantar": "Bring up",
   "La preview falló": "Preview failed",
   "Arqui está escribiendo el plan…": "Arqui is writing the plan…",
   "Worker está construyendo…": "Worker is building…",

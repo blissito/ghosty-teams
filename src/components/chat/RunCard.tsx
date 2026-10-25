@@ -760,6 +760,24 @@ function RunCardBody({ card, channelId, inPanel, msgId }: { card: RunCardData; c
               {t("Preview esperando lugar…")}
             </span>
           )}
+          {st.preview?.state === "released" && (
+            <span className="inline-flex items-center gap-2 rounded-full bg-surface-3 py-1 pl-3 pr-1 text-xs text-muted" title={st.preview.error ?? undefined}>
+              {t("Preview soltada")}
+              <button
+                type="button"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  await factoryRetryPreviewFn({ data: { runId: st.runId } }).catch(() => {});
+                  setBusy(false);
+                  refresh();
+                }}
+                className="rounded-full bg-surface px-2 py-0.5 font-semibold text-ink hover:bg-surface-3 disabled:opacity-50"
+              >
+                {t("Levantar")}
+              </button>
+            </span>
+          )}
           {st.preview?.state === "needs_env" && st.repo && (
             <span className="inline-flex items-center gap-2 rounded-full bg-amber-500/15 py-1 pl-3 pr-1 text-xs">
               <a href={`/factory?repo=${encodeURIComponent(st.repo)}`} className="font-semibold text-amber-700 hover:underline dark:text-amber-400">

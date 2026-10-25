@@ -50,6 +50,10 @@ describe("previewGateBlock", () => {
   it("lista en la cabeza: pasa", () => {
     expect(previewGateBlock({ state: "ready", sha: "abc" }, "abc")).toBeNull();
   });
+  it("soltada tras estar lista en la cabeza: pasa; sin commit (nunca estuvo lista): bloquea sin esperar", () => {
+    expect(previewGateBlock({ state: "released", sha: "abc" }, "abc")).toBeNull();
+    expect(previewGateBlock({ state: "released", sha: null }, "abc")).toEqual({ reason: "se soltó (su caja ya no existe)", waits: false });
+  });
   it("lista pero de un commit viejo: espera", () => {
     expect(previewGateBlock({ state: "ready", sha: "old" }, "abc")).toEqual({ reason: "se está construyendo", waits: true });
   });

@@ -2175,6 +2175,10 @@ export const HOSTING_SILENT_S = 5 * 60;
 /** Reintentos solos de una preview que falló por la plataforma, y cada cuánto. */
 const PLATFORM_RETRIES = 3;
 const PLATFORM_RETRY_S = 30 * 60;
+/** Lo más que una preview espera lugar sin commit nuevo; después queda «soltada». */
+export const PREVIEW_WAITING_MAX_S = 6 * 3600;
+/** El motivo de una preview soltada (tarjeta, @check y el check de GitHub). */
+const RELEASED_NOTE = "se soltó sin commit nuevo (dio lugar a otra caja o caducó); «Levantar» la vuelve a construir";
 
 /** Cada cuánto se mira un pedido según su preview (ms). */
 export function previewCheckEvery(state: unknown): number {
@@ -2306,11 +2310,33 @@ async function announceRunPreview(row: Record<string, any>, P: typeof import("./
     // preview suelta, no la hallaba, se borraba el estado y el siguiente tick la «actualizaba» —
     // un aviso cada 2 min (pedido #17, 7-oct).
     const st = await P.gsPreview("status", boxOpts).catch(() => undefined);
-    if (st !== undefined && (!st?.status || st.status.phase !== "ready" || st.status.sha !== head.sha)) {
+    // Dormida y gs sin memoria de ella (se reinició): contesta «lista» sin commit. Sigue viva; antes
+    // se borraba el estado y cada deploy de gs despertaba (o recreaba) todas las previews (25-oct).
+    if (st?.status?.phase === "ready" && st.status.sha == null) return;
+    if (st !== undefined && !st?.status) {
+      // La caja ya no existe sin commit nuevo (se soltó para dar lugar a otra, o caducó): queda
+      // «soltada» y NO se reconstruye sola. Antes se borraba el estado y el siguiente tick la
+      // levantaba otra vez sacando a otra preview: en business 9 pedidos en revisión desde hace
+      // días se turnaban los lugares cada ~21 min sin que nadie empujara nada (25-oct). Vuelve
+      // con un push nuevo, «Levantar» en la tarjeta o cuando @check la pide.
+      await dbq("UPDATE gt_factory_runs SET preview_state = 'released', preview_url = NULL, preview_phase = 'ready', preview_error = ? WHERE id = ?", [RELEASED_NOTE, run.id]).catch(() => {});
+      void refreshRoom(run.channelId);
+      return;
+    }
+    if (st !== undefined && (st.status.phase !== "ready" || st.status.sha !== head.sha)) {
       await dbq("UPDATE gt_factory_runs SET preview_state = NULL, preview_url = NULL WHERE id = ?", [run.id]).catch(() => {});
       lastPreviewCheck.delete(run.id);
       void refreshRoom(run.channelId);
     }
+    return;
+  }
+  // Soltada en este commit: espera un push o una acción explícita (ver arriba).
+  if (sameSha && row.preview_state === "released") return;
+  // Esperar lugar tiene tope: un pedido que lleva horas en la fila sin commit nuevo deja de pedir
+  // caja en cada tick (si no, al liberarse un lugar nacía la preview de un PR quieto desde hace días).
+  if (sameSha && row.preview_state === "waiting" && row.preview_since != null && Math.floor(Date.now() / 1000) - Number(row.preview_since) > PREVIEW_WAITING_MAX_S) {
+    await dbq("UPDATE gt_factory_runs SET preview_state = 'released', preview_url = NULL, preview_phase = NULL, preview_error = ? WHERE id = ?", [RELEASED_NOTE, run.id]).catch(() => {});
+    void refreshRoom(run.channelId);
     return;
   }
   if (sameSha && (row.preview_state === "failed" || row.preview_state === "needs_env")) {
@@ -2661,7 +2687,7 @@ export async function retryPreviews(by: { runId?: number; repo?: string; envChan
     ? "COALESCE(preview_state, 'none') <> 'off'"
     : by.envChanged
       ? "preview_state IN ('failed','needs_env','ready','pending','waiting')"
-      : "preview_state IN ('failed','needs_env')";
+      : "preview_state IN ('failed','needs_env','released')";
   const open = by.envChanged || by.force ? " AND status NOT IN ('done','cancelled')" : "";
   const reset = "preview_state = 'pending', preview_sha = NULL, preview_error = NULL, preview_since = unixepoch(), preview_phase = NULL";
   const rows = await dbq(
@@ -2745,7 +2771,7 @@ async function missingPreviewEnv(sub: string, repo: string): Promise<boolean> {
   return r.facts.envExampleKeys.length > 0 && !r.facts.envSavedKeys;
 }
 
-export type RunPreviewState = "none" | "pending" | "ready" | "failed" | "needs_env" | "off" | "waiting";
+export type RunPreviewState = "none" | "pending" | "ready" | "failed" | "needs_env" | "off" | "waiting" | "released";
 
 /** ¿El pedido exige la preview para aprobarse y mezclarse? Regla en `factory-preview-gate.ts`. */
 export async function previewRequired(run: Run): Promise<boolean> {
@@ -2785,7 +2811,7 @@ export async function runPreview(
   opts: { fresh?: boolean } = {},
 ): Promise<{ state: RunPreviewState; url: string | null; error: string | null; sha: string | null }> {
   const rows = await dbq(
-    "SELECT status, preview_state, preview_url, preview_error, preview_sha, pr_url, approved_by, requested_by FROM gt_factory_runs WHERE id = ?",
+    "SELECT status, preview_state, preview_url, preview_error, preview_sha, preview_phase, pr_url, approved_by, requested_by FROM gt_factory_runs WHERE id = ?",
     [runId],
   ).catch(() => []);
   const r = rows[0];
@@ -2800,8 +2826,10 @@ export async function runPreview(
     state,
     url: state === "ready" ? (r?.preview_url ?? null) : null,
     // `waiting` también lleva su motivo («sin lugar: 2 pedidos en curso…»).
-    error: state === "failed" || state === "waiting" ? (r?.preview_error ?? null) : null,
-    sha: state === "ready" ? (r?.preview_sha ?? null) : null,
+    error: state === "failed" || state === "waiting" || state === "released" ? (r?.preview_error ?? null) : null,
+    // Soltada después de estar lista (`preview_phase` = ready) lleva su commit: se probó en él y la
+    // puerta del merge lo cuenta. La que se soltó esperando lugar nunca estuvo lista: sin commit.
+    sha: state === "ready" || (state === "released" && r?.preview_phase === "ready") ? (r?.preview_sha ?? null) : null,
   };
 }
 
