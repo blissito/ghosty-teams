@@ -628,16 +628,18 @@ export const getComputerStepsFn = createServerFn({ method: "GET" })
 // pase firmado (`/api/v2/fleet-agents/:id/browser/:op`, HMAC de partner) y el navegador de la
 // persona habla con él directo. Mirar: quien ve el hilo. Tomar el control: sólo quien pidió el turno.
 export const computerBrowserFn = createServerFn({ method: "POST" })
-  .validator((d: { id: number; sessionId: string; op: "watch" | "takeover" }) => d)
+  .validator((d: { id: number; sessionId: string; op: "watch" | "takeover" | "voice" | "answer"; answer?: "delegate" | "cancel"; speak?: boolean; mic?: boolean }) => d)
   .handler(async ({ data }) => {
     const db = await import("../db.server");
     const user = await sessionUser();
     const msg = await db.getMessage(data.id);
     if (!user || !msg || !(await threadVisibleFor(msg, { sub: user.sub, isOwner: !!user.isOwner }, db))) throw new Error("no autorizado");
-    if (data.op !== "watch" && data.op !== "takeover") throw new Error("op desconocida");
-    if (data.op === "takeover") {
-      const { dbq } = await import("../dbq.server");
-      const [t] = await dbq("SELECT invoker_sub FROM gt_turns WHERE message_id = ? OR shell_id = ? LIMIT 1", [data.id, data.id]).catch(() => []);
+    if (!["watch", "takeover", "voice", "answer"].includes(data.op)) throw new Error("op desconocida");
+    const { dbq } = await import("../dbq.server");
+    const [t] = await dbq("SELECT invoker_sub, group_id FROM gt_turns WHERE message_id = ? OR shell_id = ? LIMIT 1", [data.id, data.id]).catch(() => []);
+    // Tomar el control, hablar con el agente o contestarle «Hazlo tú» / «Cancelar»: sólo quien le
+    // pidió el trabajo (o el dueño). Mirar, cualquiera que vea el hilo.
+    if (data.op !== "watch") {
       const invoker = t?.invoker_sub ? String(t.invoker_sub) : null;
       if (invoker && invoker !== user.sub && !user.isOwner) throw new Error("Sólo quien le pidió el trabajo al agente puede tomar el control.");
     }
@@ -647,7 +649,11 @@ export const computerBrowserFn = createServerFn({ method: "POST" })
     const { runtimeFor } = await import("./agent-runtime.server");
     const rt = await runtimeFor(agent.backend);
     if (rt.transport !== "http") throw new Error("este agente no tiene navegador en la caja");
-    const body = JSON.stringify({ sessionId: data.sessionId });
+    const payload: Record<string, unknown> = { sessionId: data.sessionId };
+    if (data.op === "voice") Object.assign(payload, { speak: data.speak === true, mic: data.mic === true });
+    // `groupId`: con él gs sabe si el turno sigue vivo en la otra caja (relevo azul/verde).
+    if (data.op === "answer") Object.assign(payload, { answer: data.answer, groupId: t?.group_id ? String(t.group_id) : "" });
+    const body = JSON.stringify(payload);
     const res = await fetch(`${rt.base}/api/v2/fleet-agents/${encodeURIComponent(agent.backend.id)}/browser/${data.op}`, {
       method: "POST",
       headers: rt.headers(body, agent.backend.token),
@@ -655,9 +661,13 @@ export const computerBrowserFn = createServerFn({ method: "POST" })
       signal: AbortSignal.timeout(30_000),
     });
     const out = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    // 410 al contestar = el agente ya no esperaba: la tarjeta cierra la alerta.
+    if (data.op === "answer" && (res.status === 410 || out.gone)) return { gone: true } as BrowserPassOut;
     if (!res.ok) throw new Error(res.status === 410 ? "El navegador ya se cerró." : String(out.error ?? `error ${res.status}`));
-    return out as { liveUrl: string; inputUrl?: string; releaseUrl?: string; viewport?: { width: number; height: number } | null; livekit?: { wsUrl: string; token: string } };
+    return out as BrowserPassOut;
   });
+
+type BrowserPassOut = { liveUrl: string; inputUrl?: string; releaseUrl?: string; viewport?: { width: number; height: number } | null; livekit?: { wsUrl: string; token: string }; gone?: boolean };
 
 // Catch-up (lossless): mensajes del room con id > sinceId. El cliente lo llama al
 // (re)conectar / volver a la pestaña para rellenar lo que el SSE pudiera haber perdido.

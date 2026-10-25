@@ -159,7 +159,7 @@ import { parseVersionLine } from "../lib/ads-links";
 import { showSystemNotification } from "../utils/system-notification";
 import { marcarCierre, limpiarCierre } from "../lib/panel-cerrando";
 import { setComputerSteps } from "../lib/computer-store";
-import { worthWatching, type AgentStep } from "@ghostystudio/computer";
+import { pendingAsk, worthWatching, type AgentStep } from "@ghostystudio/computer";
 import { playNotificationSound, playGhostySound, playSelfSound, playMentionSound, playDmSound, playReadySound, playDeleteSound, playArtifactOpen, playArtifactClose, playArtifactReady } from "../utils/notificationSound";
 
 // Menciones que cuentan como "a ti": tu @handle o una grupal (@all/@channel/…).
@@ -1592,6 +1592,8 @@ function ChannelPage() {
   // redactando a la vez, cerrar el artefacto era imposible (reportado varias veces, medido
   // el 2026-08-03). Cada documento que cierras se queda cerrado.
   const draftDismissedRef = useRef<Set<number>>(new Set());
+  /** El último pedido de ayuda del navegador por burbuja que ya abrió el panel. */
+  const askOpenedRef = useRef<Map<number, string>>(new Map());
   // El hilo (parent_id) del borrador en curso, para no pintar su píldora en los hilos ajenos.
   const draftParentRef = useRef<number | null>(null);
   const [hiddenDraftParent, setHiddenDraftParent] = useState<number | null>(null);
@@ -2985,15 +2987,24 @@ function ChannelPage() {
    * un documento ni a lo que abriste tú.
    */
   const autoOpenComputer = (id: number, steps: AgentStep[]) => {
-    // Sólo si vale la pena mirarlo (turno largo, una espera o un fallo): un turno corto de leer
-    // deja su comprobante debajo de la respuesta y no abre nada.
-    if (!worthWatching(steps, Date.now())) return;
-    if (!draftEsMio(id) || draftDismissedRef.current.has(id)) return;
+    if (!draftEsMio(id)) return;
+    // Con cada pedido de ayuda nuevo (`cloud_browser_ask_human`) se abre otra vez, aunque lo
+    // cerraras y aunque el panel muestre otra cosa: el agente está esperando (como en /c).
+    const ask = pendingAsk(steps)?.key ?? null;
+    const newAsk = !!ask && askOpenedRef.current.get(id) !== ask;
+    if (newAsk) askOpenedRef.current.set(id, ask!);
+    // El navegador de la caja se ve en cuanto llega su primera captura; lo demás, sólo si vale
+    // la pena mirarlo (turno largo, una espera o un fallo): un turno corto de leer deja su
+    // comprobante debajo de la respuesta y no abre nada.
+    const browsing = steps.some((s) => s.kind === "browser" && !!s.browser?.image);
+    if (!newAsk && !browsing && !worthWatching(steps, Date.now())) return;
+    if (!newAsk && draftDismissedRef.current.has(id)) return;
     const msg = findMessageInCaches(id);
     if (!belongsToOpenConversation(msg, openDmId, channel.id)) return;
     const cur = openArtifactRef.current;
     if (cur?.kind === "computer" && cur.messageId === id) return;
-    if (cur && (panelManualRef.current || cur.kind !== "computer")) return;
+    if (!newAsk && cur && (panelManualRef.current || cur.kind !== "computer")) return;
+    if (newAsk) draftDismissedRef.current.delete(id);
     if (!cur) playArtifactOpen();
     setOpenArtifact({ kind: "computer", title: t("Computadora del agente"), messageId: id, agentName: msg?.sender || undefined, handle: msg?.agent_handle ?? undefined });
   };

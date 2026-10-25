@@ -11,7 +11,7 @@ import { computerBrowserFn } from "../../server/chat";
 /** Los roles de la fábrica trabajan con código: ellos sí ven la terminal y el diff técnico. */
 const DEV_HANDLES = new Set(["plan", "build", "check", "arqui"]);
 
-export function AgentComputerPanel({ messageId, agentName, handle, replay }: { messageId: number; agentName?: string; handle?: string; replay?: boolean }) {
+export function AgentComputerPanel({ messageId, agentName, handle, replay, takeoverAt }: { messageId: number; agentName?: string; handle?: string; replay?: boolean; takeoverAt?: number }) {
   const t = useT();
   // En vivo mientras el turno de la burbuja siga (entre tool y tool también), o haya un paso corriendo.
   const { steps, loaded, live: turnLive } = useComputerSteps(messageId);
@@ -26,7 +26,15 @@ export function AgentComputerPanel({ messageId, agentName, handle, replay }: { m
       // Fuera de la fábrica, en palabras de persona: la terminal queda tras «Ver detalles técnicos».
       technical={!!handle && DEV_HANDLES.has(handle)}
       t={t}
-      onWatch={(sessionId) => computerBrowserFn({ data: { id: messageId, sessionId, op: "watch" } })}
+      takeoverNow={takeoverAt}
+      // «Activar voz» en la sala de LiveKit de la sesión (sólo con video en vivo).
+      onVoice={async (sessionId, voice) => {
+        await computerBrowserFn({ data: { id: messageId, sessionId, op: "voice", speak: voice.speak, mic: voice.mic } });
+      }}
+      onWatch={async (sessionId) => {
+        const r = await computerBrowserFn({ data: { id: messageId, sessionId, op: "watch" } });
+        return { liveUrl: r.liveUrl, ...(r.livekit ? { livekit: r.livekit } : {}) };
+      }}
       onTakeover={async (sessionId) => {
         const r = await computerBrowserFn({ data: { id: messageId, sessionId, op: "takeover" } });
         return { liveUrl: r.liveUrl, inputUrl: r.inputUrl ?? "", releaseUrl: r.releaseUrl ?? "", viewport: r.viewport ?? null, ...(r.livekit ? { livekit: r.livekit } : {}) };

@@ -73,6 +73,8 @@ import { agentMetaFn, type AgentMeta } from "../../server/agent-meta";
 import { SmilePlus, Pencil, ArrowLeft, Reply, Square, Ban, CircleHelp, ShieldAlert, Github, Circle, Asterisk, ListChecks, MessageCircle, ArrowRight } from "lucide-react";
 import { useComputerSteps } from "../../lib/computer-store";
 import { ComputerCard as SharedComputerCard } from "@ghostystudio/computer/react";
+import { pendingAsk } from "@ghostystudio/computer";
+import { computerBrowserFn } from "../../server/chat";
 import { useRtSubscribe } from "../../utils/rt-bus";
 import { PlanCard } from "./PlanCard";
 import { RunCard, RunFossil } from "./RunCard";
@@ -3526,7 +3528,15 @@ function ComputerCard({ messageId, card, vivo, agentName, handle }: { messageId:
       steps={steps}
       live={vivo && card.live}
       t={tr}
-      onOpen={(replay) => onOpenArtifact?.({ kind: "computer", title: tr("Computadora del agente"), messageId, agentName, handle, replay })}
+      // «Tomar el control» de «Te necesito aquí»: abre el panel ya pidiendo la toma (como en /c).
+      onOpen={(replay) =>
+        onOpenArtifact?.({ kind: "computer", title: tr("Computadora del agente"), messageId, agentName, handle, replay, ...(!replay && vivo && pendingAsk(steps) ? { takeoverAt: Date.now() } : {}) })
+      }
+      // «Hazlo tú» / «Cancelar»: contesta el pedido sin tomar el control; `gone` = ya no esperaba.
+      onAnswer={async (sessionId, answer) => {
+        const r = await computerBrowserFn({ data: { id: messageId, sessionId, op: "answer", answer } });
+        if (r.gone) return { gone: true };
+      }}
     />
   );
 }
