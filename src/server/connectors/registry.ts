@@ -45,6 +45,19 @@ export type CredentialsDef = {
   allowHostSuffixes?: string[];
 };
 
+/**
+ * Aviso que se enseña ANTES de mandar a la persona al proveedor. Existe por GitHub: si en
+ * la instalación elige «Only select», Ghosty puede crear un repo pero no escribirle (GitHub
+ * no deja que la App agregue el repo nuevo a una instalación con repos elegidos).
+ */
+export type ConnectorIntro = {
+  title: string;
+  subtitle: string;
+  items: { title: string; body: string }[];
+  continueLabel: string;
+  cancelLabel: string;
+};
+
 export type ConnectorDef = {
   id: string; // slug URL-safe; = segmento de /setup/<id>/connect
   name: string;
@@ -58,6 +71,7 @@ export type ConnectorDef = {
   // que elegir a qué repositorios llega la app, y eso se cambia después sin
   // reconectar. Sin este botón el usuario no tiene forma de descubrirlo.
   manage?: { url: string; label: string };
+  intro?: ConnectorIntro;
   // Conexión por credenciales tecleadas, la hermana de `oauth`. Son EXCLUYENTES: un
   // conector tiene una forma de conectarse o la otra, nunca las dos (hay un test).
   credentials?: CredentialsDef;
@@ -248,6 +262,31 @@ export const CONNECTORS: ConnectorDef[] = [
     manage: {
       url: `https://github.com/apps/${process.env.GITHUB_APP_SLUG ?? "ghosty-studio"}/installations/new`,
       label: "Dar acceso a repos",
+    },
+    // Misma copia que el aviso de Ghosty Studio (GithubIntroDialog).
+    intro: {
+      title: "Conectar GitHub",
+      subtitle: "Antes de ir a GitHub, un minuto.",
+      items: [
+        {
+          title: "Deja marcado «All repositories».",
+          body: "Así Ghosty crea repos para ti y trabaja en ellos. Con «Only select» puede crear el repo pero no escribir en él: tendrías que agregarlo a mano cada vez.",
+        },
+        {
+          title: "Por qué es seguro.",
+          body: "Ghosty es una GitHub App con permisos fijos (código, PRs y workflows), no una llave a toda tu cuenta. Tu sesión de GitHub vive en nuestro servidor y nunca entra a la computadora del agente.",
+        },
+        {
+          title: "Tú decides qué entra.",
+          body: "En repos que ya existen trabaja en una rama y te abre un PR; sólo empuja directo al publicar una app en un repo que él creó. Cada cambio queda en el historial de GitHub.",
+        },
+        {
+          title: "Lo quitas cuando quieras.",
+          body: "Desde «Dar acceso a repos» en esta tarjeta o en GitHub → Settings → Applications.",
+        },
+      ],
+      continueLabel: "Continuar a GitHub",
+      cancelLabel: "Ahora no",
     },
     oauth: {
       // Es una GitHub APP en flujo user-to-server, no una OAuth App. La

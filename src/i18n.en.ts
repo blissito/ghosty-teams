@@ -2494,4 +2494,20 @@ export const en: Record<string, string> = {
   "Publicó": "Published",
   "Ejecutó un comando": "Ran a command",
   "Trabajó": "Worked",
+  // Aviso antes de conectar GitHub (Integraciones)
+  "Conectar GitHub": "Connect GitHub",
+  "Antes de ir a GitHub, un minuto.": "Before going to GitHub, one minute.",
+  "Deja marcado «All repositories».": "Keep “All repositories” selected.",
+  "Así Ghosty crea repos para ti y trabaja en ellos. Con «Only select» puede crear el repo pero no escribir en él: tendrías que agregarlo a mano cada vez.":
+    "That way Ghosty creates repos for you and works in them. With “Only select” it can create a repo but can't write to it: you'd have to add each one by hand.",
+  "Por qué es seguro.": "Why it's safe.",
+  "Ghosty es una GitHub App con permisos fijos (código, PRs y workflows), no una llave a toda tu cuenta. Tu sesión de GitHub vive en nuestro servidor y nunca entra a la computadora del agente.":
+    "Ghosty is a GitHub App with fixed permissions (code, PRs and workflows), not a key to your whole account. Your GitHub session lives on our server and never enters the agent's computer.",
+  "Tú decides qué entra.": "You decide what goes in.",
+  "En repos que ya existen trabaja en una rama y te abre un PR; sólo empuja directo al publicar una app en un repo que él creó. Cada cambio queda en el historial de GitHub.":
+    "In existing repos it works on a branch and opens a PR; it only pushes directly when publishing an app to a repo it created. Every change stays in GitHub's history.",
+  "Lo quitas cuando quieras.": "Remove it anytime.",
+  "Desde «Dar acceso a repos» en esta tarjeta o en GitHub → Settings → Applications.": "From “Give repo access” on this card or in GitHub → Settings → Applications.",
+  "Continuar a GitHub": "Continue to GitHub",
+  "Dar acceso a repos": "Give repo access",
 };

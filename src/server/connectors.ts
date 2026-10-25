@@ -39,6 +39,7 @@ export const listMyConnectorsFn = createServerFn({ method: "GET" }).handler(asyn
     custom: !!c.custom,
     status: c.status,
     manage: c.manage ?? null,
+    intro: c.intro ?? null,
     // La FORMA del formulario de credenciales (nunca valores) para los conectores que no
     // son OAuth. `null` en los OAuth, que siguen yéndose por /setup/<id>/connect.
     credentials: describeCredentials(c.id),
@@ -91,7 +92,7 @@ export const listMyConnectorsFn = createServerFn({ method: "GET" }).handler(asyn
       id: c.id, name: c.nombre, blurb: c.id === "google-drive" ? `${c.descripcion}${googleNote}` : c.descripcion, icon: c.logo?.icon ?? c.id, logoUrl: S.studioLogoUrl(c), type: "Ghosty Studio",
       custom: false, status: c.disponible ? ("available" as const) : ("soon" as const),
       manage: c.conectado ? { url: S.studioConnectUrl(c.id), label: c.id === "google-drive" ? "Elegir archivos" : c.kind === "credential" ? "Cambiar llave" : "Administrar" } : null,
-      credentials: null, connected: c.conectado, shared: null, mineShared: false, canShareOthers: false,
+      intro: null, credentials: null, connected: c.conectado, shared: null, mineShared: false, canShareOthers: false,
       hooks: [], holders: [], studio: true, connectUrl: S.studioConnectUrl(c.id),
     }));
   return [...ours.map((x) => ({ ...x, connectUrl: null as string | null, logoUrl: null as string | null })), ...studio];

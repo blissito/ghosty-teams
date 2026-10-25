@@ -409,6 +409,8 @@ type ConnItem = {
   id: string; name: string; blurb: string; icon: string; type: string;
   custom: boolean; status: "available" | "soon"; connected: boolean;
   manage: { url: string; label: string } | null;
+  /** Aviso antes de mandar al proveedor (GitHub: por qué «All repositories»). */
+  intro: { title: string; subtitle: string; items: { title: string; body: string }[]; continueLabel: string; cancelLabel: string } | null;
   /** Quién MÁS del workspace lo tiene conectado (sin mí). */
   holders: { sub: string; name: string; avatar: string }[];
   /** La conexión DEL EQUIPO, si alguien la compartió. */
@@ -694,12 +696,58 @@ function CredentialsDialog({ item, onClose, onDone }: { item: ConnItem; onClose:
   );
 }
 
+/** Aviso previo al OAuth. Sólo «Continuar» sigue al flujo de siempre (/setup/<id>/connect). */
+function ConnectIntroDialog({ item, onClose, onContinue }: { item: ConnItem; onClose: () => void; onContinue: () => void }) {
+  const t = useT();
+  useEffect(() => registerModalEsc(onClose), [onClose]);
+  const intro = item.intro;
+  if (!intro) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 sm:p-5" onMouseDown={onClose}>
+      <div
+        className="flex max-h-[94vh] w-full max-w-[440px] flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-2xl"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-border px-5 py-3">
+          <div className="min-w-0">
+            <p className="text-sm font-semibold">{t(intro.title)}</p>
+            <p className="text-xs text-muted">{t(intro.subtitle)}</p>
+          </div>
+          <button type="button" onClick={onClose} className="text-muted hover:text-ink"><X size={18} /></button>
+        </div>
+        <ul className="thin-scroll flex-1 space-y-3 overflow-y-auto p-5 text-sm">
+          {intro.items.map((it) => (
+            <li key={it.title}>
+              <p className="font-medium">{t(it.title)}</p>
+              <p className="text-muted">{t(it.body)}</p>
+            </li>
+          ))}
+        </ul>
+        <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-3">
+          <button type="button" onClick={onClose} className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted hover:text-ink">
+            {t(intro.cancelLabel)}
+          </button>
+          <button
+            type="button"
+            onClick={onContinue}
+            className="inline-flex items-center gap-1 rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-brand-fg hover:brightness-110"
+          >
+            {t(intro.continueLabel)}
+            <ExternalLink size={11} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function IntegrationsPanel() {
   const t = useT();
   const [items, setItems] = useState<ConnItem[] | null>(null);
   const [filter, setFilter] = useState<"all" | "connected" | "disconnected">("all");
   const [busy, setBusy] = useState<string | null>(null);
   const [creds, setCreds] = useState<ConnItem | null>(null);
+  const [intro, setIntro] = useState<ConnItem | null>(null);
   const load = () => { listMyConnectorsFn().then(setItems).catch(() => setItems([])); };
   // Drive se conecta en una pestaña de Ghosty Studio: al volver aquí se ve ya conectado.
   useEffect(() => {
@@ -939,7 +987,15 @@ function IntegrationsPanel() {
                       href={`/setup/${c.id}/connect`}
                       // Navegación full-page (loader → OAuth authorize). Marcamos busy al
                       // click para dar feedback mientras redirige (antes: sin estado).
-                      onClick={() => setBusy(c.id)}
+                      onClick={(e) => {
+                        // Con aviso (GitHub) primero se lee; el modal sigue al mismo flujo.
+                        if (c.intro) {
+                          e.preventDefault();
+                          setIntro(c);
+                          return;
+                        }
+                        setBusy(c.id);
+                      }}
                       aria-disabled={busy === c.id}
                       className={`rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-brand-fg hover:brightness-110 ${
                         busy === c.id ? "pointer-events-none opacity-60" : ""
@@ -956,6 +1012,17 @@ function IntegrationsPanel() {
       </div>
 
       {creds ? <CredentialsDialog item={creds} onClose={() => setCreds(null)} onDone={load} /> : null}
+      {intro ? (
+        <ConnectIntroDialog
+          item={intro}
+          onClose={() => setIntro(null)}
+          onContinue={() => {
+            setBusy(intro.id);
+            setIntro(null);
+            window.location.href = `/setup/${intro.id}/connect`;
+          }}
+        />
+      ) : null}
     </div>
   );
 }
