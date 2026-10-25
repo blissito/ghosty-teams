@@ -40,13 +40,13 @@ export function AgentComputerPanel({ messageId, agentName, handle, replay, takeo
         const r = await computerBrowserFn({ data: { id: messageId, sessionId, op: "voice", speak: voice.speak, mic: voice.mic } });
         if (r.gone) throw gone(sessionId);
       }}
-      onWatch={async (sessionId) => {
-        const r = await computerBrowserFn({ data: { id: messageId, sessionId, op: "watch" } });
+      onWatch={async (sessionId, { viewport }) => {
+        const r = await computerBrowserFn({ data: { id: messageId, sessionId, op: "watch", viewport } });
         if (r.gone) throw gone(sessionId);
         return { liveUrl: r.liveUrl, ...(r.livekit ? { livekit: r.livekit } : {}) };
       }}
-      onTakeover={async (sessionId) => {
-        const r = await computerBrowserFn({ data: { id: messageId, sessionId, op: "takeover" } });
+      onTakeover={async (sessionId, { viewport }) => {
+        const r = await computerBrowserFn({ data: { id: messageId, sessionId, op: "takeover", viewport } });
         if (r.gone) throw gone(sessionId);
         return { liveUrl: r.liveUrl, inputUrl: r.inputUrl ?? "", releaseUrl: r.releaseUrl ?? "", viewport: r.viewport ?? null, ...(r.livekit ? { livekit: r.livekit } : {}) };
       }}

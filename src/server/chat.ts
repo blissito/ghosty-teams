@@ -628,7 +628,7 @@ export const getComputerStepsFn = createServerFn({ method: "GET" })
 // pase firmado (`/api/v2/fleet-agents/:id/browser/:op`, HMAC de partner) y el navegador de la
 // persona habla con él directo. Mirar: quien ve el hilo. Tomar el control: sólo quien pidió el turno.
 export const computerBrowserFn = createServerFn({ method: "POST" })
-  .validator((d: { id: number; sessionId: string; op: "watch" | "takeover" | "voice" | "answer"; answer?: "delegate" | "cancel"; speak?: boolean; mic?: boolean }) => d)
+  .validator((d: { id: number; sessionId: string; op: "watch" | "takeover" | "voice" | "answer"; answer?: "delegate" | "cancel"; speak?: boolean; mic?: boolean; viewport?: { width: number; height: number } }) => d)
   .handler(async ({ data }) => {
     const db = await import("../db.server");
     const user = await sessionUser();
@@ -653,6 +653,8 @@ export const computerBrowserFn = createServerFn({ method: "POST" })
     if (data.op === "voice") Object.assign(payload, { speak: data.speak === true, mic: data.mic === true });
     // `groupId`: con él gs sabe si el turno sigue vivo en la otra caja (relevo azul/verde).
     if (data.op === "answer") Object.assign(payload, { answer: data.answer, groupId: t?.group_id ? String(t.group_id) : "" });
+    // La medida del panel (la mide @ghostystudio/computer): la caja ajusta la página a esa forma.
+    if ((data.op === "watch" || data.op === "takeover") && data.viewport) Object.assign(payload, { viewport: { width: Number(data.viewport.width), height: Number(data.viewport.height) } });
     const body = JSON.stringify(payload);
     const res = await fetch(`${rt.base}/api/v2/fleet-agents/${encodeURIComponent(agent.backend.id)}/browser/${data.op}`, {
       method: "POST",
