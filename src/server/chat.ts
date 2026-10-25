@@ -661,9 +661,10 @@ export const computerBrowserFn = createServerFn({ method: "POST" })
       signal: AbortSignal.timeout(30_000),
     });
     const out = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-    // 410 al contestar = el agente ya no esperaba: la tarjeta cierra la alerta.
-    if (data.op === "answer" && (res.status === 410 || out.gone)) return { gone: true } as BrowserPassOut;
-    if (!res.ok) throw new Error(res.status === 410 ? "El navegador ya se cerró." : String(out.error ?? `error ${res.status}`));
+    // 410 = el agente ya no esperaba (answer) o el navegador ya no existe: el cliente cierra la
+    // alerta en vez de seguir ofreciendo «Tomar el control» sobre una pestaña muerta.
+    if (res.status === 410 || out.gone) return { gone: true } as BrowserPassOut;
+    if (!res.ok) throw new Error(String(out.error ?? `error ${res.status}`));
     return out as BrowserPassOut;
   });
 

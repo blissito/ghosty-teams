@@ -46,3 +46,19 @@ export function useComputerSteps(messageId: number): { steps: AgentStep[]; loade
   }, [messageId, loaded]);
   return { steps, loaded, live: liveTurn.get(messageId) === true };
 }
+
+/**
+ * El navegador de esa sesión ya no existe (gs contestó 410): su «Te necesito aquí» se da por
+ * cerrado aquí mismo. Sin esto la tarjeta seguía ofreciendo «Tomar el control» sobre una pestaña
+ * muerta, con «El navegador ya se cerró» en rojo debajo (24-oct).
+ */
+export function closeComputerAsk(messageId: number, sessionId: string): void {
+  const steps = byMessage.get(messageId);
+  if (!steps?.some((s) => s.status === "running" && s.browser?.needsHuman && s.browser.sessionId === sessionId)) return;
+  const now = Date.now();
+  setComputerSteps(
+    messageId,
+    steps.map((s) => (s.status === "running" && s.browser?.needsHuman && s.browser.sessionId === sessionId ? { ...s, status: "error" as const, endedAt: now } : s)),
+    liveTurn.get(messageId) === true,
+  );
+}

@@ -2551,6 +2551,24 @@ export function fraseTrabajando(id: number, secs: number): string {
   const lista = secs >= 120 ? FRASES_MUY_LARGAS : secs >= 35 ? FRASES_LARGAS : FRASES_TRABAJANDO;
   return lista[(id + Math.floor(secs / ROTACION_S)) % lista.length];
 }
+/**
+ * Inicio del turno en el reloj de ESTE navegador. `startedAt` lo pone el servidor y el reloj
+ * de la caja de Teams se adelanta (24-oct: +34 s): con un inicio en el futuro el cronómetro se
+ * quedaba en «0s» hasta alcanzarlo. Un inicio adelantado se cambia por la hora en que se vio.
+ */
+const turnStartSeen = new Map<number, number>();
+export function localTurnStart(startedAt: number): number {
+  const now = Date.now();
+  if (startedAt <= now) return startedAt;
+  let seen = turnStartSeen.get(startedAt);
+  if (seen == null) {
+    seen = now;
+    turnStartSeen.set(startedAt, seen);
+    if (turnStartSeen.size > 200) turnStartSeen.delete(turnStartSeen.keys().next().value as number);
+  }
+  return seen;
+}
+
 /** Reloj vivo del turno. Devuelve `null` mientras no haya turno registrado. */
 
 export function useTurnElapsed(id: number) {
@@ -2563,7 +2581,7 @@ export function useTurnElapsed(id: number) {
     return () => clearInterval(iv);
   }, [info?.startedAt]);
   if (!info) return null;
-  const secs = Math.max(0, Math.round((now - info.startedAt) / 1000));
+  const secs = Math.max(0, Math.round((now - localTurnStart(info.startedAt)) / 1000));
   return {
     info,
     secs,

@@ -256,6 +256,7 @@ import {
   useAgentMeta,
 } from "../components/chat/message";
 import { AgentBot, type AgentBotStatus } from "../components/AgentBot";
+import { localTurnStart } from "../components/chat/message";
 import type {
   Attach,
 
@@ -4077,7 +4078,7 @@ function TurnClock({ startedAt }: { startedAt: number }) {
     const h = setInterval(() => setAhora(Date.now()), 1000);
     return () => clearInterval(h);
   }, []);
-  const s = Math.max(0, Math.floor((ahora - startedAt) / 1000));
+  const s = Math.max(0, Math.floor((ahora - localTurnStart(startedAt)) / 1000));
   return (
     <span className="shrink-0 tabular-nums text-[10px] text-muted">
       {s < 60 ? `${s}s` : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`}
