@@ -27,7 +27,11 @@ export const Route = createFileRoute("/busy")({
           const { wakeupsDueSoon } = await import("../server/wakeups.server");
           // Un relevo a punto de salir cuenta como trabajo: reiniciar en ese hueco deja al
           // turno siguiente sin tools (ver `wakeupsDueSoon`).
-          const inflight = agentTurnsInflight() + (await wakeupsDueSoon());
+          // El contador sólo sube DENTRO de `runAgentTurn`, pero la burbuja se registra antes de
+          // pedir el lock del hilo: un turno en cola (o en su cierre) daba 0 y el deploy «seguro»
+          // reinició encima de uno de bliss (24-oct 21:30). Se cuenta el mayor de los dos.
+          const { liveTurnCount } = await import("../server/turns.server");
+          const inflight = Math.max(agentTurnsInflight(), liveTurnCount()) + (await wakeupsDueSoon());
           return Response.json({ busy: inflight > 0, inflight });
         } catch (e) {
           // Si ni siquiera se puede mirar, hay que declararse OCUPADO: mejor una caja

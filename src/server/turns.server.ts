@@ -301,6 +301,11 @@ async function latir(): Promise<void> {
  * respetaba hasta `LEASE_S` (90 s) y la burbuja se quedaba en «pensando» ese rato. Se apaga el
  * latido antes, o el siguiente tick los volvería a marcar vivos.
  */
+/** Turnos registrados (con su burbuja), incluidos los que aún esperan el lock del hilo. */
+export function liveTurnCount(): number {
+  return live.size;
+}
+
 export async function releaseLiveTurns(): Promise<number> {
   if (latido) clearInterval(latido);
   latido = null;

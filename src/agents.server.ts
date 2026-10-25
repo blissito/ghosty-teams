@@ -2731,6 +2731,7 @@ async function nativeAguiTurn(o: {
   const message = { id: userMessageId(runId, steer ? durableOpts?.messageRef : null), text: o.outText, parts: o.parts };
 
   let huboTool = false;
+  let ownRun = false;
   const reader = new AguiTurnReader({
     onChunk: o.onChunk,
     onTool: async (ev) => {
@@ -2739,9 +2740,13 @@ async function nativeAguiTurn(o: {
     },
     onTruncated: o.onTruncated,
     onModel: o.onModel,
-    // En un steer el RUN_STARTED trae el run del OTRO turno: ése no es nuestro para adoptar.
+    // En un steer gs abre un RUN_STARTED con el runId del propio steer, pero ese run no tiene
+    // TurnRecord: ni se guarda como durable (al adoptarlo tras reiniciar daba 404) ni se usa
+    // para reengancharse (el 2º POST con `messages: []` era la burbuja fantasma, 24-oct).
     onRunStarted: (rid) => {
-      if (rid === runId) durableOpts?.onDurable?.(rid);
+      if (rid !== runId || steer) return;
+      ownRun = true;
+      durableOpts?.onDurable?.(rid);
     },
     onReplyTo: durableOpts?.onReplyTo,
     onAttachmentsFailed: durableOpts?.onAttachmentsFailed,
@@ -2770,7 +2775,7 @@ async function nativeAguiTurn(o: {
       try {
         // Antes del RUN_STARTED (o adoptando) gs aún podría no tener el run: se manda completo.
         // Después, reconectar = `messages: []` con el mismo runId.
-        const reconnect = adopting || reader.runId !== null;
+        const reconnect = adopting || ownRun;
         const input = buildRunInput({
           threadId: groupId,
           runId,
@@ -2813,8 +2818,9 @@ async function nativeAguiTurn(o: {
         }
         const transporte = esFalloDeTransporte(e) || (e instanceof AguiHttpError && [429, 502, 503, 504].includes(e.status));
         // Con el run ya en gs reintentar es reengancharse, nunca repetir trabajo. Sin él, sólo
-        // si aún no hubo texto ni tool sucia (lo mismo que el camino EasyBits).
-        if (transporte && fallos < ESPERAS_MS.length && (reader.runId !== null || (!reader.hadOutput && !huboTool))) {
+        // si aún no hubo texto ni tool sucia (lo mismo que el camino EasyBits). Un steer caído se
+        // reenvía completo: si el vivo ya acabó, gs contesta run_not_live y sale como turno normal.
+        if (transporte && fallos < ESPERAS_MS.length && (ownRun || steer || (!reader.hadOutput && !huboTool))) {
           const ms = (e as { retryAfterMs?: number }).retryAfterMs ?? ESPERAS_MS[fallos];
           fallos++;
           console.warn(`[gs-agui] @${agent.handle} ${String((e as Error)?.message ?? e).slice(0, 80)} → reintento ${fallos}/${ESPERAS_MS.length} en ${ms} ms`);
