@@ -635,7 +635,8 @@ export async function allowedRepos(dest: ToolDest | null): Promise<string[] | nu
  * ⚠️ Se enumeran a mano: dar por hecho que todas llevan `repo` dejaría a estas dos
  * rechazadas para siempre.
  */
-export const REPOLESS_TOOLS = new Set(["github_list_repos", "github_install_link"]);
+// `github_create_repo`: crear no lee nada de nadie; el repo nuevo es de quien lo pide.
+export const REPOLESS_TOOLS = new Set(["github_list_repos", "github_install_link", "github_create_repo"]);
 
 // ── Poda ─────────────────────────────────────────────────────────────────────
 // Un issue o un PR de la API traen ~80 campos, casi todos URLs de la propia API
@@ -922,6 +923,56 @@ const ALL_TOOLS: ConnectorTool[] = [
       instalarOAgregarRepos: INSTALL_URL,
       administrarInstalaciones: MANAGE_URL,
     }),
+  },
+  {
+    name: "github_create_repo",
+    description:
+      "Crea un repositorio NUEVO en la cuenta de GitHub de la persona (o en una de sus organizaciones con `org`) y lo da de alta en la app de Ghosty, " +
+      "para que las demás tools y la publicación de apps (site_publish con app.repo) ya lo alcancen. Nace privado y con README en `main`. " +
+      "Úsala tú cuando haga falta un repo («súbelo a GitHub», «quiero mi código en un repo»): no le pidas a la persona que lo cree.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: str("Nombre del repo (letras, números, - _ .)."),
+        description: str("Opcional: descripción corta."),
+        private: { type: "boolean", description: "Privado (default true)." },
+        org: str("Opcional: organización donde crearlo. Sin ella, en la cuenta personal."),
+      },
+      required: ["name"],
+    },
+    handler: async (sub, a) => {
+      const name = String(a.name ?? "").trim();
+      if (!/^[\w.-]{1,100}$/.test(name)) return { error: "Nombre inválido: sólo letras, números, guiones, guion bajo y punto." };
+      const org = String(a.org ?? "").trim();
+      const body = JSON.stringify({ name, description: String(a.description ?? "").slice(0, 300) || undefined, private: a.private !== false, auto_init: true });
+      const repo = await api(sub, org ? `/orgs/${encodeURIComponent(org)}/repos` : "/user/repos", { method: "POST", body });
+      if (repo?.error) {
+        // 422 = ya existe con ese nombre (u otra validación): se dice tal cual para que elija otro.
+        return { error: `${repo.error} Si ya existe un repo con ese nombre, usa otro o trabaja sobre ese.` };
+      }
+      const full = String(repo?.full_name ?? "");
+      const owner = String(repo?.owner?.login ?? "");
+      // Al crearlo con el token de la persona NO entra solo a una instalación de «repos elegidos»:
+      // se agrega a la instalación de Ghosty en esa cuenta (con acceso a «todos», ya está).
+      const inst = await api(sub, "/user/installations");
+      const mine = ((inst?.installations ?? []) as any[]).find((i) => String(i?.account?.login ?? "").toLowerCase() === owner.toLowerCase());
+      let enApp = false;
+      if (mine) {
+        if (mine.repository_selection === "all") enApp = true;
+        else enApp = !(await api(sub, `/user/installations/${mine.id}/repositories/${repo.id}`, { method: "PUT" }))?.error;
+      }
+      return {
+        repo: full,
+        url: repo?.html_url,
+        defaultBranch: repo?.default_branch ?? "main",
+        private: repo?.private,
+        ...(enApp
+          ? {}
+          : {
+              aviso: `El repo se creó, pero la app de Ghosty no está instalada en ${owner}: sin eso no puedo escribir en él. Pásale a la persona esta liga para instalarla y elegir el repo: ${INSTALL_URL}`,
+            }),
+      };
+    },
   },
   {
     name: "github_list_issues",
