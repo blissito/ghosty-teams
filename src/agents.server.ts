@@ -3178,7 +3178,8 @@ async function runAgentTurnInner(opts: {
   emitDelta: (id: number, chunk: string) => void;
   // Reemplaza el body completo (no append). Para el checklist incremental: al iniciar
   // una tool, las previas pasan a ✓ y la nueva queda ⚡ → se re-pinta la lista entera.
-  emitBody?: (id: number, body: string) => void;
+  /** `live`: pintada a media respuesta (el turno sigue); sin él, el cuerpo cierra el turno en el cliente. */
+  emitBody?: (id: number, body: string, live?: boolean) => void;
   // Artefacto ACTUAL del hilo (doc/sheet + contenido) → se inyecta al turno para re-emisión
   // completa al editar.
   currentDoc?: CurrentDoc | null;
@@ -3438,21 +3439,21 @@ async function runAgentTurnInner(opts: {
     const bodyId = await ensure();
     if (urgent || allDone) {
       cancelPaint();
-      opts.emitBody(bodyId, renderBody(allDone));
+      opts.emitBody(bodyId, renderBody(allDone), !allDone);
       return;
     }
     if (paintTimer) {
       paintDirty = true;
       return;
     }
-    opts.emitBody(bodyId, renderBody(false));
+    opts.emitBody(bodyId, renderBody(false), true);
     // El trailing RE-ARMA la ventana: sin eso, el chunk que llega justo después del
     // trailing pintaba de inmediato y la cadencia real era el doble (medido: mediana
     // de 59 ms con ventana de 80).
     const tick = () => {
       if (paintDirty && opts.emitBody) {
         paintDirty = false;
-        opts.emitBody(bodyId, renderBody(false));
+        opts.emitBody(bodyId, renderBody(false), true);
         paintTimer = setTimeout(tick, PAINT_MS);
       } else {
         paintTimer = null;

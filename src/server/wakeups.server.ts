@@ -414,8 +414,8 @@ export async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
       publish({ t: "message:delta", id: mid, chunk, channelId: dest.channelId ?? null, parentId: dest.parentId ?? null, dmId: dest.dmId ?? null });
     },
     emitComputer: (mid, steps, live) => publish({ t: "computer:steps", id: mid, steps, live }),
-    emitBody: (mid, body) => {
-      publish({ t: "message:body", id: mid, body });
+    emitBody: (mid, body, live) => {
+      publish({ t: "message:body", id: mid, body, ...(live ? { live: true } : {}) });
       flusher.offer(mid, body);
       turns.touchTurn(ns, mid);
       const p = bf.stepOfBody(body);

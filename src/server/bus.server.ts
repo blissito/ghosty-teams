@@ -41,7 +41,7 @@ export type RtEvent =
   | { t: "message:delta"; id: number; chunk: string; channelId: number | null; parentId: number | null; dmId?: number | null }
   // Body autoritativo al terminar el stream (reconcilia por si se perdió un delta;
   // NO es una edición → no marca edited_at).
-  | { t: "message:body"; id: number; body: string }
+  | { t: "message:body"; id: number; body: string; /** Pintada a media respuesta: no cierra el turno. */ live?: boolean }
   // La computadora del agente: los pasos enteros de la burbuja `id` (agrupados cada 700 ms).
   | { t: "computer:steps"; id: number; steps: import("@ghostystudio/computer").AgentStep[]; live?: boolean }
   // Estado de un turno de agente EN VUELO: corriendo o esperando su lugar en la cola,

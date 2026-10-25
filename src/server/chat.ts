@@ -1633,8 +1633,8 @@ export const askAgentAs = createServerOnlyFn(async (me: SessionMe | null, data: 
           .catch(() => {});
       }
     },
-    emitBody: (mid, body) => {
-      bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id: mid, body });
+    emitBody: (mid, body, live) => {
+      bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id: mid, body, ...(live ? { live: true } : {}) });
       flusher.offer(mid, body);
       // El PASO en curso viaja con el estado del turno. Antes el cliente lo sacaba del
       // cuerpo preguntando cada pocos segundos; aquí ya lo tenemos delante y es gratis.

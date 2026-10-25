@@ -2186,12 +2186,12 @@ function ChannelPage() {
         const blank = !(ev.body ?? "").trim();
         // El body autoritativo cierra el turno: si quedara en el mapa, la burbuja
         // seguiría ofreciendo "Detener" algo que ya respondió. Pero el turno también pinta su
-        // cuerpo a medio camino (`emitBody`): con la computadora del agente todavía en vivo no
-        // es el cierre, y quitarlo volvía la tarjeta «Te necesito aquí» un comprobante mientras
-        // el agente esperaba a la persona (sin pasos nuevos nadie lo volvía a anunciar).
-        const computerLive = extractComputerCard(ev.body ?? "")?.live === true;
+        // cuerpo a media respuesta (`live`): ése no es el cierre. Quitarlo dejaba la burbuja sin
+        // Detener y volvía la tarjeta «Te necesito aquí» un comprobante mientras el agente
+        // esperaba a la persona (sin pasos nuevos nadie volvía a anunciar el turno).
+        const midTurn = ev.live === true || extractComputerCard(ev.body ?? "")?.live === true;
         setTurns((prev) => {
-          if (computerLive || !prev.has(ev.id)) return prev;
+          if (midTurn || !prev.has(ev.id)) return prev;
           const next = new Map(prev);
           next.delete(ev.id);
           return next;

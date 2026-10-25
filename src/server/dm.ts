@@ -634,8 +634,8 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
         // El agente espera a la persona (`cloud_browser_ask_human`): la barra lo dice, como en /c.
         if (live && pendingAsk(steps)) turns.setTurnStep(ns, mid, "Esperando tu ayuda");
       },
-      emitBody: (mid, body) => {
-        fanout({ t: "message:body", id: mid, body });
+      emitBody: (mid, body, live) => {
+        fanout({ t: "message:body", id: mid, body, ...(live ? { live: true } : {}) });
         flusher.offer(mid, body);
         const p = pasoDe(body);
         if (p) turns.setTurnStep(ns, mid, p);
