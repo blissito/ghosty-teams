@@ -1612,6 +1612,8 @@ export const askAgentAs = createServerOnlyFn(async (me: SessionMe | null, data: 
       // vez por pedido. Si está mirando el room igual le sirve: el aviso dice qué hacer.
       const ask = pendingAsk(steps);
       const askKey = ask?.key ?? "";
+      // La barra «Trabajando ahora» dice que el agente te espera (como /c), no su último paso.
+      if (ask && live) turns.setTurnStep(ns, mid, "Esperando tu ayuda");
       if (ask && askKey !== askedHuman && poster?.sub) {
         askedHuman = askKey;
         void import("./notify.server")

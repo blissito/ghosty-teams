@@ -1,3 +1,4 @@
+import { pendingAsk } from "@ghostystudio/computer";
 import { createServerFn } from "@tanstack/react-start";
 import { sessionUser } from "./chat";
 
@@ -628,7 +629,11 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
       emitDelta: (mid, chunk) => fanout({ t: "message:delta", id: mid, chunk, channelId: null, parentId: null, dmId: data.id }),
       // Mismo tratamiento que en rooms: persistir mientras escribe (si no, un refresh a
       // media respuesta deja la cáscara muda) y anunciar el paso en curso.
-      emitComputer: (mid, steps, live) => fanout({ t: "computer:steps", id: mid, steps, live }),
+      emitComputer: (mid, steps, live) => {
+        fanout({ t: "computer:steps", id: mid, steps, live });
+        // El agente espera a la persona (`cloud_browser_ask_human`): la barra lo dice, como en /c.
+        if (live && pendingAsk(steps)) turns.setTurnStep(ns, mid, "Esperando tu ayuda");
+      },
       emitBody: (mid, body) => {
         fanout({ t: "message:body", id: mid, body });
         flusher.offer(mid, body);

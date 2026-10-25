@@ -154,7 +154,7 @@ import { subscribeUsers, bumpUsers } from "../utils/users-bus";
 import { clearMeCache } from "../server/auth";
 import ArtifactPanel, { type ArtifactView} from "../components/ArtifactPanel";
 import { belongsToOpenConversation } from "../lib/conversation-scope";
-import { extractEbDoc, extractEbPatches, draftTitle, extractAdsProposalCard } from "../lib/ebdoc";
+import { extractEbDoc, extractEbPatches, draftTitle, extractAdsProposalCard, extractComputerCard } from "../lib/ebdoc";
 import { parseVersionLine } from "../lib/ads-links";
 import { showSystemNotification } from "../utils/system-notification";
 import { marcarCierre, limpiarCierre } from "../lib/panel-cerrando";
@@ -2185,9 +2185,13 @@ function ChannelPage() {
         // viene vacío.
         const blank = !(ev.body ?? "").trim();
         // El body autoritativo cierra el turno: si quedara en el mapa, la burbuja
-        // seguiría ofreciendo "Detener" algo que ya respondió.
+        // seguiría ofreciendo "Detener" algo que ya respondió. Pero el turno también pinta su
+        // cuerpo a medio camino (`emitBody`): con la computadora del agente todavía en vivo no
+        // es el cierre, y quitarlo volvía la tarjeta «Te necesito aquí» un comprobante mientras
+        // el agente esperaba a la persona (sin pasos nuevos nadie lo volvía a anunciar).
+        const computerLive = extractComputerCard(ev.body ?? "")?.live === true;
         setTurns((prev) => {
-          if (!prev.has(ev.id)) return prev;
+          if (computerLive || !prev.has(ev.id)) return prev;
           const next = new Map(prev);
           next.delete(ev.id);
           return next;
