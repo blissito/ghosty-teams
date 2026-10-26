@@ -66,11 +66,9 @@ jobs:
         # («Cannot read properties of null (reading 'edgesOut')», 19-oct); así instala y compila igual.
         run: npm install --no-audit --no-fund --legacy-peer-deps
 
-      # Informativo mientras main tenga pruebas en rojo: hoy fallan 12 y bloquearían todo
-      # deploy. Cuando queden en verde, quitar continue-on-error para que un rojo frene.
+      # Un rojo frena el deploy (verde sin .env desde el 26-oct; config en vitest.config.ts).
       - name: npm test
         working-directory: app
-        continue-on-error: true
         run: npm test
 
       - name: llave SSH del host
