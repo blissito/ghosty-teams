@@ -1969,13 +1969,27 @@ export async function closeFinishedRuns(): Promise<void> {
           await postInThread(
             run,
             "build",
-            `✅ El PR ya tiene aprobación${ci.state === "success" ? " y el CI está en verde" : ""}. ¿Hago merge? Contesta **«merge»** en este hilo y lo hago. ${run.prUrl}`,
+            mergeAskText(run, ci.state === "success"),
           );
       }
     }
     if (outcome === "open" && run.status === "pr_review" && pr?.conflicted) await onPrConflict(run, pr.headSha ?? null);
     if (outcome === "merged" || outcome === "closed") await onPrEvent(run, outcome);
   }
+}
+
+/** Pedidos que adoptaron el PR de OTRA persona (`automations/pr-fix`, CI rojo): el PR no es
+ *  nuestro, así que mezclarlo lo decide quien lo abrió o revisa, no la fábrica. */
+export function adoptsForeignPr(run: Pick<Run, "kind">): boolean {
+  return run.kind === "ci_fix";
+}
+
+/** El aviso de «ya tiene aprobación» del vigilante. Pura para probarla. */
+export function mergeAskText(run: Pick<Run, "kind" | "prUrl">, ciGreen: boolean): string {
+  const green = ciGreen ? " y el CI está en verde" : "";
+  if (adoptsForeignPr(run))
+    return `✅ El PR ya tiene aprobación${green}. Es el PR de su autor: mezclarlo lo decide esa persona (o quien lo revisa en GitHub). Si te toca a ti y quieres que lo haga yo, contesta **«merge»** en este hilo. ${run.prUrl}`;
+  return `✅ El PR ya tiene aprobación${green}. ¿Hago merge? Contesta **«merge»** en este hilo y lo hago. ${run.prUrl}`;
 }
 
 /**

@@ -15,23 +15,28 @@ export async function dispatchRepoEvent(ev: RepoEvent, opts: { ns: string; origi
   const { AUTOMATIONS } = await import("./registry.server");
   const db = await import("../../db.server");
   const live = new Set(await db.roomsOfRepo(ev.repo));
-  const jobs: { roomId: number; kind: string; run: () => Promise<void> }[] = [];
+  let jobs: { roomId: number; kind: string; seesFactoryPrs: boolean; run: () => Promise<void> }[] = [];
   for (const [roomId, e] of enabled) {
     if (!live.has(roomId)) continue; // el repo ya no está en el room (o el room se archivó)
     for (const a of pickAutomations(AUTOMATIONS, e.kinds, ev))
       jobs.push({
         roomId,
         kind: a.kind,
+        seesFactoryPrs: a.seesFactoryPrs === true,
         run: () => a.handle(ev, automationCtx({ ns: opts.ns, roomId, repo: ev.repo, origin: opts.origin, kind: a.kind })),
       });
   }
   if (!jobs.length) return { ran: 0 };
-  // Un PR de un pedido de la fábrica ya lo vigila ella (`pr-watches`, @check, @build): no se duplica.
+  // Un PR de un pedido de la fábrica ya lo vigila ella (`pr-watches`, @check, @build): no se duplica,
+  // salvo las automatizaciones que lo filtran solas (`seesFactoryPrs`).
   const prs = prNumbersOf(ev);
+  let factoryPr = false;
   if (prs.length) {
     const { runsByPr } = await import("../apps/factory-runs.server");
-    for (const n of prs) if ((await runsByPr(ev.repo, n).catch(() => [])).length) return { ran: 0 };
+    for (const n of prs) if ((await runsByPr(ev.repo, n).catch(() => [])).length) factoryPr = true;
   }
+  if (factoryPr) jobs = jobs.filter((j) => j.seesFactoryPrs);
+  if (!jobs.length) return { ran: 0 };
   const results = await Promise.allSettled(jobs.map((j) => j.run()));
   results.forEach((r, i) => {
     if (r.status === "rejected")

@@ -184,7 +184,8 @@ export function recipeText(recipe: MaintenanceRecipe, repo: string, date: string
 
 // ── Barrido ──────────────────────────────────────────────────────────────────
 
-/** Una fila de `gt_repo_automations` ya leída. `ownerSub`/`origin` se guardan al prenderla. */
+/** Una fila de `gt_repo_automations` ya leída. `ownerSub` = quien la prendió (`updated_by`);
+ *  `origin` = el del espacio (no hay request en un barrido). */
 export type MaintenanceRow = { roomId: number; repo: string; settings: MaintenanceSettings; ownerSub: string | null; origin: string };
 
 export type MaintenanceJob = {
@@ -219,12 +220,15 @@ async function loadRows(): Promise<MaintenanceRow[]> {
   const { dbq } = await import("../../dbq.server");
   // Sin la tabla (espacio sin automatizaciones todavía) no hay nada que barrer.
   const rows = await dbq(`SELECT * FROM gt_repo_automations WHERE kind = 'maintenance' AND enabled = 1`, []).catch(() => []);
+  if (!rows.length) return [];
+  const { defaultOrigin } = await import("./ctx.server");
+  const origin = await defaultOrigin().catch(() => "");
   return rows.map((r) => ({
     roomId: Number(r.room_id),
     repo: String(r.repo),
-    settings: parseSettings(r.settings),
-    ownerSub: r.owner_sub ? String(r.owner_sub) : null,
-    origin: String(r.origin ?? ""),
+    settings: parseSettings(r.settings_json),
+    ownerSub: r.updated_by ? String(r.updated_by) : null,
+    origin,
   }));
 }
 
@@ -264,7 +268,7 @@ export async function sweepMaintenance(ns: string, now = Date.now()): Promise<nu
       }),
       cause: `mantenimiento de ${RECIPE_TITLE[job.recipe]}`,
       text: recipeText(job.recipe, job.repo, job.date),
-      // El origin guardado al prender la automatización: aquí no hay request.
+      // El origin del espacio: aquí no hay request.
       origin: job.origin,
       dueAt: Math.floor(now / 1000),
     }).catch(() => false);

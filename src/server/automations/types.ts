@@ -43,7 +43,11 @@ export type AutomationCtx = {
   repo: string;
   /** Turno de un agente del room en un hilo propio de la automatización (lo implementa EVENTOS
    *  reutilizando el mecanismo de wakeups/relevo existente). `handle` p. ej. "build", "check", "plan". */
-  wake(opts: { handle: string; text: string; threadKey: string; title?: string }): Promise<void>;
+  wake(opts: { handle: string; text: string; threadKey: string; title?: string;
+               /** Retraso en segundos antes de abrir el turno (p. ej. juntar un lote de alertas). */
+               delayS?: number }): Promise<void>;
+  /** Aviso en el room sin turno de agente (no despierta a nadie). Devuelve el id del mensaje. */
+  post(text: string): Promise<number | null>;
   /** Dedupe/anti-bucle: true sólo la 1.ª vez para (ns, kind, key) dentro de `ttlMs`. */
   claim(kind: AutomationKind, key: string, ttlMs?: number): Promise<boolean>;
   /** Tope diario por repo y tipo (default 20). false = no correr. */
@@ -60,4 +64,7 @@ export type Automation = {
   /** El despachador tira los eventos que causó nuestro bot (anti-bucle). `true` = esta
    *  automatización sí los quiere ver (p. ej. un CI rojo sobre un commit que empujó Ghosty). */
   allowGhostyBot?: boolean;
+  /** El despachador no le pasa eventos de PRs que ya son pedidos de la fábrica (los vigila ella).
+   *  `true` = esta automatización los filtra sola (p. ej. dep_fix reabre un Dependabot adoptado). */
+  seesFactoryPrs?: boolean;
 };

@@ -8,9 +8,11 @@ import {
 function fakeCtx(settings: Record<string, unknown> = {}, budget = true) {
   const claimed = new Set<string>();
   const wakes: { handle: string; text: string; threadKey: string; title?: string }[] = [];
+  const posts: string[] = [];
   const ctx: AutomationCtx = {
     ns: "acme", roomId: "1", repo: "acme/app",
     wake: async (o) => { wakes.push(o); },
+    post: async (t: string) => { posts.push(t); return 1; },
     claim: async (kind: AutomationKind, key: string) => {
       const k = `${kind}|${key}`;
       if (claimed.has(k)) return false;
@@ -20,7 +22,7 @@ function fakeCtx(settings: Record<string, unknown> = {}, budget = true) {
     budget: async () => budget,
     settings: async <T,>() => settings as T,
   };
-  return { ctx, wakes, claimed };
+  return { ctx, wakes, claimed, posts };
 }
 const notFactory = { isFactoryPr: async () => false, ack: async () => true };
 

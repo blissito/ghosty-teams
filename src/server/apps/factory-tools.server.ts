@@ -1595,11 +1595,13 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
     parts.push(ADVISOR_ROLE);
     return parts.join("\n\n") + "]";
   }
-  if (dest?.automation === "maintenance") {
-    // Turno de mantenimiento programado (`automations/maintenance.server.ts`): no es un pedido,
-    // así que nada de las instrucciones del rol (factory_build_done, veredicto…). Sí lleva lo que
-    // el equipo escribió del repo en `.ghosty/factory.md`, como cualquier turno de la fábrica.
-    parts.push(`En ESTE turno no actúas como rol de ningún pedido: es mantenimiento programado del repo. El encargo trae el trabajo y lo que puedes entregar; no uses las tools factory_* del pedido.`);
+  if (dest?.automation) {
+    // Turno de una automatización de GitHub (`automations/`: mantenimiento programado, CI rojo,
+    // revisión, alertas, triage…): no es un pedido, así que nada de las instrucciones del rol
+    // (factory_build_done, veredicto…). Sí lleva lo que el equipo escribió del repo en
+    // `.ghosty/factory.md`, como cualquier turno de la fábrica.
+    const what = dest.automation === "maintenance" ? "mantenimiento programado del repo" : `una automatización de GitHub del repo (${dest.automation})`;
+    parts.push(`En ESTE turno no actúas como rol de ningún pedido: es ${what}. El encargo trae el trabajo y lo que puedes entregar; no uses las tools factory_* del pedido.`);
     const repo = dest.automationRepo;
     if (repo && dest.channelId) {
       const db = await import("../../db.server");

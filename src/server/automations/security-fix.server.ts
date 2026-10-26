@@ -174,18 +174,9 @@ async function openSecurityRun(
   return "opened";
 }
 
-/** Publica en el room como un agente del espacio, igual que los avisos de PR (`postAgent`, no despierta a nadie). */
+/** Aviso directo en el room (`ctx.post`, no despierta a nadie). */
 async function postRoomNotice(ctx: AutomationCtx, body: string): Promise<void> {
-  const channelId = Number(ctx.roomId);
-  if (!Number.isFinite(channelId) || channelId <= 0) return;
-  const db = await import("../../db.server");
-  const bus = await import("../bus.server");
-  const { resolvedAgents } = await import("../../agents.server");
-  const agents = (await resolvedAgents()).filter((a) => !["plan", "build", "check", "eval"].includes(a.handle));
-  const who = agents[0] ?? { handle: "ghosty", name: "Ghosty", avatar: "" };
-  const { id } = await db.postAgent(channelId, null, body, "msg", who.handle, who.name, "general", who.avatar);
-  const msg = await db.getMessage(id);
-  if (msg) bus.publish(bus.ch.room(ctx.ns, channelId), { t: "message:new", msg });
+  await ctx.post(body);
 }
 
 const defaultDeps: Deps = { postNotice: postRoomNotice, openFactoryRun: openSecurityRun, now: () => Date.now() };
@@ -237,16 +228,14 @@ export function makeSecurityFix(deps: Deps = defaultDeps): Automation {
       if (outcome !== "no_factory") return;
 
       // Sin fábrica: turno suelto de @build en un hilo propio.
-      const opts = {
+      await ctx.wake({
         handle: "build",
         text: buildFixPrompt({ repo, first: ev.alert, minSeverity, date }),
         threadKey: `security:${repoKey(repo)}:${Math.floor(now / 1000)}`,
         title,
-        // Retraso para juntar el lote. Campo opcional pedido a EVENTOS; si su `wake` no lo
-        // conoce, lo ignora y el turno sale ya (sigue funcionando: @build relista con las tools).
+        // Retraso para juntar el lote: @build relista con las tools al despertar.
         delayS: BATCH_WINDOW_S,
-      };
-      await ctx.wake(opts as Parameters<AutomationCtx["wake"]>[0]);
+      });
     },
   };
 }

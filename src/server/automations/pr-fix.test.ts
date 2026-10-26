@@ -24,9 +24,11 @@ const redRun = (o: Partial<RepoEvent> = {}): RepoEvent => ({
 function fakeCtx(settings: Record<string, unknown> = {}, budgetOk = true) {
   const claimed = new Set<string>();
   const wakes: { handle: string; text: string; threadKey: string; title?: string }[] = [];
+  const posts: string[] = [];
   const ctx: AutomationCtx = {
     ns: "acme", roomId: "1", repo: REPO,
     wake: async (o) => { wakes.push(o); },
+    post: async (t: string) => { posts.push(t); return 1; },
     claim: async (kind: AutomationKind, key: string) => {
       const k = `${kind}|${key}`;
       if (claimed.has(k)) return false;
@@ -36,7 +38,7 @@ function fakeCtx(settings: Record<string, unknown> = {}, budgetOk = true) {
     budget: async () => budgetOk,
     settings: async <T,>() => settings as T,
   };
-  return { ctx, wakes, claimed };
+  return { ctx, wakes, claimed, posts };
 }
 
 let factoryCalls: FactoryFixInput[] = [];
@@ -105,12 +107,15 @@ describe("ci_fix", () => {
     expect(wakes[0].text).toContain("intento 1 de 3");
   });
   it("máximo 3 intentos por PR aunque cambie la cabeza", async () => {
-    const { ctx, wakes } = fakeCtx();
-    for (const sha of ["s1", "s2", "s3", "s4"]) {
+    const { ctx, wakes, posts } = fakeCtx();
+    for (const sha of ["s1", "s2", "s3", "s4", "s5"]) {
       const a = byKind(deps(livePr({ headSha: sha })), "ci_fix");
       await a.handle(redRun({ run: { id: 1, conclusion: "failure", headSha: sha, prNumbers: [7] }, sender: { login: "ghosty-studio[bot]", type: "Bot" } }), ctx);
     }
     expect(wakes.map((w) => /intento (\d)/.exec(w.text)?.[1])).toEqual(["1", "2", "3"]);
+    // Al agotarse avisa UNA vez en el room, sin turno.
+    expect(posts).toHaveLength(1);
+    expect(posts[0]).toContain("3 intentos");
   });
   it("ignora: PR de la fábrica, dependabot, borrador, cabeza vieja, verde y sin presupuesto", async () => {
     const cases: [PrFixDeps, RepoEvent, boolean?][] = [

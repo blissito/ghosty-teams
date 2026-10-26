@@ -38,7 +38,7 @@ vi.mock("../notify.server", () => ({
 vi.mock("../bus.server", () => ({ publish: () => {}, ch: { room: () => "r" } }));
 vi.mock("../tenant.server", () => ({ currentNamespace: async () => "ns" }));
 
-import { applyEvent, takeNotes } from "./factory-runs.server";
+import { applyEvent, mergeAskText, takeNotes } from "./factory-runs.server";
 import type { Run } from "./factory-runs.server";
 
 const run = (status: Run["status"]): Run => ({
@@ -127,5 +127,16 @@ describe("notas del pedido", () => {
     expect(upd.sql).toContain("consumed_at IS NULL");
     // Ya consumidas: el siguiente encargo no las repite.
     expect(await takeNotes(7)).toBe("");
+  });
+});
+
+describe("mergeAskText", () => {
+  it("un PR ajeno adoptado (ci_fix) no se ofrece como nuestro", () => {
+    const t = mergeAskText({ kind: "ci_fix", prUrl: "https://github.com/a/b/pull/7" }, true);
+    expect(t).toContain("Es el PR de su autor");
+    expect(t).not.toContain("¿Hago merge?");
+  });
+  it("un pedido propio sigue preguntando", () => {
+    expect(mergeAskText({ kind: "feature", prUrl: "u" }, false)).toContain("¿Hago merge?");
   });
 });

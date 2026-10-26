@@ -18,7 +18,7 @@ async function spaceOwner(): Promise<string | null> {
 }
 
 /** El origin del espacio cuando no hay request (turnos programados de mantenimiento). */
-async function defaultOrigin(): Promise<string> {
+export async function defaultOrigin(): Promise<string> {
   if (process.env.APP_URL) return process.env.APP_URL;
   const { currentSlug } = await import("../tenant.server");
   const slug = await currentSlug().catch(() => null);
@@ -49,7 +49,7 @@ export function automationCtx(p: { ns: string; roomId: number; repo: string; ori
     ns: p.ns,
     roomId: String(p.roomId),
     repo: p.repo,
-    async wake({ handle, text, threadKey, title }) {
+    async wake({ handle, text, threadKey, title, delayS }) {
       const { resolvedAgents, agentGroupId } = await import("../../agents.server");
       const agent = (await resolvedAgents()).find((a) => a.handle === handle);
       if (!agent) {
@@ -67,21 +67,40 @@ export function automationCtx(p: { ns: string; roomId: number; repo: string; ori
       const who = { handle: agent.handle, name: agent.name, avatar: agent.avatar };
       const rootId = await threadRoot(p.roomId, threadKey, title?.trim() || `🤖 ${threadKey} · \`${p.repo}\``, who, p.ns);
       const groupId = await agentGroupId(agent, automationGroupSuffix(channel.slug, threadKey));
-      const { enqueueWakeup, mintWakeRef, kickWakeups } = await import("../wakeups.server");
+      const { enqueueWakeup, mintWakeRef, kickWakeups, armWakeups } = await import("../wakeups.server");
       const ok = await enqueueWakeup({
         key: `auto:${p.roomId}:${threadKey}:${Date.now()}`,
         ref: mintWakeRef({
           sub,
           ns: p.ns,
           groupId,
-          dest: { channelId: p.roomId, parentId: rootId, topic: "general", handle: agent.handle, name: agent.name, avatar: agent.avatar },
+          // `automation` marca el turno: no es un pedido, `factoryContext` no le pone el papel del rol.
+          dest: { channelId: p.roomId, parentId: rootId, topic: "general", handle: agent.handle, name: agent.name, avatar: agent.avatar,
+                  ...(p.kind ? { automation: p.kind, automationRepo: p.repo } : {}) },
         }),
         cause: title?.trim() || threadKey,
         text,
         origin: p.origin ?? (await defaultOrigin()),
-        dueAt: Math.floor(Date.now() / 1000),
+        dueAt: Math.floor(Date.now() / 1000) + (delayS && delayS > 0 ? Math.floor(delayS) : 0),
       });
-      if (ok) kickWakeups(p.ns);
+      // Con retraso no se patea: el barrido de la cola lo levanta cuando vence.
+      if (ok) (delayS && delayS > 0 ? armWakeups : kickWakeups)(p.ns);
+    },
+    async post(text) {
+      const db = await import("../../db.server");
+      const channel = await db.getChannelById(p.roomId);
+      if (!channel || channel.archived || !text.trim()) return null;
+      // Firma un agente del espacio que no es rol de la fábrica (como los avisos de PR).
+      const { resolvedAgents } = await import("../../agents.server");
+      const agents = (await resolvedAgents()).filter((a) => !["plan", "build", "check", "eval"].includes(a.handle));
+      const who = agents[0] ?? { handle: "ghosty", name: "Ghosty", avatar: "" };
+      const { id } = await db.postAgent(p.roomId, null, text, "msg", who.handle, who.name, "general", who.avatar);
+      const msg = await db.getMessage(id);
+      if (msg) {
+        const bus = await import("../bus.server");
+        bus.publish(bus.ch.room(p.ns, p.roomId), { t: "message:new", msg });
+      }
+      return id;
     },
     claim: (kind, key, ttlMs) => claimKey(kind, key, ttlMs),
     async budget(kind) {

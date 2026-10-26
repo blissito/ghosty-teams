@@ -142,7 +142,8 @@ export function autofixSkip(ev: RepoEvent): string | null {
     // automatizaciones (`ghosty/<kind>-<n>`) sí: una persona los está revisando.
     return "PR de un bot ajeno";
   }
-  if (isForkHead(ev.repo, pr.head)) return "rama de un fork: la App no puede empujar";
+  // gs manda `fork` (head.repo ≠ repo); `owner:rama` queda por si llega la etiqueta.
+  if (pr.fork === true || isForkHead(ev.repo, pr.head)) return "rama de un fork: la App no puede empujar";
   if (ev.event === "pull_request_review_comment") {
     if (ev.action !== "created" || !ev.comment) return "acción sin interés";
     if (isBot(ev.comment.author)) return "comentario de un bot";

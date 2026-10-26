@@ -42,6 +42,7 @@ vi.mock("../wakeups.server", () => ({
   enqueueWakeup: (w: unknown) => enqueueWakeup(w),
   mintWakeRef: (r: unknown) => mintWakeRef(r),
   kickWakeups: () => {},
+  armWakeups: () => {},
 }));
 
 const { automationCtx } = await import("./ctx.server");
@@ -84,5 +85,26 @@ describe("ctx.wake", () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     await ctx.wake({ handle: "check", text: "x", threadKey: "k2" });
     expect(enqueueWakeup).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("ctx.wake con retraso y marca de automatización", () => {
+  it("delayS corre el dueAt y el turno lleva automation + repo", async () => {
+    const ctx = automationCtx({ ns: "ns", roomId: 7, repo: "acme/app", origin: "https://x", kind: "security_fix" });
+    const before = Math.floor(Date.now() / 1000);
+    await ctx.wake({ handle: "build", text: "lote", threadKey: "sec", delayS: 600 });
+    const w = enqueueWakeup.mock.calls[0][0] as { dueAt: number };
+    expect(w.dueAt).toBeGreaterThanOrEqual(before + 600);
+    expect((mintWakeRef.mock.calls[0][0] as { dest: object }).dest).toMatchObject({ automation: "security_fix", automationRepo: "acme/app" });
+  });
+});
+
+describe("ctx.post", () => {
+  it("publica en el room sin turno", async () => {
+    const ctx = automationCtx({ ns: "ns", roomId: 7, repo: "acme/app", origin: "https://x", kind: "ci_fix" });
+    const id = await ctx.post("⚠️ aviso");
+    expect(id).toBeGreaterThan(0);
+    expect(posted).toEqual([{ channelId: 7, parentId: null, body: "⚠️ aviso" }]);
+    expect(enqueueWakeup).not.toHaveBeenCalled();
   });
 });

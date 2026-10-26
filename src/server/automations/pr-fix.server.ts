@@ -203,10 +203,15 @@ export function skipReason(pr: PrView, settings: PrFixSettings): string | null {
   return null;
 }
 
-/** Primer intento libre de los 3 del PR, o 0 si ya se gastaron. */
-export async function claimAttempt(ctx: AutomationCtx, kind: AutomationKind, repo: string, number: number): Promise<number> {
+/** Primer intento libre de los 3 del PR, o 0 si ya se gastaron. La primera vez que se agotan
+ *  avisa en el room (sin turno) para que una persona lo tome. */
+export async function claimAttempt(ctx: AutomationCtx, kind: AutomationKind, repo: string, number: number, url?: string | null): Promise<number> {
   for (let i = 1; i <= MAX_ATTEMPTS; i++) {
     if (await ctx.claim(kind, attemptKey(repo, number, i), CLAIM_TTL_MS)) return i;
+  }
+  if (await ctx.claim(kind, `${attemptKey(repo, number, 0)}:exhausted`, CLAIM_TTL_MS)) {
+    const what = kind === "pr_to_green" ? "ponerlo al día" : "arreglar su CI";
+    await ctx.post(`⚠️ Ya van ${MAX_ATTEMPTS} intentos de ${what} en el PR #${number} de \`${repo}\` y no quedó. Lo dejo en manos de una persona${url ? `: ${url}` : "."}`).catch(() => null);
   }
   return 0;
 }
@@ -321,7 +326,7 @@ async function handleRed(kind: "ci_fix" | "dep_fix", ev: RepoEvent, ctx: Automat
   const sha = pr.headSha ?? runSha;
   if (!sha) return;
   if (!(await ctx.claim(kind, headKey(ev.repo, n, sha), CLAIM_TTL_MS))) return;
-  const attempt = await claimAttempt(ctx, kind, ev.repo, n);
+  const attempt = await claimAttempt(ctx, kind, ev.repo, n, pr.url);
   if (!attempt) return;
   if (!(await ctx.budget(kind))) return;
   if (!isFork(pr, ev.repo)) {
@@ -348,7 +353,7 @@ async function handleToGreen(ev: RepoEvent, ctx: AutomationCtx, deps: PrFixDeps)
   if (skipReason(pr, await ctx.settings<PrFixSettings>("pr_to_green"))) return;
   if (!pr.headSha) return;
   if (!(await ctx.claim("pr_to_green", headKey(ev.repo, n, pr.headSha), CLAIM_TTL_MS))) return;
-  const attempt = await claimAttempt(ctx, "pr_to_green", ev.repo, n);
+  const attempt = await claimAttempt(ctx, "pr_to_green", ev.repo, n, pr.url);
   if (!attempt) return;
   if (!(await ctx.budget("pr_to_green"))) return;
   await ctx.wake({
@@ -361,8 +366,10 @@ async function handleToGreen(ev: RepoEvent, ctx: AutomationCtx, deps: PrFixDeps)
 
 export function buildPrFixAutomations(deps: PrFixDeps = defaultDeps): Automation[] {
   return [
-    { kind: "ci_fix", on: ["workflow_run.completed"], handle: (ev, ctx) => handleRed("ci_fix", ev, ctx, deps) },
-    { kind: "dep_fix", on: ["workflow_run.completed"], handle: (ev, ctx) => handleRed("dep_fix", ev, ctx, deps) },
+    // El run rojo de un commit que empujó el bot sí cuenta: es el intento siguiente (tope de 3).
+    { kind: "ci_fix", on: ["workflow_run.completed"], allowGhostyBot: true, handle: (ev, ctx) => handleRed("ci_fix", ev, ctx, deps) },
+    // Un Dependabot ya adoptado por la fábrica sólo avisaba al rojo: dep_fix lo reabre a @build.
+    { kind: "dep_fix", on: ["workflow_run.completed"], allowGhostyBot: true, seesFactoryPrs: true, handle: (ev, ctx) => handleRed("dep_fix", ev, ctx, deps) },
     {
       kind: "pr_to_green",
       // Al terminar el CI GitHub ya calculó `mergeable_state`; en `opened`/`synchronize` suele ser "unknown".
