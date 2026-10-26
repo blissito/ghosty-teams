@@ -7,14 +7,14 @@
 // 1. La PRIMERA alerta del repo abre la ventana (`claim` de `<repo>:security:batch`, 10 min).
 //    Con la fábrica instalada abre un PEDIDO de la fábrica con el plan ya firmado (el camino de
 //    cualquier pedido: caja, git, @check, CI rojo → @build, tarjeta; un solo pedido vivo por repo).
-//    Sin fábrica, un turno suelto de @build con retraso (`delayS`; si el ctx no lo soporta sale ya).
+//    Sin fábrica, un turno suelto de @build con retraso durable (`delayS`).
 // 2. Las que llegan dentro de la ventana no despiertan a nadie: cuando @build corre, LISTA las
 //    abiertas con las tools (GitHub es la fuente de verdad, ya trae las que llegaron después y no
 //    las que alguien cerró a mano) y arregla hasta 25 en un PR borrador.
 //
 // Secret scanning NO se arregla con código: borrar la línea no sirve (el secreto sigue en la
-// historia y ya hay que darlo por quemado). Se avisa DIRECTO en el room, sin turno de ningún
-// agente: así el aviso no le da a un modelo ni la oportunidad de pedir el valor, y el texto se arma
+// historia y ya hay que darlo por quemado). Se avisa DIRECTO en el room (`ctx.post`), sin turno de
+// ningún agente: así el aviso no le da a un modelo ni la oportunidad de pedir el valor, y el texto se arma
 // sólo con campos de una lista blanca (número, tipo, liga). El secreto jamás viaja.
 import type { Automation, AutomationCtx, RepoEvent } from "./types";
 
@@ -128,8 +128,6 @@ export function buildSecretNotice(repo: string, a: NonNullable<RepoEvent["alert"
 type FactoryOutcome = "opened" | "busy" | "no_factory";
 
 type Deps = {
-  /** Aviso directo en el room, sin turno de agente. */
-  postNotice(ctx: AutomationCtx, body: string): Promise<void>;
   /** El lote como pedido de la fábrica (caja, git, @check, CI, tarjeta). */
   openFactoryRun(ctx: AutomationCtx, o: { repo: string; title: string; planMd: string; first: NonNullable<RepoEvent["alert"]> }): Promise<FactoryOutcome>;
   now(): number;
@@ -174,21 +172,7 @@ async function openSecurityRun(
   return "opened";
 }
 
-/** Publica en el room como un agente del espacio, igual que los avisos de PR (`postAgent`, no despierta a nadie). */
-async function postRoomNotice(ctx: AutomationCtx, body: string): Promise<void> {
-  const channelId = Number(ctx.roomId);
-  if (!Number.isFinite(channelId) || channelId <= 0) return;
-  const db = await import("../../db.server");
-  const bus = await import("../bus.server");
-  const { resolvedAgents } = await import("../../agents.server");
-  const agents = (await resolvedAgents()).filter((a) => !["plan", "build", "check", "eval"].includes(a.handle));
-  const who = agents[0] ?? { handle: "ghosty", name: "Ghosty", avatar: "" };
-  const { id } = await db.postAgent(channelId, null, body, "msg", who.handle, who.name, "general", who.avatar);
-  const msg = await db.getMessage(id);
-  if (msg) bus.publish(bus.ch.room(ctx.ns, channelId), { t: "message:new", msg });
-}
-
-const defaultDeps: Deps = { postNotice: postRoomNotice, openFactoryRun: openSecurityRun, now: () => Date.now() };
+const defaultDeps: Deps = { openFactoryRun: openSecurityRun, now: () => Date.now() };
 
 /** ¿Le quedan intentos a esta alerta? Reserva el siguiente (1…3). */
 async function takeAttempt(ctx: AutomationCtx, repo: string, alert: NonNullable<RepoEvent["alert"]>): Promise<boolean> {
@@ -217,7 +201,7 @@ export function makeSecurityFix(deps: Deps = defaultDeps): Automation {
         // Una vez por aviso y acción al día: gs reintenta y GitHub reenvía.
         if (!(await ctx.claim("security_fix", `${repoKey(repo)}#secret-${ev.alert.number}:${ev.action}`, SECRET_NOTICE_TTL_MS))) return;
         if (!(await ctx.budget("security_fix"))) return;
-        await deps.postNotice(ctx, buildSecretNotice(repo, ev.alert));
+        await ctx.post(buildSecretNotice(repo, ev.alert));
         return;
       }
 
@@ -242,11 +226,10 @@ export function makeSecurityFix(deps: Deps = defaultDeps): Automation {
         text: buildFixPrompt({ repo, first: ev.alert, minSeverity, date }),
         threadKey: `security:${repoKey(repo)}:${Math.floor(now / 1000)}`,
         title,
-        // Retraso para juntar el lote. Campo opcional pedido a EVENTOS; si su `wake` no lo
-        // conoce, lo ignora y el turno sale ya (sigue funcionando: @build relista con las tools).
+        // Retraso durable para juntar el lote: el turno sale cuando ya llegaron las demás.
         delayS: BATCH_WINDOW_S,
       };
-      await ctx.wake(opts as Parameters<AutomationCtx["wake"]>[0]);
+      await ctx.wake(opts);
     },
   };
 }

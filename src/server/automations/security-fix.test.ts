@@ -19,6 +19,7 @@ function fakeCtx(settings: Record<string, unknown> = {}, budget = true) {
     roomId: "10",
     repo: "acme/web",
     wake: vi.fn(async () => {}),
+    post: vi.fn(async (_t: string) => {}),
     claim: vi.fn(async (_k: string, key: string, ttl = 60_000) => {
       const exp = claims.get(key);
       if (exp != null && exp > clock) return false;
@@ -27,7 +28,7 @@ function fakeCtx(settings: Record<string, unknown> = {}, budget = true) {
     }),
     budget: vi.fn(async () => budget),
     settings: vi.fn(async () => settings),
-  } as unknown as AutomationCtx & { wake: ReturnType<typeof vi.fn>; budget: ReturnType<typeof vi.fn> };
+  } as unknown as AutomationCtx & { wake: ReturnType<typeof vi.fn>; post: ReturnType<typeof vi.fn>; budget: ReturnType<typeof vi.fn> };
   return { ctx, advance: (ms: number) => (clock += ms) };
 }
 
@@ -58,7 +59,6 @@ describe("umbral de severidad", () => {
 
 describe("security_fix", () => {
   const deps = (outcome: "opened" | "busy" | "no_factory" = "no_factory") => ({
-    postNotice: vi.fn(async (_c: AutomationCtx, _b: string) => {}),
     openFactoryRun: vi.fn(async (_c: AutomationCtx, _o: { repo: string; title: string; planMd: string }) => outcome),
     now: () => Date.UTC(2026, 9, 25, 18),
   });
@@ -151,24 +151,25 @@ describe("secret scanning: el secreto jamás viaja", () => {
 
   it("avisa directo en el room, sin turno de agente, y sin el valor", async () => {
     const { ctx } = fakeCtx();
-    const d = { postNotice: vi.fn(async (_c: AutomationCtx, _b: string) => {}), openFactoryRun: vi.fn(async () => "opened" as const), now: () => Date.now() };
+    const d = { openFactoryRun: vi.fn(async () => "opened" as const), now: () => Date.now() };
     await makeSecurityFix(d).handle(ev, ctx);
     expect(ctx.wake).not.toHaveBeenCalled();
-    expect(d.postNotice).toHaveBeenCalledTimes(1);
-    const body = d.postNotice.mock.calls[0][1];
+    expect(ctx.post).toHaveBeenCalledTimes(1);
+    const body = String(ctx.post.mock.calls[0][0]);
     expect(body).toContain("Rota esa credencial");
     expect(body).toContain("https://github.com/acme/web/security/secret-scanning/3");
     expect(body).not.toContain(SECRET);
-    expect(JSON.stringify(d.postNotice.mock.calls)).not.toContain(SECRET);
+    expect(JSON.stringify(ctx.post.mock.calls)).not.toContain(SECRET);
+    expect(d.openFactoryRun).not.toHaveBeenCalled();
   });
 
   it("un reintento de gs no repite el aviso", async () => {
     const { ctx } = fakeCtx();
-    const d = { postNotice: vi.fn(async (_c: AutomationCtx, _b: string) => {}), openFactoryRun: vi.fn(async () => "opened" as const), now: () => Date.now() };
+    const d = { openFactoryRun: vi.fn(async () => "opened" as const), now: () => Date.now() };
     const a = makeSecurityFix(d);
     await a.handle(ev, ctx);
     await a.handle(ev, ctx);
-    expect(d.postNotice).toHaveBeenCalledTimes(1);
+    expect(ctx.post).toHaveBeenCalledTimes(1);
   });
 
   it("una liga que no es de GitHub no se pega", () => {
