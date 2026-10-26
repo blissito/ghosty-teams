@@ -403,6 +403,29 @@ export async function appPullRequest(repo: string, number: number): Promise<AppP
 }
 
 /**
+ * ¿`login` tiene escritura en el repo (write, maintain o admin)? Con el token de INSTALACIÓN: el
+ * webhook no trae persona detrás. Lo usa la fábrica para aceptar un comentario de review sin
+ * @ghosty como pedido (gs sólo filtra por `author_association` cuando hay @ghosty). false si
+ * GitHub no contesta. Nunca lanza.
+ */
+export async function appUserCanWrite(repo: string, login: string): Promise<boolean> {
+  try {
+    const instId = await installationIdFor(repo);
+    const token = instId ? await installationToken(instId) : null;
+    if (!token) return false;
+    const res = await fetch(`${API}/repos/${repo}/collaborators/${encodeURIComponent(login)}/permission`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return false;
+    const p: any = await res.json();
+    return ["admin", "maintain", "write"].includes(String(p?.role_name ?? p?.permission ?? ""));
+  } catch {
+    return false;
+  }
+}
+
+/**
  * 403 al reintentar CI. La App ya pide Actions: write, así que hay dos causas y llevan a
  * personas distintas: la instalación no aceptó el permiso (lo acepta el dueño con la liga) o
  * quien escribe no tiene escritura en el repo (lo da un admin del repo). Se pregunta a la App

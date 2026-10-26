@@ -159,9 +159,11 @@ export const Route = createFileRoute("/api/internal/github-event")({
           const claimed = await dbq("INSERT OR IGNORE INTO gt_github_deliveries (delivery) VALUES (?) RETURNING delivery", [only.delivery]);
           if (!claimed.length) return Response.json({ ok: true, repeated: true });
           await dispatchAutomations(only.repoEvent);
+          // Comentario en línea sin @ghosty en el PR de un pedido: también le llega a @build.
+          const asked = await (await import("../server/apps/factory-review-comments.server")).routeFactoryReviewComment(only.repoEvent);
           // `rooms` = cuántos rooms tienen el repo: gs aprende de ahí a quién mandarle lo siguiente.
           const rooms = await (await import("../db.server")).roomsOfRepo(only.repo).catch(() => []);
-          return Response.json({ ok: true, rooms: rooms.length });
+          return Response.json({ ok: true, rooms: rooms.length, ...(asked.length ? { asked } : {}) });
         }
         if (!ev.delivery || !ev.repo || !ev.number || !/^https:\/\/github\.com\//.test(ev.url ?? "") || !LINE[ev.action]) {
           return new Response("evento inválido", { status: 400 });

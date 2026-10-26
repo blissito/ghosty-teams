@@ -19,6 +19,7 @@
 // `agent` = nombre (o id) de un agente de Studio del espacio. `model` = un modelo del MOTOR de
 // ese agente: cambiar de motor es cambiar de caja, y eso se hace con `agent`, no con `model`.
 import { FACTORY_HANDLES, type FactoryHandle } from "./factory-roles";
+import { parseSeverity, type Severity } from "../automations/severity";
 
 export const TEAM_FILE = ".ghosty/factory.md";
 
@@ -27,12 +28,19 @@ export const TEAM_FILE = ".ghosty/factory.md";
 // propio: sólo le dice a cada rol qué fichas hay.
 export const KNOWLEDGE_DIR = "docs/agents";
 
-/** Renglón de contexto con las fichas del repo (o cómo empezar si aún no hay). */
+/**
+ * Qué archivo de reglas lee un agente: el más cercano a lo que cambia, AGENTS.md o CLAUDE.md (muchos
+ * repos sólo traen el segundo). Lo comparten la fábrica y las automatizaciones (`REPO_RULES`).
+ */
+export const NEAREST_RULES_FILES = "el AGENTS.md o CLAUDE.md más cercano a los archivos que cambian (y el de la raíz)";
+
+/** Renglón de contexto con las fichas del repo (o cómo empezar si aún no hay), con sus reglas. */
 export function knowledgeLine(repo: string, files: string[]): string {
+  const rules = ` Reglas del repo, le ganan a tu criterio general: lee con github_read_file ${NEAREST_RULES_FILES}.`;
   if (!files.length)
-    return `Base de conocimiento de ${repo}: todavía no hay fichas en ${KNOWLEDGE_DIR}/. La primera la escribe @build cuando un cambio fije una convención o descubra una trampa.`;
+    return `Base de conocimiento de ${repo}: todavía no hay fichas en ${KNOWLEDGE_DIR}/. La primera la escribe @build cuando un cambio fije una convención o descubra una trampa.${rules}`;
   const list = files.slice(0, 40).map((f) => `${KNOWLEDGE_DIR}/${f}`).join(", ");
-  return `Base de conocimiento de ${repo} (${KNOWLEDGE_DIR}/, índice en AGENTS.md; léela con github_read_file ANTES de tocar el tema y le gana a tu intuición): ${list}${files.length > 40 ? ` y ${files.length - 40} más` : ""}.`;
+  return `Base de conocimiento de ${repo} (${KNOWLEDGE_DIR}/, índice en AGENTS.md; léela con github_read_file ANTES de tocar el tema y le gana a tu intuición): ${list}${files.length > 40 ? ` y ${files.length - 40} más` : ""}.${rules}`;
 }
 
 export type RoleSpec = { agent?: string; model?: string };
@@ -62,6 +70,8 @@ export type TeamFile = {
   setup?: RepoSetup;
   /** `smoke: [/reservar, /login]`: rutas con acción (POST) que se prueban en la preview de cada PR. */
   smoke?: string[];
+  /** `review_severity: P0|P1|P2`: severidad mínima de la revisión suelta de @check (PR sin pedido). */
+  reviewSeverity?: Severity;
   notes: string;
   /** Lo que va bajo `## @plan`, `## @build` o `## @check` en el cuerpo: sólo para ese rol. */
   roleNotes: Partial<Record<FactoryHandle, string>>;
@@ -88,6 +98,7 @@ export function parseTeamFile(raw: string): TeamFile {
   let inSetup = false;
   const setupLines: string[] = [];
   let smoke: string[] | undefined;
+  let reviewSeverity: Severity | null = null;
   for (const line of m[1].split(/\r?\n/)) {
     if (!line.trim() || line.trim().startsWith("#")) continue;
     if (inSetup && /^\s/.test(line)) {
@@ -95,6 +106,12 @@ export function parseTeamFile(raw: string): TeamFile {
       continue;
     }
     inSetup = false;
+    const sev = line.match(/^review_severity\s*:\s*([^\s#]+)/i);
+    if (sev) {
+      reviewSeverity = parseSeverity(unquote(sev[1]));
+      current = null;
+      continue;
+    }
     const top = line.match(/^([a-z]+)\s*:\s*(.*)$/i);
     if (top && !/^\s/.test(line) && top[1].toLowerCase() === "setup") {
       inSetup = true;
@@ -125,7 +142,7 @@ export function parseTeamFile(raw: string): TeamFile {
     if (nested && current) assign((roles[current] ??= {}), nested[1], nested[2]);
   }
   const setup = setupLines.length ? parseSetup(setupLines) : undefined;
-  return { roles, ...(setup ? { setup } : {}), ...(smoke?.length ? { smoke } : {}), ...splitRoleNotes(m[2]) };
+  return { roles, ...(setup ? { setup } : {}), ...(smoke?.length ? { smoke } : {}), ...(reviewSeverity ? { reviewSeverity } : {}), ...splitRoleNotes(m[2]) };
 }
 
 const SAFE_PATH = /^\/[\w\-./~%$@:]{0,200}$/;
@@ -400,6 +417,7 @@ export function teamFileTemplate(team: Partial<Record<FactoryHandle, { name: str
     "# setup:                          # entorno de pruebas de la caja de trabajo (ver /docs/fabrica/equipo-por-repo)\n" +
     "#   services: [postgres, redis]\n#   db: app\n#   env:\n#     JWT_SECRET: test-secret\n" +
     "# smoke: [/reservar]               # rutas con formulario (POST) que se prueban en la preview de cada PR\n" +
+    "# review_severity: P1              # revisión suelta de @check: P0, P1 o P2 (sólo bloquea lo de esa severidad)\n" +
     "---\n" +
     "Convenciones de este repo que deben saber @plan, @build y @check:\n" +
     "- Cómo se corren las pruebas:\n- Qué no se toca:\n"

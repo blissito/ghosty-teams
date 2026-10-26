@@ -10,6 +10,7 @@ import { isInstalled } from "./installed.server";
 import { MAX_LOOPS, clipReason, countsLoop, isEscalationKind, isGithubRateLimit, stageLabel, type EscalationKind } from "./factory-flow";
 import type { EnvRiskEntry } from "./factory-preview-gate";
 import { ESCALATION_TITLE } from "./factory-brief";
+import { parseSeverity, type Severity } from "../automations/severity";
 
 export async function factoryTools(_sub: string, dest: ToolDest | null): Promise<ConnectorTool[]> {
   if (!(await isInstalled("factory").catch(() => false))) return [];
@@ -1580,6 +1581,23 @@ function repoConventionLines(repo: string, h: string | null, notes: string | nul
   return out;
 }
 
+/**
+ * Severidad mínima de la revisión suelta de @check sobre un PR sin pedido: `review_severity:` de
+ * `.ghosty/factory.md` (lo escribió el equipo en el repo) o, si no, la del ajuste de pr_review del
+ * room. null = nadie la fijó y la revisión sigue como siempre (aprueba o bloquea).
+ */
+export async function looseReviewSeverity(channelId: number, repo: string): Promise<Severity | null> {
+  const db = await import("../../db.server");
+  const link = (await db.listRoomRepos(channelId).catch(() => [])).find((r) => r.repo.toLowerCase() === repo.toLowerCase());
+  if (!link) return null;
+  const { repoTeamFile } = await import("./factory-team.server");
+  const file = await repoTeamFile(link.repo, link.connectedBy).catch(() => null);
+  if (file?.reviewSeverity) return file.reviewSeverity;
+  const { automationSettings } = await import("../automations/store.server");
+  const settings = await automationSettings(channelId, link.repo, "pr_review").catch(() => ({}) as Record<string, unknown>);
+  return parseSeverity(settings.minSeverity);
+}
+
 /** Bloque de contexto del turno: el papel del rol, la corrida del hilo y las alertas. null sin la app. */
 export async function factoryContext(dest: ToolDest | null, toolChannel: ToolChannel = "gs-sdk"): Promise<string | null> {
   if (!(await isInstalled("factory").catch(() => false))) return null;
@@ -1703,7 +1721,7 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
         parts.push(
           `Este hilo es del PR ${ref} «${pr.title}» de ${pr.author} (https://github.com/${pr.repo}/pull/${pr.number}). NO hay pedido de la fábrica: ` +
             (h === "check"
-              ? loosePrReviewBrief()
+              ? loosePrReviewBrief({ minSeverity: await looseReviewSeverity(dest.channelId, pr.repo).catch(() => null) })
               : h === "build"
                 ? LOOSE_PR_BUILD_BRIEF
                 : `si te piden planear algo sobre él, planéalo a partir de ese PR.`),

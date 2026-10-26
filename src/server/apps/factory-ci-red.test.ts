@@ -9,6 +9,8 @@ let ciRedPrev: { sha: string | null }[] = [];
 let origin = "https://business.teams.ghosty.studio";
 let notes: { id: number; by: string; text: string }[] = [];
 let current = "building";
+// `claimKey` de las automatizaciones: la ventana de 90 s que junta una review en una sola nota.
+const claims = new Set<string>();
 
 const row = (status: string) => ({ id: 10, channel_id: 14, root_msg_id: 3970, topic: "general", title: "CLI", status, plan_version: 1, loops: 0, requested_by: "ana", approved_by: "beto", pr_url: "https://github.com/o/r/pull/8" });
 
@@ -16,6 +18,12 @@ vi.mock("../../dbq.server", () => ({
   dbq: async (sql: string, args: unknown[] = []) => {
     sqls.push({ sql, args });
     if (sql === "SELECT * FROM gt_factory_runs WHERE id = ?") return [row(current)];
+    if (sql.startsWith("INSERT INTO gt_automation_claims")) {
+      const k = `${args[0]}|${args[1]}`;
+      if (claims.has(k)) return [];
+      claims.add(k);
+      return [{ kind: args[0] }];
+    }
     if (sql.includes("type = 'ci_red' ORDER BY")) return ciRedPrev.map((p) => ({ data_json: JSON.stringify(p) }));
     if (sql.includes("FROM gt_agent_wakeups")) return origin ? [{ origin }] : [];
     if (sql.startsWith("UPDATE gt_factory_runs SET status")) return [row(String(args[0]))];
@@ -65,6 +73,7 @@ beforeEach(() => {
   wakeups.length = 0;
   ciRedPrev = [];
   notes = [];
+  claims.clear();
   current = "building";
   origin = "https://business.teams.ghosty.studio";
 });
@@ -116,6 +125,38 @@ describe("pedido desde GitHub (@ghosty)", () => {
     await noteFromGithub(run("pr_review"), "bliss", { ...ask, path: "cli/a.ts", line: 3 });
     expect(wakeups[0].text).toContain("github_reply_review_comment");
     expect(wakeups[0].text).toContain("cli/a.ts:3");
+  });
+
+  it("comentario en línea: pide resolver el hilo sólo si quedó arreglado", async () => {
+    await noteFromGithub(run("pr_review"), "bliss", { ...ask, path: "cli/a.ts", line: 3 });
+    expect(wakeups[0].text).toContain("github_resolve_review_thread SÓLO si lo arreglaste");
+    expect(wakeups[0].text).toContain("github_pr_review_threads");
+  });
+
+  it("comentario de la conversación del PR: sin hilos que resolver", async () => {
+    await noteFromGithub(run("pr_review"), "bliss", ask);
+    expect(wakeups[0].text).not.toContain("github_resolve_review_thread");
+  });
+
+  it("una review con 3 comentarios en línea es UNA nota a @build; los demás sólo se cuentan en el hilo", async () => {
+    const r = run("pr_review");
+    const got = [
+      await noteFromGithub(r, "bliss", { ...ask, path: "a.ts", line: 1, kind: "review_comment" }),
+      await noteFromGithub(r, "bliss", { ...ask, path: "b.ts", line: 2, kind: "review_comment" }),
+      await noteFromGithub(r, "bliss", { ...ask, text: "Pidió cambios", kind: "review" }),
+    ];
+    expect(got).toEqual(["reopened", "batched", "batched"]);
+    expect(wakeups).toHaveLength(1);
+    expect(notes).toHaveLength(0);
+    expect(sqls.filter((x) => x.sql.startsWith("INSERT INTO gt_factory_notes"))).toHaveLength(1);
+    expect(events()).toContain("note_batched");
+    expect(posts.filter((p) => p.startsWith("💬"))).toHaveLength(3);
+  });
+
+  it("otro pedido no comparte la ventana", async () => {
+    await noteFromGithub(run("pr_review"), "bliss", { ...ask, path: "a.ts", kind: "review_comment" });
+    const other = { ...run("pr_review"), id: 11 };
+    expect(await noteFromGithub(other, "bliss", { ...ask, path: "a.ts", kind: "review_comment" })).not.toBe("batched");
   });
 
   it("en revisión: queda para su siguiente encargo, sin despertar a nadie", async () => {

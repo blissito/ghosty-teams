@@ -10,6 +10,7 @@
 // (`!native && persona` en agents.server.ts — Studio es dueño de la identidad).
 
 import { RERUN_HINT, WORK_BOX_HINT } from "./factory-fix-hints";
+import { severityRule, type Severity } from "../automations/severity";
 
 export const FACTORY_HANDLES = ["plan", "build", "check"] as const;
 export type FactoryHandle = (typeof FACTORY_HANDLES)[number];
@@ -227,12 +228,20 @@ export const ADVISOR_ROLE = `Eres Arqui como ASESOR de Worker en este pedido. Wo
 // Lo usan el hilo colgado de la tarjeta de un PR («@check revisa», factory-tools) y las
 // automatizaciones de review (automations/pr-review.server.ts): un solo texto para los dos.
 
-/** @check sobre un PR sin pedido. `commentOnly`: la automatización deja una review COMMENT y nunca aprueba ni bloquea. */
-export function loosePrReviewBrief(opts: { commentOnly?: boolean } = {}): string {
+/**
+ * @check sobre un PR sin pedido. `commentOnly`: la automatización deja una review COMMENT y nunca
+ * aprueba ni bloquea (su severidad la pone `prReviewPrompt`). `minSeverity`: el equipo fijó la
+ * severidad mínima (`review_severity:` en `.ghosty/factory.md` o el ajuste de pr_review del room):
+ * sólo bloquea lo que entra en ella y, si no hay nada, «Sin hallazgos graves». Sin ella, igual que siempre.
+ */
+export function loosePrReviewBrief(opts: { commentOnly?: boolean; minSeverity?: Severity | null } = {}): string {
+  const min = opts.commentOnly ? null : (opts.minSeverity ?? null);
   const verdict = opts.commentOnly
     ? "github_create_review con evento COMMENT (nunca APPROVE ni REQUEST_CHANGES: lo decide una persona), hallazgos con archivo:línea"
-    : "github_create_review (APPROVE o REQUEST_CHANGES, hallazgos con archivo:línea)";
-  return `es una REVISIÓN SUELTA de ese PR. Léelo con github_get_pr, github_pr_files y github_pr_checks, aplica tus mismos criterios (seguridad, pruebas, mantenibilidad, CI) y deja la revisión en GitHub con ${verdict}. Para verlo corriendo usa factory_preview (la preview oficial, con las variables del repo); NUNCA levantes la app tú en una caja: sin sus variables da 404. En el hilo, 1 a 4 renglones con el veredicto. No uses factory_check_verdict ni preguntes qué PR es.`;
+    : min
+      ? "github_create_review (REQUEST_CHANGES sólo si hay hallazgos de esa severidad; si no, APPROVE; hallazgos con archivo:línea)"
+      : "github_create_review (APPROVE o REQUEST_CHANGES, hallazgos con archivo:línea)";
+  return `es una REVISIÓN SUELTA de ese PR. Léelo con github_get_pr, github_pr_files y github_pr_checks, aplica tus mismos criterios (seguridad, pruebas, mantenibilidad, CI) y deja la revisión en GitHub con ${verdict}. Para verlo corriendo usa factory_preview (la preview oficial, con las variables del repo); NUNCA levantes la app tú en una caja: sin sus variables da 404. En el hilo, 1 a 4 renglones con el veredicto. No uses factory_check_verdict ni preguntes qué PR es.${min ? ` ${severityRule(min)}` : ""}`;
 }
 
 /** @build sobre un PR sin pedido. */

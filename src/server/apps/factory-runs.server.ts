@@ -1197,20 +1197,42 @@ export async function reopenWithNotes(run: Run, by: string, extra: string, origi
 }
 
 /**
- * Lo que alguien del repo le pidió a Ghosty en el PR desde GitHub (comentario con @ghosty o
- * review «Request changes»). Mismo camino que la nota de @plan: PR listo → se reabre y @build
- * trabaja en la misma rama; @build a media obra → entra a su turno vivo; si no, va en su
- * siguiente encargo. Devuelve qué pasó, para contarlo en el hilo.
+ * Lo que alguien del repo le pidió a Ghosty en el PR desde GitHub (comentario con @ghosty, review
+ * «Request changes» o un comentario en línea de la persona que revisa el PR del pedido). Mismo
+ * camino que la nota de @plan: PR listo → se reabre y @build trabaja en la misma rama; @build a
+ * media obra → entra a su turno vivo; si no, va en su siguiente encargo. Devuelve qué pasó, para
+ * contarlo en el hilo.
+ *
+ * Una review con N comentarios en línea llega como N entregas: la primera abre una ventana de 90 s
+ * (la de review_autofix) y le pide a @build atender TODOS los hilos abiertos; las demás de esa
+ * ventana se cuentan en el hilo pero no son otra nota (`batched`).
  */
-export async function noteFromGithub(run: Run, by: string, ask: { text: string; url: string; path?: string; line?: number }): Promise<"reopened" | "steered" | "queued" | "closed"> {
+export async function noteFromGithub(
+  run: Run,
+  by: string,
+  ask: { text: string; url: string; path?: string; line?: number; kind?: "issue" | "review_comment" | "review" },
+): Promise<"reopened" | "steered" | "queued" | "closed" | "batched"> {
   if (run.status === "done" || run.status === "cancelled") return "closed";
   const where = ask.path ? ` (en \`${ask.path}${ask.line ? `:${ask.line}` : ""}\`)` : "";
+  const who = `@${by} en GitHub`;
+  const reviewish = !!ask.path || ask.kind === "review" || ask.kind === "review_comment";
+  const PR = reviewish ? await import("../automations/pr-review.server") : null;
+  if (PR) {
+    const { claimKey } = await import("../automations/store.server");
+    const first = await claimKey("review_autofix", `factory:${run.id}:window`, PR.AUTOFIX_WINDOW_MS).catch(() => true);
+    if (!first) {
+      if (run.repo) void import("../connectors/github.server").then((g) => g.ackGithubComment(run.repo!, ask.url));
+      await logEvent(run.id, "note_batched", who, { url: ask.url }).catch(() => {});
+      await postInThread(run, "plan", `💬 ${who}${where}: ${ask.text.slice(0, 600)}${ask.text.length > 600 ? "…" : ""} ([ver](${ask.url}))`);
+      return "batched";
+    }
+  }
   // Como Copilot/Devin/Cursor: 👀 al recibir (lo pone la plataforma) y respuesta en el MISMO lugar al terminar.
-  const reply = ask.path
-    ? "Al terminar, contéstale en ese comentario en línea con github_reply_review_comment"
+  const reply = PR
+    ? `Puede haber más comentarios de la misma review: lista ${PR.OPEN_REVIEW_THREADS}. Al terminar, contesta en cada hilo con github_reply_review_comment y resuelve el hilo ${PR.RESOLVE_IF_FIXED}` +
+      (ask.path ? "" : "; lo que no esté en un hilo, contéstalo en el PR con github_comment")
     : "Al terminar, contéstale en el PR con github_comment";
   const text = `${ask.text}${where} — ${ask.url}\n${reply}: ${GITHUB_REPLY_FORMAT}.`;
-  const who = `@${by} en GitHub`;
   const noteId = await addNote(run.id, who, text);
   if (run.repo) void import("../connectors/github.server").then((g) => g.ackGithubComment(run.repo!, ask.url));
   await postInThread(run, "plan", `💬 ${who}${where}: ${ask.text.slice(0, 600)}${ask.text.length > 600 ? "…" : ""} ([ver](${ask.url}))`);

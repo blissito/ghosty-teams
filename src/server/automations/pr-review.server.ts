@@ -7,8 +7,10 @@
 // fábrica lo vigila pr-watches: aquí no se responde dos veces.
 import { GITHUB_REPLY_FORMAT, LOOSE_PR_BUILD_BRIEF, loosePrReviewBrief } from "../apps/factory-roles";
 import type { Automation, AutomationCtx, RepoEvent } from "./types";
+import { NEAREST_RULES_FILES } from "../apps/factory-team";
+import { normalizeSeverity, severityRule, type Severity } from "./severity";
 
-export type Severity = "P0" | "P1" | "P2";
+export { normalizeSeverity, severityScope, type Severity } from "./severity";
 export type PrReviewSettings = { minSeverity?: Severity; reReviewOnPush?: boolean };
 
 /** Máximo de intentos por PR (regla dura del contrato). */
@@ -35,17 +37,6 @@ export function isFork(repo: string, pr: { fork?: boolean; headRepo?: string }):
   return !!pr.headRepo && pr.headRepo.toLowerCase() !== repo.toLowerCase();
 }
 
-export function normalizeSeverity(v: unknown): Severity {
-  return v === "P0" || v === "P2" ? v : "P1";
-}
-
-/** Qué entra a la review según la severidad mínima. */
-export function severityScope(min: Severity): string {
-  if (min === "P0") return "sólo P0 (rompe producción, hueco de seguridad, pérdida o fuga de datos)";
-  if (min === "P2") return "P0, P1 y P2 (P2 = mantenibilidad o pruebas que faltan con riesgo real; nunca estilo ni gustos)";
-  return "sólo P0 y P1 (bugs, seguridad, pérdida de datos, condiciones de carrera, regresiones claras)";
-}
-
 export function reviewKey(repo: string, pr: number, headSha: string): string {
   return `${repo.toLowerCase()}#${pr}:${headSha}`;
 }
@@ -68,7 +59,36 @@ export async function claimAttempt(ctx: AutomationCtx, kind: "pr_review" | "revi
 
 /** Las mismas reglas que la fábrica le da a cada rol (`.ghosty/factory.md`, docs/agents, AGENTS.md). */
 export const REPO_RULES =
-  "Reglas del repo, le ganan a tu criterio general: lee con github_read_file el AGENTS.md o CLAUDE.md más cercano a los archivos que cambian (y el de la raíz), las fichas de docs/agents/ que toquen el tema y .ghosty/factory.md si existe (convenciones y la sección de tu rol, «## @check» o «## @build»).";
+  `Reglas del repo, le ganan a tu criterio general: lee con github_read_file ${NEAREST_RULES_FILES}, las fichas de docs/agents/ que toquen el tema y .ghosty/factory.md si existe (convenciones y la sección de tu rol, «## @check» o «## @build»).`;
+
+/** Los hilos que atiende quien corrige una review (review_autofix y los pedidos de la fábrica). */
+export const OPEN_REVIEW_THREADS =
+  "los hilos con github_pr_review_threads y atiende TODOS los que siguen sin resolver y cuyo último comentario es de una persona (una review trae varios a la vez)";
+/** Cuándo se resuelve un hilo de review. */
+export const RESOLVE_IF_FIXED = "con github_resolve_review_thread SÓLO si lo arreglaste";
+
+/**
+ * Un comentario en línea de una persona en el PR de un PEDIDO, sin @ghosty (con @ghosty ya llega
+ * como `ask` de gs): es la persona revisando el PR del pedido y le toca a @build. Mismo anti-bucle
+ * que review_autofix. null = no es pedido. La escritura en el repo la comprueba quien lo llama.
+ */
+export function factoryReviewCommentAsk(ev: RepoEvent): { by: string; text: string; url: string; path?: string; line?: number; kind: "review_comment" } | null {
+  if (ev.event !== "pull_request_review_comment" || ev.action !== "created" || !ev.pr || !ev.comment) return null;
+  if (isBot(ev.sender?.login, ev.sender?.type) || isBot(ev.comment.author)) return null;
+  const text = String(ev.comment.body ?? "").trim();
+  const by = ev.comment.author ?? ev.sender?.login;
+  if (!text || !by || mentionsGhosty(text)) return null;
+  const url = ev.comment.url ?? ev.pr.url;
+  if (!url) return null;
+  return {
+    by,
+    text: text.slice(0, 4000),
+    url,
+    ...(ev.comment.path ? { path: ev.comment.path } : {}),
+    ...(ev.comment.line ? { line: ev.comment.line } : {}),
+    kind: "review_comment",
+  };
+}
 
 export type Deps = {
   isFactoryPr(repo: string, pr: number): Promise<boolean>;
@@ -108,7 +128,7 @@ export function prReviewPrompt(ev: RepoEvent, min: Severity): string {
   return [
     `Revisión automática del PR ${ref}${pr.title ? ` «${pr.title}»` : ""}${pr.author ? ` de @${pr.author}` : ""}${pr.url ? ` (${pr.url})` : ""}, commit ${pr.headSha}. La prendió el equipo para este repo: no pidas confirmación. NO hay pedido de la fábrica: ${loosePrReviewBrief({ commentOnly: true })}`,
     REPO_RULES,
-    `Severidad: de lo que encuentres, publica ${severityScope(min)}; lo demás no se comenta. Antes de señalar algo, confirma en el código que pasa de verdad; si dudas, no lo señales. Un comentario en línea por hallazgo, con la severidad al inicio («P1: …»), qué falla y cómo arreglarlo. Si no hay nada grave, la review es una línea: «Sin hallazgos graves».`,
+    severityRule(min),
     `No empujes commits ni toques el PR.`,
   ].join("\n");
 }
@@ -169,10 +189,10 @@ export function autofixPrompt(ev: RepoEvent): string {
   return [
     `Corrección automática en el PR ${ref}${pr.url ? ` (${pr.url})` : ""}, rama ${pr.head ?? "del PR"}. La prendió el equipo para este repo: no pidas confirmación. NO hay pedido de la fábrica: ${LOOSE_PR_BUILD_BRIEF}`,
     what,
-    `1. Lista los hilos con github_pr_review_threads y atiende TODOS los que siguen sin resolver y cuyo último comentario es de una persona (una review trae varios a la vez). Salta los que ya contestaste tú o que mencionan @ghosty.`,
+    `1. Lista ${OPEN_REVIEW_THREADS}. Salta los que ya contestaste tú o que mencionan @ghosty.`,
     `2. ${REPO_RULES} Aplica los cambios en la MISMA rama, en un solo commit si se puede (o en la caja si hace falta correr pruebas). Nunca force-push, nunca otra rama, nunca mergees.`,
     `3. Contesta en cada hilo con github_reply_review_comment: ${GITHUB_REPLY_FORMAT}. Si no estás de acuerdo o el pedido es ambiguo, NO adivines: explica por qué y pregunta, sin tocar el código.`,
-    `4. Resuelve el hilo con github_resolve_review_thread SÓLO si lo arreglaste. Si la rama no se puede empujar (fork o sin permiso), dilo en el hilo y para.`,
+    `4. Resuelve el hilo ${RESOLVE_IF_FIXED}. Si la rama no se puede empujar (fork o sin permiso), dilo en el hilo y para.`,
     `En este hilo de Teams, 1 a 3 renglones: qué hilos arreglaste, cuáles no y por qué, con la liga al PR.`,
   ].join("\n");
 }
