@@ -6,14 +6,18 @@
 // aquí, en el tick de wakeups:
 //   1. `merge_commit_sha` del PR.
 //   2. Los runs de Actions de ese sha (`event=push`, rama por defecto). Mientras alguno corra,
-//      se espera (tope 30 min). Uno en failure/cancelled → aviso en el hilo con la liga al log y
-//      un `deploy_failed` en la bitácora del pedido (`onDeployFailed`).
+//      se espera (tope 30 min). Uno en failure → aviso en el hilo con la liga al log y un
+//      `deploy_failed` en la bitácora del pedido (`onDeployFailed`); si el «CI doctor» ya marcó
+//      flaky ese workflow (`automations/ci-doctor`), el aviso lo dice y pide reintentar.
+//      `cancelled` NO es caído (casi siempre lo canceló la concurrencia por un merge posterior):
+//      se espera un deploy verde que incluya el commit y, si en 30 min no llega, se dice tal cual.
 //   3. Todo verde → smoke: GET al `homepage` del repo y a las URLs de uptime del room (15 s).
 //      Falla un 5xx, un timeout o un 404 en `/`. Luego el smoke de ACCIÓN de la preview
 //      (`factory-smoke.server.ts`) contra el `homepage`: un POST con `Origin` a la ruta de datos.
 //      En el #96 de Deník los GET daban 200 y todo envío 400; prod quedó 18 h roto sin aviso.
 //   4. Sin workflows en ese sha (repo sin deploy por Actions): sólo la smoke, a los 3 min.
 import { dbq } from "../../dbq.server";
+import { classifyRun } from "../automations/ci-doctor.server";
 
 const POLL_S = 30;
 const NO_WORKFLOW_GRACE_S = 3 * 60;
@@ -26,10 +30,12 @@ export type DeployVerdict =
   | { kind: "running" }
   | { kind: "timeout"; name: string; url: string }
   | { kind: "failed"; name: string; url: string; conclusion: string }
+  /** Lo cancelaron (concurrencia, a mano): no se desplegó este sha, pero tampoco tronó. */
+  | { kind: "cancelled"; name: string; url: string }
   | { kind: "green" }
   | { kind: "none" };
 
-const FAILED = new Set(["failure", "cancelled", "timed_out", "startup_failure", "action_required"]);
+const FAILED = new Set(["failure", "timed_out", "startup_failure", "action_required"]);
 
 /**
  * Qué dicen los runs de Actions del sha mezclado, `elapsed` segundos después del merge. Un run
@@ -41,6 +47,8 @@ export function deployVerdict(runs: WorkflowRun[], elapsed: number): DeployVerdi
   if (failed) return { kind: "failed", name: failed.name, url: failed.html_url, conclusion: String(failed.conclusion) };
   const live = runs.find((r) => r.status !== "completed");
   if (live) return elapsed >= MAX_WAIT_S ? { kind: "timeout", name: live.name, url: live.html_url } : { kind: "running" };
+  const cancelled = runs.find((r) => r.conclusion === "cancelled");
+  if (cancelled) return { kind: "cancelled", name: cancelled.name, url: cancelled.html_url };
   if (!runs.length) return elapsed >= NO_WORKFLOW_GRACE_S ? { kind: "none" } : { kind: "running" };
   return { kind: "green" };
 }
@@ -221,9 +229,25 @@ async function step(row: Row): Promise<void> {
   }
   if (verdict.kind === "failed") {
     const R = await import("./factory-runs.server");
-    await R.onDeployFailed(row.repo, row.pr, row.channelId, { sha, workflow: verdict.name, url: verdict.url, conclusion: verdict.conclusion }).catch(() => {});
-    await postThread(row, `⚠️ El deploy de #${row.pr} falló en «${verdict.name}» · [ver log](${verdict.url})`);
+    const { flakyWorkflows } = await import("../automations/ci-doctor.server");
+    const [flaky] = await flakyWorkflows(row.repo, [verdict.name]).catch(() => []);
+    await R.onDeployFailed(row.repo, row.pr, row.channelId, { sha, workflow: verdict.name, url: verdict.url, conclusion: verdict.conclusion, ...(flaky ? { flaky: true } : {}) }).catch(() => {});
+    await postThread(row, deployFailedText(row.pr, verdict, flaky ?? null));
     return finish(row, "failed", `${verdict.name}: ${verdict.conclusion}`);
+  }
+  if (verdict.kind === "cancelled") {
+    // Un deploy posterior que ya contiene este commit lo desplegó: se sigue como verde.
+    const ok = await laterGreenRun(githubApi, row, sha, verdict.name);
+    if (!ok) {
+      if (elapsed >= MAX_WAIT_S) {
+        await postThread(row, `⏹️ El deploy de #${row.pr} se canceló en «${verdict.name}» y en 30 min ningún deploy posterior lo incluyó; no lo cuento como caído · [ver run](${verdict.url})`);
+        return finish(row, "timeout", JSON.stringify({ name: verdict.name, url: verdict.url, cancelled: true }));
+      }
+      const note = JSON.stringify({ name: verdict.name, url: verdict.url });
+      if (note !== row.result) await dbq("UPDATE gt_post_merge SET result = ? WHERE id = ?", [note, row.id]);
+      return void (await later(60));
+    }
+    runs.splice(0, runs.length, ok);
   }
 
   // Verde (o sin workflows): smoke contra producción.
@@ -242,7 +266,8 @@ async function step(row: Row): Promise<void> {
       if (why) fails.push(`${U.urlLabel(url)} (${why})`);
     }),
   );
-  const deploy = verdict.kind === "green" ? "se desplegó" : "entró con merge";
+  const deployed = verdict.kind === "green" || verdict.kind === "cancelled";
+  const deploy = deployed ? "se desplegó" : "entró con merge";
   if (fails.length) {
     await postThread(row, `⚠️ #${row.pr} ${deploy}, pero producción no responde bien: ${fails.join(", ")}`);
     return finish(row, "failed", `smoke: ${fails.join(", ")}`);
@@ -271,8 +296,44 @@ async function step(row: Row): Promise<void> {
     if (run.channelId === row.channelId) await R.logEvent(run.id, "deployed", null, { sha, urls, workflows: runs.map((r) => r.name) });
   }
   // Un renglón cuando sí hubo despliegue: es lo que la persona quiere saber después del merge.
-  if (verdict.kind === "green") await postThread(row, `🚀 #${row.pr} en producción${urls[0] ? ` · ${urls[0]}` : ""}`);
-  return finish(row, "ok", verdict.kind === "green" ? `${runs.length} workflow(s) verdes` : "sin workflows");
+  if (deployed) await postThread(row, `🚀 #${row.pr} en producción${urls[0] ? ` · ${urls[0]}` : ""}`);
+  return finish(row, "ok", deployed ? `${runs.length} workflow(s) verdes` : "sin workflows");
+}
+
+/** El aviso del deploy caído; con un workflow flaky conocido, que se reintente primero. Pura. */
+export function deployFailedText(
+  pr: number,
+  v: { name: string; url: string },
+  flaky: { count: number; windowDays: number; issueUrl: string | null } | null,
+): string {
+  const base = `⚠️ El deploy de #${pr} falló en «${v.name}» · [ver log](${v.url})`;
+  if (!flaky) return base;
+  const seen = flaky.count ? ` (${flaky.count} vez/veces en ${flaky.windowDays} días)` : "";
+  return `${base}\nEse workflow ya está marcado flaky en este repo${seen}${flaky.issueUrl ? ` · ${flaky.issueUrl}` : ""}: reintenta el run antes de buscar la causa; si sale verde, el paso «Prod» se corrige solo.`;
+}
+
+type GithubApi = (sub: string, path: string, init?: RequestInit) => Promise<any>;
+type GreenRun = WorkflowRun & { head_sha: string; created_at: string };
+
+/**
+ * Un run verde del workflow (posterior al merge) que desplegó `sha`: el del mismo commit o el de
+ * un commit posterior que lo contiene. null si no hay. Lo usan el deploy cancelado y la recuperación.
+ */
+async function laterGreenRun(githubApi: GithubApi, row: Row, sha: string, workflow: string): Promise<GreenRun | null> {
+  const repoInfo = await githubApi(row.sub, `/repos/${row.repo}`);
+  if (repoInfo?.error) return null;
+  const branch = encodeURIComponent(String(repoInfo?.default_branch ?? "main"));
+  const list = await githubApi(row.sub, `/repos/${row.repo}/actions/runs?branch=${branch}&status=success&per_page=20`);
+  const runs: GreenRun[] = Array.isArray(list?.workflow_runs) ? list.workflow_runs : [];
+  for (const run of runs) {
+    if (workflow && run.name !== workflow) continue;
+    if (Date.parse(run.created_at) / 1000 < row.startedAt) continue;
+    if (run.head_sha === sha) return run;
+    // Un run de un commit posterior que CONTIENE el del merge también lo desplegó.
+    const cmp = await githubApi(row.sub, `/repos/${row.repo}/compare/${sha}...${run.head_sha}`);
+    if (cmp?.status === "ahead" || cmp?.status === "identical") return run;
+  }
+  return null;
 }
 
 /**
@@ -297,20 +358,7 @@ async function recoverFailedDeploys(): Promise<void> {
     await dbq("UPDATE gt_post_merge SET next_at = unixepoch() + 120 WHERE id = ?", [row.id]).catch(() => {});
     try {
       const workflow = String(row.result ?? "").split(":")[0].trim();
-      const repoInfo = await githubApi(row.sub, `/repos/${row.repo}`);
-      if (repoInfo?.error) continue;
-      const branch = encodeURIComponent(String(repoInfo?.default_branch ?? "main"));
-      const list = await githubApi(row.sub, `/repos/${row.repo}/actions/runs?branch=${branch}&status=success&per_page=20`);
-      const runs: (WorkflowRun & { head_sha: string; created_at: string })[] = Array.isArray(list?.workflow_runs) ? list.workflow_runs : [];
-      let ok: (typeof runs)[number] | null = null;
-      for (const run of runs) {
-        if (workflow && run.name !== workflow) continue;
-        if (Date.parse(run.created_at) / 1000 < row.startedAt) continue;
-        if (run.head_sha === row.mergeSha) { ok = run; break; }
-        // Un run de un commit posterior que CONTIENE el del merge también lo desplegó.
-        const cmp = await githubApi(row.sub, `/repos/${row.repo}/compare/${row.mergeSha}...${run.head_sha}`);
-        if (cmp?.status === "ahead" || cmp?.status === "identical") { ok = run; break; }
-      }
+      const ok = await laterGreenRun(githubApi, row, row.mergeSha!, workflow);
       if (!ok) continue;
       await finish(row, "ok", `relanzado: ${ok.name} verde`);
       const R = await import("./factory-runs.server");
@@ -324,11 +372,24 @@ async function recoverFailedDeploys(): Promise<void> {
         const { agentReact } = await import("../agent-ack.server");
         if (notice) await agentReact(await currentNamespace(), notice.id, notice.agent_handle ?? "check", "✅");
       }
-      await postThread(row, `✅ #${row.pr} ya está en producción: «${ok.name}» se relanzó y salió verde · [ver run](${ok.html_url})`);
+      await postThread(row, recoveredText(row.pr, ok, row.mergeSha!));
     } catch (e) {
       console.warn(`[post-merge] recuperar ${row.repo}#${row.pr}: ${e instanceof Error ? e.message : e}`);
     }
   }
+}
+
+/**
+ * El aviso del deploy recuperado. Mismo commit = falló y pasó sin cambios: flaky, con la misma
+ * regla que el «CI doctor» (`classifyRun`). Pura.
+ */
+export function recoveredText(pr: number, ok: { name: string; html_url: string; head_sha: string }, mergeSha: string): string {
+  const flaky =
+    classifyRun(
+      [{ workflow: ok.name, headSha: mergeSha, runId: 0, attempt: 1, conclusion: "failure" }],
+      { workflow: ok.name, headSha: ok.head_sha, runId: 1, attempt: 1, conclusion: "success" },
+    ) === "flaky";
+  return `✅ #${pr} ya está en producción: «${ok.name}» se relanzó y salió verde${flaky ? " con el mismo commit (fue flaky, no el código)" : ""} · [ver run](${ok.html_url})`;
 }
 
 /** Lo llama el tick de wakeups. Un PR que truena no frena a los demás. */

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { deployVerdict, prodActionSmoke, smokeVerdict, type WorkflowRun } from "./post-merge.server";
+import { deployFailedText, deployVerdict, prodActionSmoke, recoveredText, smokeVerdict, type WorkflowRun } from "./post-merge.server";
 
 // Producción por el guard de red: aquí se simula la respuesta de cada petición.
 const guarded = vi.hoisted(() => ({ calls: [] as { url: string; method: string; headers: Record<string, string> }[], postStatus: 200 }));
@@ -34,7 +34,13 @@ describe("deployVerdict", () => {
   it("uno falla y lo dice aunque otro siga corriendo", () => {
     const v = deployVerdict([run("Tests", "in_progress"), run("Fly Deploy", "completed", "failure")], 120);
     expect(v).toMatchObject({ kind: "failed", name: "Fly Deploy", conclusion: "failure" });
-    expect(deployVerdict([run("Fly Deploy", "completed", "cancelled")], 120)).toMatchObject({ kind: "failed", conclusion: "cancelled" });
+  });
+
+  // Cancelado ≠ caído: casi siempre lo canceló la concurrencia por un merge posterior.
+  it("cancelado no es deploy caído; una falla real le gana y lo que corre se espera", () => {
+    expect(deployVerdict([run("Fly Deploy", "completed", "cancelled")], 120)).toMatchObject({ kind: "cancelled", name: "Fly Deploy" });
+    expect(deployVerdict([run("Fly Deploy", "completed", "cancelled"), run("Tests", "completed", "failure")], 120)).toMatchObject({ kind: "failed", name: "Tests" });
+    expect(deployVerdict([run("Fly Deploy", "completed", "cancelled"), run("Tests", "in_progress")], 120)).toEqual({ kind: "running" });
   });
 
   it("sin workflows: espera la gracia de 3 min y luego sólo smoke", () => {
@@ -88,5 +94,23 @@ describe("prodActionSmoke", () => {
   it("sin homepage no corre", async () => {
     expect(await prodActionSmoke(null, "denik/app", "sub")).toBeNull();
     expect(guarded.calls).toHaveLength(0);
+  });
+});
+
+describe("avisos del deploy con flaky", () => {
+  const v = { name: "Deploy", url: "https://github.com/o/r/actions/runs/1" };
+  it("sin flaky: el aviso de siempre", () => {
+    expect(deployFailedText(7, v, null)).toBe("⚠️ El deploy de #7 falló en «Deploy» · [ver log](https://github.com/o/r/actions/runs/1)");
+  });
+  it("flaky conocido: lo dice y pide reintentar, con el issue agrupado", () => {
+    const t = deployFailedText(7, v, { count: 3, windowDays: 14, issueUrl: "https://github.com/o/r/issues/12" });
+    expect(t).toContain("marcado flaky");
+    expect(t).toContain("3 vez/veces en 14 días");
+    expect(t).toContain("issues/12");
+    expect(t).toContain("reintenta el run");
+  });
+  it("relanzado verde con el mismo commit = flaky; con un commit posterior, no", () => {
+    expect(recoveredText(7, { name: "Deploy", html_url: "u", head_sha: "aaa" }, "aaa")).toContain("fue flaky");
+    expect(recoveredText(7, { name: "Deploy", html_url: "u", head_sha: "bbb" }, "aaa")).toBe("✅ #7 ya está en producción: «Deploy» se relanzó y salió verde · [ver run](u)");
   });
 });

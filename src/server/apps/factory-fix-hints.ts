@@ -30,3 +30,21 @@ export const WORK_BOX_HINT =
 /** Un CI que falló por algo pasajero se reintenta en vez de tocar código (rol @build). */
 export const RERUN_HINT = "github_rerun_workflow (reintenta un CI que falló por algo pasajero)";
 
+
+/** Un workflow que el «CI doctor» ya marcó flaky en el repo (`automations/ci-doctor`). */
+export type FlakyHint = { workflow: string; count: number; windowDays: number; issueUrl: string | null };
+
+/**
+ * Lo que se suma al regreso por CI rojo cuando el workflow ya es conocido por flaky: reintentar
+ * antes de «arreglar» de más. "" si no hay ninguno (el encargo queda igual que siempre).
+ */
+export function flakyCiNote(flaky: FlakyHint[]): string {
+  if (!flaky.length) return "";
+  const list = flaky
+    .map((f) => `«${f.workflow}»${f.count ? ` (${f.count} vez/veces en ${f.windowDays} días)` : ""}${f.issueUrl ? ` · issue agrupado ${f.issueUrl}` : ""}`)
+    .join(", ");
+  return (
+    ` Ojo: ${list} ya está marcado flaky en este repo (falla y pasa con el mismo commit). ` +
+    `Si el log no apunta a tu cambio, primero ${RERUN_HINT} y espera su resultado; sólo toca código si vuelve a fallar igual.`
+  );
+}

@@ -6,9 +6,11 @@
 // despertador en `gt_agent_wakeups`. Todo lo de abrir el turno en la conversación correcta
 // ya lo hace `wakeups.server.ts`; aquí sólo se decide CUÁNDO.
 //
-// ¿Por qué polling y no el webhook de la App? El webhook llega a UN endpoint global y habría
-// que rutearlo a tenant + conversación; con polling cada tenant pregunta por lo suyo con el
-// token de quien pidió vigilar, que además es lo que respeta sus permisos de GitHub.
+// Desde el 26-oct el webhook de la App manda: gs reparte cada `RepoEvent` al Teams del espacio
+// (`api.internal.github-event`) y `onRepoEvent` revisa YA las vigilancias de ese PR (CI terminado,
+// push nuevo, merge, cierre). El sondeo queda de respaldo: cada 2 min para los repos de los que no
+// llegan eventos (la App no está instalada ahí: sólo el token de la persona), y cada 10 min para
+// los que sí. La lectura sigue siendo con el token de quien pidió vigilar (respeta sus permisos).
 //
 // Las filas caducan a las 24 h en silencio: un PR que lleva un día con CI colgado no es algo
 // que el agente vaya a arreglar despertándose.
@@ -18,6 +20,10 @@ import { withNamespace } from "./tenant.server";
 import type { WatchMemory } from "./connectors/github-checks";
 
 const TICK_MS = 120_000;
+/** Respaldo para repos cuyos eventos sí llegan: el webhook ya avisa al instante. */
+const BACKUP_POLL_MS = 10 * 60_000;
+/** Cuánto vale «de este repo llegan eventos» después del último. */
+const EVENTS_FRESH_MS = 30 * 60_000;
 export const WATCH_TTL_S = 24 * 3600;
 
 /**
@@ -47,6 +53,58 @@ export async function upsertPrWatch(w: {
   );
 }
 
+// ── Eventos de GitHub ────────────────────────────────────────────────────────
+
+type RepoEventLike = {
+  event: string;
+  action?: string;
+  repo: string;
+  pr?: { number: number };
+  run?: { prNumbers?: number[] };
+};
+
+/** Lo que cambia la respuesta de una vigilancia. `numbers: null` = todos los PRs vigilados del repo. */
+const WATCH_PR_ACTIONS = new Set(["synchronize", "closed", "reopened", "ready_for_review", "converted_to_draft", "edited"]);
+
+/**
+ * Qué vigilancias revisar por este evento, o null si no le toca a ninguna. Puro.
+ * Un `workflow_run` sin PR ligado (forks, o el push que GitHub aún no asocia) revisa todo el repo.
+ */
+export function prWatchTargets(ev: RepoEventLike): { repo: string; numbers: number[] | null } | null {
+  if (!ev?.repo) return null;
+  if (ev.event === "workflow_run" && ev.action === "completed") {
+    const n = (ev.run?.prNumbers ?? []).filter((x) => x > 0);
+    return { repo: ev.repo, numbers: n.length ? n : null };
+  }
+  if (ev.event === "pull_request" && WATCH_PR_ACTIONS.has(ev.action ?? "") && ev.pr?.number) return { repo: ev.repo, numbers: [ev.pr.number] };
+  return null;
+}
+
+/** Último evento por espacio+repo: con eventos frescos, el sondeo de ese repo se espacia. */
+const lastEventAt = new Map<string, number>();
+const repoKey = (ns: string, repo: string) => `${ns}|${repo.toLowerCase()}`;
+/** Último sondeo por vigilancia (en memoria: tras reiniciar se sondea todo una vez, que es lo seguro). */
+const lastPolledAt = new Map<string, number>();
+
+/** ¿Le toca al sondeo de respaldo? Puro. */
+export function duePoll(now: number, lastPolled: number | undefined, lastEvent: number | undefined): boolean {
+  if (lastPolled == null) return true;
+  const eventsFlow = lastEvent != null && now - lastEvent < EVENTS_FRESH_MS;
+  return now - lastPolled >= (eventsFlow ? BACKUP_POLL_MS : TICK_MS - 5_000);
+}
+
+/**
+ * Un `RepoEvent` llegó al Teams de este espacio (corre en su namespace): se marca que el repo
+ * tiene eventos y se revisan ya las vigilancias que toca. Nunca lanza.
+ */
+export async function onRepoEvent(ns: string, ev: RepoEventLike): Promise<void> {
+  if (!ev?.repo) return;
+  lastEventAt.set(repoKey(ns, ev.repo), Date.now());
+  const t = prWatchTargets(ev);
+  if (!t) return;
+  await sweepTenant(ns, { repo: t.repo, numbers: t.numbers }).catch(() => {});
+}
+
 // ── El tick ──────────────────────────────────────────────────────────────────
 
 const tenants = new Set<string>();
@@ -68,7 +126,7 @@ async function sweep(): Promise<void> {
   try {
     for (const ns of Array.from(tenants)) {
       try {
-        await withNamespace(ns, () => sweepTenant());
+        await withNamespace(ns, () => sweepTenant(ns, { backup: true }));
       } catch {
         /* un tenant con la DB flapeando no deja sin vigilancia a los demás */
       }
@@ -80,14 +138,21 @@ async function sweep(): Promise<void> {
 
 /** El barrido de ESTE espacio ya (lo llama el fin del CI que avisa GitHub). El de cada 2 min sigue. */
 export async function sweepPrWatchesNow(): Promise<void> {
-  await sweepTenant().catch(() => {});
+  const { currentNamespace } = await import("./tenant.server");
+  const ns = await currentNamespace().catch(() => "");
+  await sweepTenant(ns).catch(() => {});
 }
 
-async function sweepTenant(): Promise<void> {
+/** `repo`/`numbers`: sólo esas vigilancias (un evento). `backup`: el tick, que salta las ya frescas. */
+async function sweepTenant(ns: string, only: { repo?: string; numbers?: number[] | null; backup?: boolean } = {}): Promise<void> {
   await dbq(
     `UPDATE gt_pr_watches SET done_at=unixepoch(), result='caducó' WHERE done_at IS NULL AND expires_at <= unixepoch()`,
   );
-  const rows = await dbq(`SELECT * FROM gt_pr_watches WHERE done_at IS NULL ORDER BY created_at LIMIT 25`);
+  const where = only.repo ? ` AND LOWER(repo) = LOWER(?)` + (only.numbers?.length ? ` AND number IN (${only.numbers.map(() => "?").join(",")})` : "") : "";
+  const args = only.repo ? [only.repo, ...(only.numbers ?? [])] : [];
+  const now = Date.now();
+  const rows = (await dbq(`SELECT * FROM gt_pr_watches WHERE done_at IS NULL${where} ORDER BY created_at LIMIT 25`, args))
+    .filter((r) => !only.backup || duePoll(now, lastPolledAt.get(String(r.id)), lastEventAt.get(repoKey(ns, String(r.repo)))));
   if (!rows.length) return;
   const { prSnapshot } = await import("./connectors/github.server");
   const { prWatchVerdict } = await import("./connectors/github-checks");
@@ -95,6 +160,7 @@ async function sweepTenant(): Promise<void> {
   for (const row of rows) {
     const id = String(row.id);
     const repo = String(row.repo);
+    lastPolledAt.set(id, Date.now());
     const number = Number(row.number);
     const snap = await prSnapshot(String(row.sub), repo, number).catch(() => null);
     // GitHub sin contestar (o token caído) → se reintenta en la siguiente vuelta. La TTL

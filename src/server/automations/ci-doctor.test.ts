@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyRun, flakyIssueBody, shouldDiagnose, type CiRunRow } from "./ci-doctor.server";
+import { flakyInfoOf, runIdOfCheckUrl, classifyRun, flakyIssueBody, shouldDiagnose, type CiRunRow } from "./ci-doctor.server";
 import type { RepoEvent } from "./types";
 
 const row = (o: Partial<CiRunRow>): CiRunRow => ({ workflow: "CI", headSha: "abc", runId: 10, attempt: 1, conclusion: "failure", ...o });
@@ -60,5 +60,18 @@ describe("flakyIssueBody", () => {
     expect(b).toContain("[run 1](https://x/1)");
     expect(b).toContain("https://github.com/o/r/actions/runs/2");
     expect(b.indexOf("run 2")).toBeLessThan(b.indexOf("run 1"));
+  });
+});
+
+describe("lo que la fábrica le pregunta al historial", () => {
+  it("runIdOfCheckUrl saca el run de la liga del check", () => {
+    expect(runIdOfCheckUrl("https://github.com/o/r/actions/runs/123/job/456")).toBe(123);
+    expect(runIdOfCheckUrl("https://vercel.com/x")).toBeNull();
+    expect(runIdOfCheckUrl(null)).toBeNull();
+  });
+  it("flakyInfoOf: sólo con flaky en la ventana o issue agrupado", () => {
+    expect(flakyInfoOf("o/r", "Tests", 0, null, 14)).toBeNull();
+    expect(flakyInfoOf("o/r", "Tests", 2, null, 14)).toEqual({ workflow: "Tests", count: 2, windowDays: 14, issueUrl: null });
+    expect(flakyInfoOf("o/r", "Tests", 0, 9, 14)?.issueUrl).toBe("https://github.com/o/r/issues/9");
   });
 });

@@ -9,6 +9,10 @@ let ciRedPrev: { sha: string | null }[] = [];
 let origin = "https://business.teams.ghosty.studio";
 let notes: { id: number; by: string; text: string }[] = [];
 let current = "building";
+let flakyKnown = false;
+let behindPrev: { sha?: string; auto?: boolean }[] = [];
+let updateBranch: { ok?: boolean; error?: string; conflict?: boolean } = { ok: true };
+const updateCalls: unknown[] = [];
 
 const row = (status: string) => ({ id: 10, channel_id: 14, root_msg_id: 3970, topic: "general", title: "CLI", status, plan_version: 1, loops: 0, requested_by: "ana", approved_by: "beto", pr_url: "https://github.com/o/r/pull/8" });
 
@@ -18,6 +22,11 @@ vi.mock("../../dbq.server", () => ({
     if (sql === "SELECT * FROM gt_factory_runs WHERE id = ?") return [row(current)];
     if (sql.includes("type = 'ci_red' ORDER BY")) return ciRedPrev.map((p) => ({ data_json: JSON.stringify(p) }));
     if (sql.includes("FROM gt_agent_wakeups")) return origin ? [{ origin }] : [];
+    // Historial del «CI doctor»: el run 77 es de «Tests», marcado flaky 3 veces con issue #12.
+    if (sql.includes("FROM gt_ci_runs") && sql.includes("run_id IN")) return flakyKnown ? [{ run_id: 77, workflow: "Tests" }] : [];
+    if (sql.includes("COUNT(*) AS n FROM gt_ci_runs")) return [{ n: flakyKnown ? 3 : 0 }];
+    if (sql.includes("FROM gt_ci_flaky_issues")) return flakyKnown ? [{ number: 12 }] : [];
+    if (sql.includes("type = 'behind_main'")) return behindPrev.map((p) => ({ data_json: JSON.stringify(p) }));
     if (sql.startsWith("UPDATE gt_factory_runs SET status")) return [row(String(args[0]))];
     if (sql.startsWith("INSERT INTO gt_factory_notes")) {
       notes.push({ id: notes.length + 1, text: String(args[1]), by: String(args[2]) });
@@ -48,9 +57,13 @@ vi.mock("../wakeups.server", () => ({
   kickWakeups: () => {},
   armWakeups: () => {},
 }));
-vi.mock("../connectors/github.server", () => ({ ackGithubComment: async () => true }));
+vi.mock("../connectors/github.server", () => ({
+  ackGithubComment: async () => true,
+  githubApi: async () => ({ error: "sin red en la prueba" }),
+  allTools: () => [{ name: "github_update_branch", handler: async (_s: string, a: unknown) => (updateCalls.push(a), updateBranch) }],
+}));
 
-import { onPrCiRed, noteFromGithub, asksPerson, afterFactoryTurn, type Run } from "./factory-runs.server";
+import { onPrCiRed, onPrBehind, noteFromGithub, asksPerson, afterFactoryTurn, type Run } from "./factory-runs.server";
 
 const run = (status: Run["status"]): Run => ({
   id: 10, channelId: 14, rootMsgId: 3970, topic: "general", title: "CLI", status, planVersion: 1, loops: 0,
@@ -67,6 +80,10 @@ beforeEach(() => {
   notes = [];
   current = "building";
   origin = "https://business.teams.ghosty.studio";
+  flakyKnown = false;
+  behindPrev = [];
+  updateBranch = { ok: true };
+  updateCalls.length = 0;
 });
 
 describe("CI en rojo en la etapa PR", () => {
@@ -99,6 +116,65 @@ describe("CI en rojo en la etapa PR", () => {
     origin = "";
     await onPrCiRed(run("pr_review"), "abc", ["verify"]);
     expect(events()).toEqual(["ci_red_help"]);
+  });
+});
+
+describe("CI rojo con un workflow flaky conocido", () => {
+  const checks = [{ name: "unit", state: "failure" as const, seconds: 30, url: "https://github.com/o/r/actions/runs/77/job/9" }];
+
+  it("la nota a @build pide reintentar antes de tocar código, con la liga al issue agrupado", async () => {
+    flakyKnown = true;
+    await onPrCiRed(run("pr_review"), "abc", ["unit"], { checks });
+    await flush();
+    expect(wakeups).toHaveLength(1);
+    expect(wakeups[0].text).toContain("ya está marcado flaky");
+    expect(wakeups[0].text).toContain("github_rerun_workflow");
+    expect(wakeups[0].text).toContain("https://github.com/o/r/issues/12");
+    expect(posts.some((p) => p.includes("🔧") && p.includes("«Tests»") && p.includes("reintentarlo"))).toBe(true);
+  });
+
+  it("sin historial flaky: el encargo queda como siempre", async () => {
+    await onPrCiRed(run("pr_review"), "abc", ["unit"], { checks });
+    await flush();
+    expect(wakeups[0].text).not.toContain("flaky");
+    expect(posts.find((p) => p.includes("🔧"))).toBe("🔧 El CI del PR falló (unit): se lo regresé a @build.");
+  });
+});
+
+describe("PR de un fork", () => {
+  it("CI rojo: no se le regresa a @build (no puede empujar); lo ve una persona una vez", async () => {
+    await onPrCiRed(run("pr_review"), "abc", ["unit"], { fork: "ana/r" });
+    expect(events()).toEqual(["ci_red_help"]);
+    expect(wakeups).toHaveLength(0);
+    expect(posts.some((p) => p.includes("fork") && p.includes("ana/r"))).toBe(true);
+  });
+});
+
+describe("PR atrás de su base («behind»)", () => {
+  it("se pone al día solo, una vez por cabeza, y se vuelve a ofrecer el merge", async () => {
+    await onPrBehind(run("pr_review"), "abc");
+    expect(updateCalls).toEqual([{ repo: "o/r", number: 8 }]);
+    expect(events()).toEqual(["behind_main"]);
+    expect(sqls.some((q) => q.sql.includes("merge_asked = NULL"))).toBe(true);
+    expect(posts.some((p) => p.startsWith("🔄"))).toBe(true);
+    behindPrev = [{ sha: "abc", auto: true }];
+    updateCalls.length = 0;
+    await onPrBehind(run("pr_review"), "abc");
+    expect(updateCalls).toHaveLength(0);
+  });
+
+  it("tope de 5 puestas al día automáticas por pedido", async () => {
+    behindPrev = [1, 2, 3, 4, 5].map((i) => ({ sha: `s${i}`, auto: true }));
+    await onPrBehind(run("pr_review"), "nuevo");
+    expect(updateCalls).toHaveLength(0);
+  });
+
+  it("si choca, es un conflicto: va a @build con el merge de la principal", async () => {
+    updateBranch = { error: "Conflicto: …", conflict: true };
+    await onPrBehind(run("pr_review"), "abc");
+    await flush();
+    expect(events()).toEqual(expect.arrayContaining(["behind_main"]));
+    expect(wakeups.some((w) => w.text.includes("mergeFrom"))).toBe(true);
   });
 });
 

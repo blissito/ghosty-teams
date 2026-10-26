@@ -24,7 +24,7 @@ import {
 } from "./factory-flow";
 import { classifyPrRisk, type PrFile } from "./factory-risk";
 import { briefMessage, parseBrief, shouldPostBrief, wantsBrief, type EscalationBrief } from "./factory-brief";
-import { ciRedNote, DEP_RED_FROM_MAIN_HINT, MERGE_FROM_HINT } from "./factory-fix-hints";
+import { ciRedNote, DEP_RED_FROM_MAIN_HINT, flakyCiNote, MERGE_FROM_HINT, type FlakyHint } from "./factory-fix-hints";
 
 export type Run = {
   id: number;
@@ -1410,8 +1410,18 @@ export async function closeRunPr(run: Run, opts: { ignore: "major" | "dependency
 }
 
 /** El encargo a @build sobre un PR de Dependabot (también en «otra vuelta»: antes se perdía, easybits 20-oct). */
-export function dependabotBuildHint(run: Pick<Run, "kind">): string {
-  return run.kind === "dependabot"
+/**
+ * ¿El pedido es una subida de Dependabot? La adoptada al abrirse (`dependabot`) o la que adoptó
+ * `dep_fix` por un CI rojo (`automations/pr-fix`): ésa nace con kind `dep_fix` y su rama es la de
+ * Dependabot (`dependabot/…`; las de Renovate no traen `.github/dependabot.yml`).
+ */
+export function isDependabotUpgrade(run: Pick<Run, "kind"> & { branch?: string | null }): boolean {
+  if (run.kind === "dependabot") return true;
+  return run.kind === "dep_fix" && /^dependabot\//i.test(String(run.branch ?? ""));
+}
+
+export function dependabotBuildHint(run: Pick<Run, "kind"> & { branch?: string | null }): string {
+  return isDependabotUpgrade(run)
     ? ` Es una subida de Dependabot: si un paquete exige a sus hermanos en la misma versión (peer dependencies, p. ej. \`@scope/*\`), súbelos juntos ` +
         `y regenera el lockfile con el gestor del repo. En el mismo PR agrega a .github/dependabot.yml un grupo (\`groups\` con \`patterns\`) ` +
         `para esa familia, así la próxima subida llega completa. Tu push detiene los rebases de Dependabot en esa rama: es lo esperado.`
@@ -1430,7 +1440,7 @@ export function approveBriefLead(run: Pick<Run, "prUrl" | "branch" | "kind">, o:
   if (o.again)
     return (
       `${o.who} pidió otra vuelta. Revisa lo que pide (abajo, en las notas) y los últimos hallazgos de @check en este hilo, corrige en la misma rama y cierra con factory_build_done.` +
-      (run.prUrl && run.kind === "dependabot" ? ` El PR es ${run.prUrl}: ${onPr}${dependabotBuildHint(run)}` : "")
+      (run.prUrl && isDependabotUpgrade(run) ? ` El PR es ${run.prUrl}: ${onPr}${dependabotBuildHint(run)}` : "")
     );
   if (run.prUrl)
     // El PR ya existe (Dependabot, PR adoptado): se arregla EN su rama, o su CI y su preview
@@ -1812,7 +1822,16 @@ export async function prConflicted(sub: string, url: string): Promise<boolean | 
 export async function prOutcome(
   sub: string,
   url: string,
-): Promise<{ outcome: "merged" | "closed" | "open"; approved: boolean; conflicted?: boolean; headSha?: string } | null> {
+): Promise<{
+  outcome: "merged" | "closed" | "open";
+  approved: boolean;
+  conflicted?: boolean;
+  headSha?: string;
+  /** `behind` = atrás de su base y la protección de la rama exige ponerlo al día. */
+  mergeableState?: string | null;
+  /** Repo de la rama del PR: si no es el del pedido, es un fork y la App no le empuja. */
+  headRepo?: string | null;
+} | null> {
   const pr = parsePrUrl(url);
   if (!pr) return null;
   try {
@@ -1823,7 +1842,14 @@ export async function prOutcome(
     const approved = Array.isArray(r.reviews) && r.reviews.some((v: any) => String(v?.state).toUpperCase() === "APPROVED");
     if (r.merged) return { outcome: "merged", approved };
     // `mergeable: false` = choques con la base; `null` = GitHub aún lo calcula (no se toca).
-    return { outcome: String(r.state ?? "").toLowerCase() === "closed" ? "closed" : "open", approved, conflicted: r.mergeable === false, headSha: r.headSha };
+    return {
+      outcome: String(r.state ?? "").toLowerCase() === "closed" ? "closed" : "open",
+      approved,
+      conflicted: r.mergeable === false,
+      headSha: r.headSha,
+      mergeableState: typeof r.mergeableState === "string" ? r.mergeableState : null,
+      headRepo: typeof r.headRepo === "string" ? r.headRepo : null,
+    };
   } catch {
     return null;
   }
@@ -1914,6 +1940,7 @@ export async function closeFinishedRuns(): Promise<void> {
     lastPrCheck.set(run.id, Date.now());
     const pr = await prOutcome(run.approvedBy ?? run.requestedBy, run.prUrl!);
     const outcome = pr?.outcome ?? null;
+    const fork = prForkOf(run.prUrl, pr?.headRepo);
     // Aprobado por una persona y CI en verde: el agente PROPONE mezclar y pregunta. Mezcla
     // sólo si le contestan que sí (`maybeMergeReply`), con las credenciales de quien contesta.
     // Un solo `prCi` por vuelta: lo usan la propuesta de merge y el regreso por CI en rojo.
@@ -1923,7 +1950,7 @@ export async function closeFinishedRuns(): Promise<void> {
       // Y el automerge vuelve a mirarlo cuando @build lo arregle y @check lo apruebe otra vez.
       if (row.merge_queued_by || Number(row.merge_queued_auto) === 1)
         await dbq("UPDATE gt_factory_runs SET merge_queued_by = NULL, merge_queued_auto = NULL WHERE id = ?", [run.id]).catch(() => {});
-      await onPrCiRed(run, pr?.headSha ?? null, ci.failed);
+      await onPrCiRed(run, pr?.headSha ?? null, ci.failed, { checks: ci.checks, fork });
     }
     // Automerge del room (default encendido): lo que @check aprobó se forma en la cola de merge
     // a nombre de quien firmó el plan, y el bloque de abajo lo mete en cuanto el CI pasa.
@@ -1966,7 +1993,9 @@ export async function closeFinishedRuns(): Promise<void> {
           );
       }
     }
-    if (outcome === "open" && run.status === "pr_review" && pr?.conflicted) await onPrConflict(run, pr.headSha ?? null);
+    if (outcome === "open" && run.status === "pr_review" && pr?.conflicted) await onPrConflict(run, pr.headSha ?? null, { fork });
+    // Atrás de su base con la protección pidiéndolo: se pone al día ya, no hasta que alguien pique «Merge».
+    else if (outcome === "open" && run.status === "pr_review" && pr?.mergeableState === "behind") await onPrBehind(run, pr.headSha ?? null);
     if (outcome === "merged" || outcome === "closed") await onPrEvent(run, outcome);
   }
 }
@@ -1990,7 +2019,7 @@ export function mergeAskText(run: Pick<Run, "kind" | "prUrl">, ciGreen: boolean)
  * quedaba en «PR listo» con un botón de merge que GitHub no deja usar. @build trae la base a su
  * rama y @check vuelve a mirar. Una vez por cabeza: si @build no lo resolvió, decide una persona.
  */
-async function onPrConflict(run: Run, headSha: string | null): Promise<void> {
+async function onPrConflict(run: Run, headSha: string | null, opts: { fork?: string | null } = {}): Promise<void> {
   const prevs = await dbq("SELECT data_json FROM gt_factory_events WHERE run_id = ? AND type = 'conflict' ORDER BY id DESC", [run.id]).catch(() => []);
   const prevSha = prevs[0]?.data_json ? (JSON.parse(String(prevs[0].data_json)).sha ?? null) : undefined;
   if (prevs.length && prevSha === headSha) return; // ya se intentó con esta cabeza: lo ve una persona
@@ -2002,6 +2031,7 @@ async function onPrConflict(run: Run, headSha: string | null): Promise<void> {
     await postInThread(run, "build", `⚠️ El PR ${run.prUrl ?? ""} sigue con conflictos con la rama principal (${por}). Necesita que una persona lo resuelva o pida a @build que lo intente otra vez.`);
   };
   if (prevs.length >= 2) return pideAyuda("ya lo intenté dos veces");
+  if (opts.fork) return forkHelp(run, "conflict", headSha, opts.fork);
   // El tick no tiene request: el origin sale del último encargo de este pedido.
   const [w] = await dbq("SELECT origin FROM gt_agent_wakeups WHERE key LIKE ? AND origin IS NOT NULL AND origin != '' ORDER BY rowid DESC LIMIT 1", [`factory:${run.id}:%`]).catch(() => []);
   const origin = String(w?.origin ?? "");
@@ -2027,7 +2057,12 @@ async function onPrConflict(run: Run, headSha: string | null): Promise<void> {
  * «Pedir arreglo» (MailMask #8, 4-oct). Mismo patrón que `onPrConflict`: una vez por cabeza y
  * dos vueltas; a la tercera lo ve una persona.
  */
-export async function onPrCiRed(run: Run, headSha: string | null, failed: string[]): Promise<void> {
+export async function onPrCiRed(
+  run: Run,
+  headSha: string | null,
+  failed: string[],
+  opts: { checks?: import("../connectors/github-checks").CheckItem[]; fork?: string | null } = {},
+): Promise<void> {
   const prevs = await dbq("SELECT data_json FROM gt_factory_events WHERE run_id = ? AND type = 'ci_red' ORDER BY id DESC", [run.id]).catch(() => []);
   const prevSha = prevs[0]?.data_json ? (JSON.parse(String(prevs[0].data_json)).sha ?? null) : undefined;
   if (prevs.length && prevSha === headSha) return; // ya se regresó con esta cabeza
@@ -2039,23 +2074,113 @@ export async function onPrCiRed(run: Run, headSha: string | null, failed: string
     await postInThread(run, "build", `⚠️ El CI del PR ${run.prUrl ?? ""} sigue en rojo (${what}; ${por}). Necesita que una persona revise el log o le diga a @build qué cambiar.`);
   };
   if (prevs.length >= 2) return pideAyuda("ya se lo regresé a @build dos veces");
+  if (opts.fork) return forkHelp(run, "ci_red", headSha, opts.fork, what);
+  // ¿El workflow que truena ya es flaky conocido? Entonces @build reintenta antes de tocar código.
+  const flaky = await flakyOfChecks(run, opts.checks ?? []);
   // Dependabot no tiene @build detrás: un rojo se le dice a una persona, con la pista de si viene
   // de main (la plataforma puso la rama al día) o de la subida misma.
   if (String(run.taskRef ?? "").startsWith("dependabot:")) {
     const ya = await dbq("SELECT 1 FROM gt_factory_events WHERE run_id = ? AND type = 'ci_red_help' AND json_extract(data_json, '$.sha') IS ?", [run.id, headSha]).catch(() => []);
     if (ya.length) return;
     await logEvent(run.id, "ci_red_help", null, { sha: headSha, por: "dependabot" });
-    await postInThread(run, "check", `⚠️ El CI de este PR de Dependabot salió en rojo (${what}), así que no entra solo. ${DEP_RED_FROM_MAIN_HINT}; si es la subida, «Pedir arreglo a @build» lo corrige en esta rama. ${run.prUrl ?? ""}`);
+    await postInThread(run, "check", `⚠️ El CI de este PR de Dependabot salió en rojo (${what}), así que no entra solo. ${DEP_RED_FROM_MAIN_HINT}; si es la subida, «Pedir arreglo a @build» lo corrige en esta rama.${flaky.length ? ` ${flakyLine(flaky)}` : ""} ${run.prUrl ?? ""}`);
     void refreshRoom(run.channelId);
     return;
   }
   const [w] = await dbq("SELECT origin FROM gt_agent_wakeups WHERE key LIKE ? AND origin IS NOT NULL AND origin != '' ORDER BY rowid DESC LIMIT 1", [`factory:${run.id}:%`]).catch(() => []);
   const origin = String(w?.origin ?? "");
   if (!origin) return pideAyuda("no pude mandarle el encargo a @build");
-  await logEvent(run.id, "ci_red", null, { sha: headSha, failed });
-  await addNote(run.id, "plataforma", ciRedNote(what));
-  await postInThread(run, "plan", `🔧 El CI del PR falló (${what}): se lo regresé a @build.`);
+  await logEvent(run.id, "ci_red", null, flaky.length ? { sha: headSha, failed, flaky: flaky.map((f) => f.workflow) } : { sha: headSha, failed });
+  await addNote(run.id, "plataforma", ciRedNote(what) + flakyCiNote(flaky));
+  await postInThread(run, "plan", `🔧 El CI del PR falló (${what}): se lo regresé a @build.${flaky.length ? ` ${flakyLine(flaky)} Le pedí reintentarlo antes de tocar código.` : ""}`);
   await reopenWithNotes(run, "plataforma", "", origin, { ci: failed });
+}
+
+/** El repo del fork si la rama del PR vive fuera del repo del pedido; null si es el mismo (o no se sabe). */
+export function prForkOf(prUrl: string | null, headRepo: string | null | undefined): string | null {
+  const pr = prUrl ? parsePrUrl(prUrl) : null;
+  if (!pr || !headRepo) return null;
+  return headRepo.toLowerCase() === pr.repo.toLowerCase() ? null : headRepo;
+}
+
+/** El aviso a una persona cuando @build no puede empujar porque el PR es de un fork. Pura. */
+export function forkHelpText(kind: "conflict" | "ci_red", prUrl: string | null, fork: string, what = ""): string {
+  const head = kind === "conflict" ? `El PR ${prUrl ?? ""} tiene conflictos con la rama principal` : `El CI del PR ${prUrl ?? ""} salió en rojo (${what})`;
+  return `⚠️ ${head} y viene de un fork (\`${fork}\`): la App no puede empujar a esa rama, así que no se lo regreso a @build. Que su autor lo corrija en su fork (o pide a @build un diagnóstico aquí en el hilo).`;
+}
+
+/** Una vez por cabeza: se registra como `*_help` y se dice en el hilo. */
+async function forkHelp(run: Run, kind: "conflict" | "ci_red", headSha: string | null, fork: string, what = ""): Promise<void> {
+  const type = `${kind}_help`;
+  const ya = await dbq(`SELECT 1 FROM gt_factory_events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.sha') IS ?`, [run.id, type, headSha]).catch(() => []);
+  if (ya.length) return;
+  await logEvent(run.id, type, null, { sha: headSha, por: "fork", fork });
+  await postInThread(run, "build", forkHelpText(kind, run.prUrl, fork, what));
+}
+
+/** Lo que dice el hilo de un workflow flaky conocido. Pura. */
+export function flakyLine(flaky: FlakyHint[]): string {
+  const f = flaky[0]!;
+  const more = flaky.length > 1 ? ` (y ${flaky.length - 1} más)` : "";
+  return `«${f.workflow}»${more} ya está marcado flaky en este repo${f.issueUrl ? ` · ${f.issueUrl}` : ""}.`;
+}
+
+/**
+ * Los workflows de los checks rojos que el «CI doctor» ya marcó flaky. El workflow de cada check
+ * sale de su liga (`/actions/runs/<id>`): primero el historial, y si no está, una consulta a GitHub
+ * por run (máx. 3). Nunca lanza: sin datos es `[]` y el encargo queda como siempre.
+ */
+async function flakyOfChecks(run: Run, checks: import("../connectors/github-checks").CheckItem[]): Promise<FlakyHint[]> {
+  const pr = run.prUrl ? parsePrUrl(run.prUrl) : null;
+  if (!pr) return [];
+  try {
+    const D = await import("../automations/ci-doctor.server");
+    const ids = checks.filter((c) => c.state === "failure").map((c) => D.runIdOfCheckUrl(c.url)).filter((n): n is number => !!n);
+    if (!ids.length) return [];
+    const names = await D.workflowsOfRuns(pr.repo, ids);
+    const missing = ids.filter((id) => !names.has(id)).slice(0, 3);
+    if (missing.length) {
+      const { githubApi } = await import("../connectors/github.server");
+      for (const id of missing) {
+        const r = await githubApi(run.approvedBy ?? run.requestedBy, `/repos/${pr.repo}/actions/runs/${id}`).catch(() => null);
+        if (typeof r?.name === "string") names.set(id, r.name);
+      }
+    }
+    return await D.flakyWorkflows(pr.repo, Array.from(names.values()));
+  } catch {
+    return [];
+  }
+}
+
+/** Puestas al día automáticas por pedido: si main se mueve sin parar, que lo vea una persona. */
+const MAX_AUTO_UPDATES = 5;
+
+/**
+ * El PR esperaba revisión o merge y quedó ATRÁS de su base con una protección que exige ponerlo al
+ * día (`mergeable_state: behind`; sin esa regla GitHub dice `clean`): «Update branch» ya, con las
+ * credenciales de quien firmó (lo que haría `github_update_branch`). Antes sólo pasaba al picar
+ * «Merge» (`mergeRun`). Una vez por cabeza; si choca, es un conflicto (`onPrConflict`).
+ */
+export async function onPrBehind(run: Run, headSha: string | null): Promise<void> {
+  const pr = run.prUrl ? parsePrUrl(run.prUrl) : null;
+  if (!pr || !headSha) return;
+  const prevs = (await dbq("SELECT data_json FROM gt_factory_events WHERE run_id = ? AND type = 'behind_main' ORDER BY id DESC", [run.id]).catch(() => []))
+    .map((e) => { try { return JSON.parse(String(e.data_json ?? "{}")) as { sha?: string; auto?: boolean }; } catch { return {}; } });
+  if (prevs.some((d) => d.sha === headSha)) return;
+  if (prevs.filter((d) => d.auto).length >= MAX_AUTO_UPDATES) return;
+  const sub = run.approvedBy ?? run.requestedBy;
+  const { allTools } = await import("../connectors/github.server");
+  const tool = allTools().find((t) => t.name === "github_update_branch");
+  const r = (await tool?.handler(sub, { repo: pr.repo, number: pr.number }).catch((e: unknown) => ({ error: String(e) }))) as
+    | { ok?: boolean; error?: string; conflict?: boolean }
+    | undefined;
+  const updated = !!r && !r.error;
+  await dbq("UPDATE gt_factory_runs SET merge_asked = NULL WHERE id = ?", [run.id]).catch(() => {});
+  await logEvent(run.id, "behind_main", null, { sha: headSha, updated, auto: true });
+  void refreshRoom(run.channelId);
+  if (updated) return void (await postInThread(run, "build", `🔄 El PR quedó atrás de la rama principal y su protección pide ponerlo al día: lo actualicé y su CI vuelve a correr. ${run.prUrl}`));
+  if (r?.conflict || /conflict/i.test(String(r?.error ?? ""))) return onPrConflict(run, headSha);
+  await postInThread(run, "build", `⚠️ El PR quedó atrás de la rama principal y su protección pide ponerlo al día, pero no pude: ${r?.error ?? "GitHub no contestó"}. ${run.prUrl}`);
 }
 
 /**
@@ -2899,7 +3024,7 @@ export async function mergeRun(
         // Choques: GitHub no puede ponerlo al día solo. Antes sólo se decía en la tarjeta y el
         // pedido se quedaba en PR (MailMask #17, 5-oct); ahora va a @build como cualquier choque.
         if (up?.error && /conflict/i.test(String(up.error))) {
-          await onPrConflict(run, head);
+          await onPrConflict(run, head, { fork: prForkOf(run.prUrl, info?.head?.repo?.full_name) });
           return { ok: false, error: `El PR tiene conflictos con ${base}: se lo regresé a Build para resolverlos; el merge se vuelve a ofrecer al terminar.` };
         }
         return {

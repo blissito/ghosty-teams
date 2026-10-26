@@ -64,6 +64,9 @@ async function dispatchAutomations(re: PrEvent["repoEvent"]): Promise<void> {
     void withNamespace(ns, () => dispatchRepoEvent(re, { ns, origin })).catch((e) =>
       console.error(`[github-event] automatizaciones ${re.repo} ${re.event}: ${e instanceof Error ? e.message : e}`),
     );
+    // Las vigilancias de PR (`github_watch_pr`) se revisan con el evento, no a los 2 min del sondeo.
+    const { onRepoEvent } = await import("../server/pr-watches.server");
+    void withNamespace(ns, () => onRepoEvent(ns, re)).catch(() => {});
   } catch (e) {
     console.error(`[github-event] automatizaciones ${re.repo}: ${e instanceof Error ? e.message : e}`);
   }
