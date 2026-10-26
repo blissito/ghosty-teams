@@ -1664,15 +1664,16 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
       const db = await import("../../db.server");
       const rootMsg = await db.getMessage(root).catch(() => null);
       const { prOfMessage } = await import("../../lib/ebdoc");
+      const { loosePrReviewBrief, LOOSE_PR_BUILD_BRIEF } = await import("./factory-roles");
       const pr = rootMsg?.body ? prOfMessage(rootMsg.body) : null;
       if (pr) {
         const ref = `${pr.repo}#${pr.number}`;
         parts.push(
           `Este hilo es del PR ${ref} «${pr.title}» de ${pr.author} (https://github.com/${pr.repo}/pull/${pr.number}). NO hay pedido de la fábrica: ` +
             (h === "check"
-              ? `es una REVISIÓN SUELTA de ese PR. Léelo con github_get_pr, github_pr_files y github_pr_checks, aplica tus mismos criterios (seguridad, pruebas, mantenibilidad, CI) y deja la revisión en GitHub con github_create_review (APPROVE o REQUEST_CHANGES, hallazgos con archivo:línea). Para verlo corriendo usa factory_preview (la preview oficial, con las variables del repo); NUNCA levantes la app tú en una caja: sin sus variables da 404. En el hilo, 1 a 4 renglones con el veredicto. No uses factory_check_verdict ni preguntes qué PR es.`
+              ? loosePrReviewBrief()
               : h === "build"
-                ? `si te piden un cambio, hazlo en la rama de ese PR (github_checkout / github_push_files) y no abras otro. No uses factory_build_done.`
+                ? LOOSE_PR_BUILD_BRIEF
                 : `si te piden planear algo sobre él, planéalo a partir de ese PR.`),
         );
       }

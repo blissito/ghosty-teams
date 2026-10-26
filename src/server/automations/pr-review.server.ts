@@ -5,6 +5,7 @@
 //    el hilo y lo resuelve sólo si lo arregló.
 // Lo de una mención @ghosty lo atiende el camino del chat (PrThread) y lo de un pedido de la
 // fábrica lo vigila pr-watches: aquí no se responde dos veces.
+import { GITHUB_REPLY_FORMAT, LOOSE_PR_BUILD_BRIEF, loosePrReviewBrief } from "../apps/factory-roles";
 import type { Automation, AutomationCtx, RepoEvent } from "./types";
 
 export type Severity = "P0" | "P1" | "P2";
@@ -66,12 +67,24 @@ export async function claimAttempt(ctx: AutomationCtx, kind: "pr_review" | "revi
   return false;
 }
 
-export type Deps = { isFactoryPr(repo: string, pr: number): Promise<boolean> };
+/** Las mismas reglas que la fábrica le da a cada rol (`.ghosty/factory.md`, docs/agents, AGENTS.md). */
+export const REPO_RULES =
+  "Reglas del repo, le ganan a tu criterio general: lee con github_read_file el AGENTS.md o CLAUDE.md más cercano a los archivos que cambian (y el de la raíz), las fichas de docs/agents/ que toquen el tema y .ghosty/factory.md si existe (convenciones y la sección de tu rol, «## @check» o «## @build»).";
+
+export type Deps = {
+  isFactoryPr(repo: string, pr: number): Promise<boolean>;
+  /** 👀 de la App sobre el comentario, como hace la fábrica con un pedido desde GitHub. */
+  ack(repo: string, commentUrl: string): Promise<unknown>;
+};
 
 const defaultDeps: Deps = {
   async isFactoryPr(repo, pr) {
     const { runsByPr } = await import("../apps/factory-runs.server");
     return (await runsByPr(repo, pr)).length > 0;
+  },
+  async ack(repo, url) {
+    const { ackGithubComment } = await import("../connectors/github.server");
+    return ackGithubComment(repo, url);
   },
 };
 
@@ -94,11 +107,10 @@ export function prReviewPrompt(ev: RepoEvent, min: Severity): string {
   const pr = ev.pr!;
   const ref = `${ev.repo}#${pr.number}`;
   return [
-    `Revisión automática de ${ref}${pr.title ? ` «${pr.title}»` : ""}${pr.author ? ` de @${pr.author}` : ""}${pr.url ? ` (${pr.url})` : ""}, commit ${pr.headSha}. La prendió el equipo para este repo: no pidas confirmación.`,
-    `1. Reglas del repo: lee con github_read_file el AGENTS.md o CLAUDE.md más cercano a los archivos que cambian (y el de la raíz), y .ghosty/check.md si existe. Le ganan a tu criterio general.`,
-    `2. Lee el diff con github_get_pr y github_pr_files. Busca ${severityScope(min)}. Antes de señalar algo, confirma en el código que pasa de verdad; si dudas, no lo señales.`,
-    `3. Deja UNA sola review con github_create_review, evento COMMENT (nunca APPROVE ni REQUEST_CHANGES): un comentario en línea por hallazgo, con la severidad al inicio («P1: …»), qué falla y cómo arreglarlo. Si no hay nada grave, la review es una línea: «Sin hallazgos graves».`,
-    `4. No empujes commits ni toques el PR. En este hilo, 1 a 3 renglones: cuántos hallazgos y la liga al PR.`,
+    `Revisión automática del PR ${ref}${pr.title ? ` «${pr.title}»` : ""}${pr.author ? ` de @${pr.author}` : ""}${pr.url ? ` (${pr.url})` : ""}, commit ${pr.headSha}. La prendió el equipo para este repo: no pidas confirmación. NO hay pedido de la fábrica: ${loosePrReviewBrief({ commentOnly: true })}`,
+    REPO_RULES,
+    `Severidad: de lo que encuentres, publica ${severityScope(min)}; lo demás no se comenta. Antes de señalar algo, confirma en el código que pasa de verdad; si dudas, no lo señales. Un comentario en línea por hallazgo, con la severidad al inicio («P1: …»), qué falla y cómo arreglarlo. Si no hay nada grave, la review es una línea: «Sin hallazgos graves».`,
+    `No empujes commits ni toques el PR.`,
   ].join("\n");
 }
 
@@ -156,11 +168,11 @@ export function autofixPrompt(ev: RepoEvent): string {
     ? `@${who} comentó en ${ev.comment.path ?? "el diff"}${ev.comment.line ? `:${ev.comment.line}` : ""} (comentario ${ev.comment.id}${ev.comment.url ? `, ${ev.comment.url}` : ""}): «${String(ev.comment.body ?? "").slice(0, 1500)}»`
     : `@${who} pidió cambios en una review${ev.review?.body ? `: «${String(ev.review.body).slice(0, 1500)}»` : "."}`;
   return [
-    `Corrección automática en ${ref}${pr.url ? ` (${pr.url})` : ""}, rama ${pr.head ?? "del PR"}. La prendió el equipo para este repo: no pidas confirmación.`,
+    `Corrección automática en el PR ${ref}${pr.url ? ` (${pr.url})` : ""}, rama ${pr.head ?? "del PR"}. La prendió el equipo para este repo: no pidas confirmación. NO hay pedido de la fábrica: ${LOOSE_PR_BUILD_BRIEF}`,
     what,
     `1. Lista los hilos con github_pr_review_threads y atiende TODOS los que siguen sin resolver y cuyo último comentario es de una persona (una review trae varios a la vez). Salta los que ya contestaste tú o que mencionan @ghosty.`,
-    `2. Lee las reglas del repo (AGENTS.md o CLAUDE.md más cercano, y .ghosty/check.md si existe). Aplica cada cambio en la MISMA rama del PR, en un solo commit si se puede (github_push_files, o la caja si hace falta correr pruebas). Nunca force-push, nunca otra rama, nunca mergees.`,
-    `3. Contesta en cada hilo con github_reply_review_comment qué cambiaste y el commit. Si no estás de acuerdo o el pedido es ambiguo, NO adivines: explica por qué y pregunta, sin tocar el código.`,
+    `2. ${REPO_RULES} Aplica los cambios en la MISMA rama, en un solo commit si se puede (o en la caja si hace falta correr pruebas). Nunca force-push, nunca otra rama, nunca mergees.`,
+    `3. Contesta en cada hilo con github_reply_review_comment: ${GITHUB_REPLY_FORMAT}. Si no estás de acuerdo o el pedido es ambiguo, NO adivines: explica por qué y pregunta, sin tocar el código.`,
     `4. Resuelve el hilo con github_resolve_review_thread SÓLO si lo arreglaste. Si la rama no se puede empujar (fork o sin permiso), dilo en el hilo y para.`,
     `En este hilo de Teams, 1 a 3 renglones: qué hilos arreglaste, cuáles no y por qué, con la liga al PR.`,
   ].join("\n");
@@ -178,6 +190,7 @@ export async function handleReviewAutofix(ev: RepoEvent, ctx: AutomationCtx, dep
   if (!(await ctx.claim("review_autofix", `${ev.repo.toLowerCase()}#${pr.number}:window`, AUTOFIX_WINDOW_MS))) return;
   if (!(await ctx.budget("review_autofix"))) return;
   if (!(await claimAttempt(ctx, "review_autofix", ev.repo, pr.number, AUTOFIX_ATTEMPT_TTL_MS))) return;
+  if (ev.comment?.url) void deps.ack(ev.repo, ev.comment.url).catch(() => {});
   await ctx.wake({
     handle: "build",
     threadKey: threadKeyOf("review_autofix", ev.repo, pr.number),

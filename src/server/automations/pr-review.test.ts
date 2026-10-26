@@ -22,7 +22,7 @@ function fakeCtx(settings: Record<string, unknown> = {}, budget = true) {
   };
   return { ctx, wakes, claimed };
 }
-const notFactory = { isFactoryPr: async () => false };
+const notFactory = { isFactoryPr: async () => false, ack: async () => true };
 
 const opened = (over: Partial<RepoEvent> = {}, pr: Partial<NonNullable<RepoEvent["pr"]>> = {}): RepoEvent => ({
   deliveryId: "d1", event: "pull_request", action: "opened", repo: "acme/app",
@@ -52,7 +52,8 @@ describe("pr_review: filtros", () => {
     expect(normalizeSeverity("raro")).toBe("P1");
     expect(prReviewPrompt(opened(), "P0")).toContain("sólo P0 (");
     expect(prReviewPrompt(opened(), "P1")).toContain("Sin hallazgos graves");
-    expect(prReviewPrompt(opened(), "P1")).toContain(".ghosty/check.md");
+    expect(prReviewPrompt(opened(), "P1")).toContain("«## @check»");
+    expect(prReviewPrompt(opened(), "P1")).toContain("No uses factory_check_verdict");
     expect(prReviewPrompt(opened(), "P1")).toContain("nunca APPROVE");
   });
 });
@@ -75,7 +76,7 @@ describe("pr_review: claim y wake", () => {
   });
   it("no actúa en PRs de la fábrica ni sin presupuesto", async () => {
     const a = fakeCtx();
-    await handlePrReview(opened(), a.ctx, { isFactoryPr: async () => true });
+    await handlePrReview(opened(), a.ctx, { isFactoryPr: async () => true, ack: async () => true });
     expect(a.wakes).toHaveLength(0);
     const b = fakeCtx({}, false);
     await handlePrReview(opened(), b.ctx, notFactory);
@@ -134,10 +135,25 @@ describe("review_autofix: claim y wake", () => {
     expect(wakes[0].threadKey).toBe("review_autofix:acme/app#7");
     expect(wakes[0].text).toContain("github_resolve_review_thread");
     expect(wakes[0].text).toContain("SÓLO si lo arreglaste");
+    expect(wakes[0].text).toContain("No uses factory_build_done");
   });
   it("no actúa en PRs de la fábrica", async () => {
     const { ctx, wakes } = fakeCtx();
-    await handleReviewAutofix(comment("a"), ctx, { isFactoryPr: async () => true });
+    await handleReviewAutofix(comment("a"), ctx, { isFactoryPr: async () => true, ack: async () => true });
     expect(wakes).toHaveLength(0);
+  });
+});
+
+describe("texto compartido con la fábrica", () => {
+  it("la revisión suelta de la tarjeta sigue igual; la automatización sólo comenta", async () => {
+    const { loosePrReviewBrief } = await import("../apps/factory-roles");
+    expect(loosePrReviewBrief()).toContain("github_create_review (APPROVE o REQUEST_CHANGES, hallazgos con archivo:línea)");
+    expect(loosePrReviewBrief({ commentOnly: true })).toContain("evento COMMENT");
+  });
+  it("review_autofix pone 👀 en el comentario como la fábrica", async () => {
+    const { ctx } = fakeCtx();
+    const acks: string[] = [];
+    await handleReviewAutofix(comment("a", {}, { url: "https://github.com/acme/app/pull/7#discussion_r5" }), ctx, { isFactoryPr: async () => false, ack: async (_r, u) => acks.push(u) });
+    expect(acks).toEqual(["https://github.com/acme/app/pull/7#discussion_r5"]);
   });
 });
