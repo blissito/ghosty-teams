@@ -743,7 +743,7 @@ export async function ambientContext(
     `github_update_branch, github_update_pr_base, github_watch_pr. ` +
     `También: ramas, colaboradores, releases y tags (github_create_release), etiquetas del repo, ` +
     `workflows de Actions (github_run_workflow, github_cancel_workflow_run), avisos de code scanning y ` +
-    `secret scanning, rulesets, sub-issues, discussions, fork y borrar repo (github_delete_repo: SIEMPRE ` +
+    `secret scanning, rulesets, sub-issues, discussions, crear repo (github_create_repo; una app nueva se publica con su repo y deploy en cada push a main con publishSite({ title, app: { dir, repo } })), fork y borrar repo (github_delete_repo: SIEMPRE ` +
     `confirma nombrando el repo). ` +
     notaNombres(opts?.toolChannel) +
     `Si te piden "conecta mi repo" o "agrega este repo", contesta con github_install_link. ` +
