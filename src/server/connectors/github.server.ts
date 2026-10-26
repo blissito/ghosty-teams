@@ -154,20 +154,60 @@ async function api(sub: string, path: string, init?: RequestInit): Promise<any> 
         "si hace falta uno nuevo hay que actualizarlo del lado nuestro, no reconectando.",
     };
   }
-  if (res.status === 404) {
-    // El 404 de GitHub es deliberadamente ambiguo (no confirma repos privados),
-    // así que la causa más probable NO es que no exista.
-    return {
-      error:
-        "GitHub SÍ está conectado, pero no encuentro eso. Lo más probable es que ese repositorio no " +
-        `esté entre los que se eligieron al instalar. Se agregan aquí: ${INSTALL_URL} — ` +
-        "dale ese enlace al usuario. También puede ser un nombre mal escrito.",
-      installUrl: INSTALL_URL,
-    };
-  }
+  if (res.status === 404) return notFoundError(sub, path);
   if (res.status === 409) return { error: "Conflicto en GitHub (¿la rama ya existe o el archivo cambió?)." };
   if (res.status === 422) return { error: `GitHub rechazó los datos: ${body}` };
   return { error: `GitHub respondió ${res.status}: ${body}` };
+}
+
+// ── 404: ¿repo fuera de la instalación o recurso equivocado? ─────────────────
+//
+// El 404 de GitHub es deliberadamente ambiguo (no confirma repos privados). Medido en 30 días:
+// 15 veces el agente recibió «no encuentro eso» sin saber si faltaba el repo en la instalación
+// o si el número de PR/run estaba mal, y reintentaba a ciegas. Con UNA lectura extra del repo
+// (sólo cuando ya falló) se separan los dos casos, y el primero lleva la liga de SU cuenta.
+
+/** Liga para agregar repos a la instalación de la App en `owner` (o para instalarla). */
+export async function repoAccessUrl(owner: string): Promise<string> {
+  const r = await appFetch(`/users/${encodeURIComponent(owner)}/installation`).catch(() => null);
+  const id = typeof r?.id === "number" ? r.id : null;
+  if (!id) return INSTALL_URL;
+  return String(r?.account?.type ?? "") === "Organization"
+    ? `https://github.com/organizations/${owner}/settings/installations/${id}`
+    : `https://github.com/settings/installations/${id}`;
+}
+
+/** Texto del 404 cuando el repo no está al alcance (fuera de la instalación o mal escrito). */
+export function repoOutOfInstallError(repo: string, url: string): { error: string; installUrl: string; githubStatus: 404 } {
+  return {
+    error:
+      `GitHub SÍ está conectado, pero no encuentro ${repo || "eso"}. Lo más probable es que ese repositorio no ` +
+      `esté entre los que se eligieron al instalar la app de Ghosty. Se agrega aquí: ${url} ` +
+      "(«Repository access» → agregar el repo, o «All repositories») — dale ese enlace al usuario tal cual. " +
+      "También puede ser un nombre mal escrito.",
+    installUrl: url,
+    githubStatus: 404,
+  };
+}
+
+async function notFoundError(sub: string, path: string): Promise<{ error: string; installUrl?: string; githubStatus: 404 }> {
+  const m = path.match(/^\/repos\/([^/?#]+)\/([^/?#]+)([^?#]*)/);
+  if (!m) return repoOutOfInstallError("", INSTALL_URL);
+  const [, owner, name, rest] = m;
+  if (rest && rest !== "/") {
+    // Sin subrecurso esto no vuelve a entrar aquí con otro subrecurso: no hay recursión.
+    const info = await api(sub, `/repos/${owner}/${name}`);
+    if (!info?.error) {
+      return {
+        error:
+          `El repo ${owner}/${name} sí está al alcance; lo que GitHub no encuentra es ${rest} ` +
+          "(número de PR/issue, rama, ruta, run o job equivocado, o ya no existe). No es tema de instalación: revisa el dato.",
+        githubStatus: 404,
+      };
+    }
+    if (info?.githubStatus === 404) return info;
+  }
+  return repoOutOfInstallError(`${owner}/${name}`, await repoAccessUrl(owner));
 }
 
 /**
@@ -178,7 +218,11 @@ async function api(sub: string, path: string, init?: RequestInit): Promise<any> 
  * caer el header Authorization al cambiar de origen**, que es justo lo que hace
  * falta: mandárselo al blob lo haría fallar.
  */
-async function apiText(sub: string, path: string): Promise<string | { error: string }> {
+async function apiText(
+  sub: string,
+  path: string,
+  accept = "application/vnd.github+json",
+): Promise<string | { error: string; githubStatus?: number }> {
   const token = await getValidToken(sub, "github");
   if (!token) {
     return { error: "La cuenta de GitHub no está conectada. Conéctala en Ajustes → Integraciones." };
@@ -187,11 +231,12 @@ async function apiText(sub: string, path: string): Promise<string | { error: str
     const res = await fetch(`${API}${path}`, {
       headers: {
         Authorization: `Bearer ${token}`,
-        Accept: "application/vnd.github+json",
+        Accept: accept,
         "X-GitHub-Api-Version": "2022-11-28",
       },
     });
-    if (!res.ok) return { error: `GitHub respondió ${res.status} al pedir el log.` };
+    if (res.status === 404) return notFoundError(sub, path);
+    if (!res.ok) return { error: `GitHub respondió ${res.status} al pedir ${accept.includes("diff") ? "el diff" : "el log"}.`, githubStatus: res.status };
     return await res.text();
   } catch (e) {
     return { error: `No pude bajar el log: ${e instanceof Error ? e.message : String(e)}` };
@@ -355,6 +400,26 @@ export async function appPullRequest(repo: string, number: number): Promise<AppP
   } catch {
     return null;
   }
+}
+
+/**
+ * 403 al reintentar CI. La App ya pide Actions: write, así que hay dos causas y llevan a
+ * personas distintas: la instalación no aceptó el permiso (lo acepta el dueño con la liga) o
+ * quien escribe no tiene escritura en el repo (lo da un admin del repo). Se pregunta a la App
+ * qué permisos tiene su instalación; sin App configurada se asume lo primero, como antes.
+ * (El 404 —repo fuera de la instalación— ya sale de `api` con la liga para agregarlo.)
+ */
+async function rerunDenied(repoPath: string): Promise<{ error: string }> {
+  const inst = await appFetch(`/repos/${repoPath}/installation`).catch(() => null);
+  if (inst?.permissions?.actions === "write") {
+    return {
+      error:
+        `La app de Ghosty sí tiene «Actions: write» en ${repoPath}, pero GitHub no deja reintentar con la cuenta de quien te escribe: ` +
+        "le falta permiso de escritura en el repo (rol Write o más). Un admin del repo lo da en Settings → Collaborators. " +
+        "También puede ser un run de hace más de 30 días, que GitHub ya no reintenta.",
+    };
+  }
+  return missingPermission(repoPath, "Actions: write");
 }
 
 /** GET a la API con el JWT de la App (sin instalación). Devuelve `null` si falla. */
@@ -774,6 +839,48 @@ const trimPr = (p: any) => ({
   additions: p?.additions,
   deletions: p?.deletions,
 });
+
+/**
+ * `mergeable_state` de GitHub traducido a qué hacer. Sin esto el agente probaba
+ * `github_update_branch` a ciegas y fallaba por conflicto (6 de 12 en 30 días).
+ * `null`/`unknown` = GitHub aún lo calcula: se vuelve a pedir en unos segundos.
+ */
+export function mergeabilityOf(p: any): { mergeableState: string | null; mergeHint?: string } {
+  const st = typeof p?.mergeable_state === "string" ? p.mergeable_state : null;
+  const base = p?.base?.ref ?? "la base";
+  const hints: Record<string, string> = {
+    dirty: `Tiene CONFLICTOS con ${base}: github_update_branch no sirve. Resuélvelos con merge de ${base} en la rama del PR y push.`,
+    behind: `Va atrás de ${base} sin conflictos: github_update_branch lo pone al día.`,
+    blocked: "Lo bloquea una regla de la rama (revisión requerida o checks obligatorios pendientes).",
+    unstable: "Se puede mergear, pero hay checks que no pasaron (o siguen corriendo). Míralos con github_pr_checks.",
+    draft: "Es borrador: github_mark_ready cuando esté listo.",
+    unknown: "GitHub todavía calcula si se puede mergear: vuelve a pedir el PR en unos segundos.",
+  };
+  const hint = st ? hints[st] : p?.state === "open" ? hints.unknown : undefined;
+  return hint ? { mergeableState: st, mergeHint: hint } : { mergeableState: st };
+}
+
+/**
+ * Error de `github_update_branch`. Un conflicto se dice como conflicto y con los pasos; antes el
+ * agente leía «¿conflictos?» con signo de interrogación y volvía a darle al botón.
+ */
+export function updateBranchError(raw: string, pr: any | null): { error: string; conflict?: true; base?: string; head?: string } {
+  const base = String(pr?.base?.ref ?? "") || "la rama base";
+  const head = String(pr?.head?.ref ?? "") || "la rama del PR";
+  if (/merge conflict/i.test(raw) || pr?.mergeable_state === "dirty") {
+    return {
+      conflict: true,
+      base,
+      head,
+      error:
+        `Conflicto: ${head} choca con ${base} y GitHub no puede actualizarla solo (reintentar no sirve). Pasos: ` +
+        `1) haz checkout de ${head} en tu caja (en la fábrica, factory_git_remote; si no, github_checkout con mode:"git"); ` +
+        `2) git fetch origin ${base} && git merge origin/${base}, resuelve los archivos en conflicto y corre las pruebas; ` +
+        `3) push a ${head} (git push en la fábrica; sin caja, github_push_files con mergeFrom: "${base}" y los archivos ya resueltos).`,
+    };
+  }
+  return { error: `GitHub no pudo actualizar la rama: ${raw}` };
+}
 
 // ── Contexto ambiente ────────────────────────────────────────────────────────
 
@@ -1207,6 +1314,7 @@ const ALL_TOOLS: ConnectorTool[] = [
       ]);
       return {
         ...trimPr(pr),
+        ...mergeabilityOf(pr),
         thread: Array.isArray(comments)
           ? comments.map((c: any) => ({ author: c?.user?.login, at: c?.created_at, body: c?.body?.slice(0, 3000) }))
           : [],
@@ -1302,7 +1410,9 @@ const ALL_TOOLS: ConnectorTool[] = [
       'Copia de trabajo del repo para EJECUTAR su código: correr tests, compilar, lint, reproducir un bug. ' +
       'Default: devuelve una URL efímera de descarga del tarball (bájala YA con curl -L | tar xz; no trae .git). ' +
       'Con mode:"git" devuelve un clone real con historia (token de 1 h, sólo lectura). ' +
-      "Para LEER un archivo suelto sigue siendo github_read_file — esto es para ejecutar.",
+      "Para LEER un archivo suelto sigue siendo github_read_file — esto es para ejecutar. " +
+      "No hagas `git clone https://github.com/...` a mano: un repo privado pide credencial y falla. " +
+      "Para EMPUJAR commits en la Software Factory (@build) no es esta: factory_git_remote da el remote con push.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1593,7 +1703,10 @@ const ALL_TOOLS: ConnectorTool[] = [
       if (pr?.error) return pr;
       const sha = String(pr?.head?.sha ?? "");
       const r = await loadChecks((path) => api(sub, path), p, sha);
-      return "error" in r ? r : { ...r, sha: sha.slice(0, 7) };
+      if ("error" in r) return r;
+      // «pending» es un estado, no un fallo: 102 llamadas de 30 días se contaron como error
+      // porque el script del agente salía con exit ≠ 0 al ver CI corriendo.
+      return r.state === "pending" ? { ...r, sha: sha.slice(0, 7), note: PENDING_NOTE } : { ...r, sha: sha.slice(0, 7) };
     },
   },
   {
@@ -1699,9 +1812,8 @@ const ALL_TOOLS: ConnectorTool[] = [
       if (r?.error) {
         // 422 aquí casi siempre es conflicto: eso NO lo resuelve un botón, hay que tocar código.
         if (String(r.error).includes("rechazó")) {
-          return {
-            error: `GitHub no pudo actualizar la rama (¿conflictos con la base?). ${r.error} Resuélvelo con github_push_files y \`mergeFrom\` = la rama base: commit de merge con los archivos que chocan ya resueltos.`,
-          };
+          const pr = await api(sub, `/repos/${p}/pulls/${Number(a.number)}`);
+          return updateBranchError(String(r.error), pr?.error ? null : pr);
         }
         return r;
       }
@@ -2058,8 +2170,9 @@ const ALL_TOOLS: ConnectorTool[] = [
     handler: async (sub, a) => {
       const p = repoPath(a.repo);
       if (!p) return BAD_REPO;
-      const r = await api(sub, `/repos/${p}/actions/runs/${Number(a.run_id)}/rerun-failed-jobs`, { method: "POST" });
-      if (r?.error && /Sin permiso/.test(String(r.error))) return missingPermission(p, "Actions: write");
+      const runId = Number(a.run_id ?? a.runId);
+      const r = await api(sub, `/repos/${p}/actions/runs/${runId}/rerun-failed-jobs`, { method: "POST" });
+      if (r?.error && /Sin permiso/.test(String(r.error))) return rerunDenied(p);
       return r?.error ? r : { ok: true };
     },
   },
@@ -3092,6 +3205,240 @@ const ALL_TOOLS: ConnectorTool[] = [
   },
 ];
 
+// ── Diff del PR y jobs de CI (los que el Worker buscaba por nombre y no existían) ──────
+//
+// Medido en 30 días: @build inventó `github_pr_diff`, `github_list_workflow_jobs`,
+// `github_job_log` y ~50 nombres más, en bucles de prueba y error. Las tres primeras sí
+// faltaban; las demás ya existen con otro nombre y las resuelve `suggestGithubTool`.
+
+const PENDING_NOTE =
+  "CI sigue corriendo: esto NO es un error (no termines tu script con exit ≠ 0 por esto). " +
+  "Para enterarte cuando acabe usa github_watch_pr; en la Software Factory, cierra tu paso y la plataforma avisa.";
+
+const DIFF_DEFAULT = 40_000;
+const DIFF_MAX = 150_000;
+
+/** Recorta un diff unificado a `max` caracteres, opcionalmente sólo a ciertos archivos. */
+export function clipDiff(raw: string, max: number, paths?: string[]): { diff: string; files: string[]; totalChars: number; truncated: boolean } {
+  // Cada archivo empieza en «diff --git a/<ruta> b/<ruta>».
+  const sections = raw.split(/^(?=diff --git )/m).filter((x) => x.trim());
+  const fileOf = (sec: string) => sec.match(/^diff --git a\/(.+?) b\//)?.[1] ?? "";
+  const wanted = paths?.length ? sections.filter((sec) => paths.some((q) => fileOf(sec) === q.replace(/^\/+/, ""))) : sections;
+  const full = wanted.join("");
+  return {
+    diff: full.length > max ? full.slice(0, max) : full,
+    files: wanted.map(fileOf),
+    totalChars: full.length,
+    truncated: full.length > max,
+  };
+}
+
+/** Las últimas `n` líneas de un log de Actions, sin la marca de tiempo de cada línea. */
+export function tailLines(raw: string, n: number): { lines: string; totalLines: number; truncated: boolean } {
+  const all = raw.replace(/\n$/, "").split("\n").map((l) => l.replace(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s?/, ""));
+  const take = all.slice(-n);
+  // Tope en caracteres además de líneas: una línea minificada puede pesar megas.
+  const text = take.join("\n");
+  return { lines: text.length > 60_000 ? text.slice(-60_000) : text, totalLines: all.length, truncated: all.length > take.length || text.length > 60_000 };
+}
+
+const CI_DIFF_TOOLS: ConnectorTool[] = [
+  {
+    name: "github_pr_diff",
+    description:
+      "El diff UNIFICADO de un pull request (el de `git diff`, con contexto), listo para leer o aplicar con `git apply`. " +
+      `Recorta a \`maxChars\` (default ${DIFF_DEFAULT}, tope ${DIFF_MAX}) y lo avisa con truncated:true; con \`paths\` trae sólo esos archivos. ` +
+      "Para la lista de archivos con +/− usa github_pr_files.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...repoProp,
+        number: { type: "number", description: "Número del PR." },
+        paths: { type: "array", items: { type: "string" }, description: "Sólo estos archivos (rutas tal como salen en github_pr_files)." },
+        maxChars: { type: "number", description: `Tope de caracteres. Default ${DIFF_DEFAULT}, máximo ${DIFF_MAX}.` },
+      },
+      required: ["repo", "number"],
+    },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const n = Number(a.number ?? a.pr);
+      if (!Number.isInteger(n) || n <= 0) return { error: "Falta el número del PR." };
+      const raw = await apiText(sub, `/repos/${p}/pulls/${n}`, "application/vnd.github.diff");
+      if (typeof raw !== "string") {
+        // 406: GitHub no genera diffs de PRs enormes (miles de líneas o >300 archivos).
+        if (raw.githubStatus === 406) return { error: "El PR es demasiado grande para que GitHub genere el diff. Usa github_pr_files (por archivo) o github_checkout con mode:\"git\" y git diff local." };
+        return raw;
+      }
+      const max = Math.min(Math.max(Number(a.maxChars) || DIFF_DEFAULT, 1000), DIFF_MAX);
+      const paths = Array.isArray(a.paths) ? a.paths.map(String) : undefined;
+      const r = clipDiff(raw, max, paths);
+      return {
+        number: n,
+        ...r,
+        ...(r.truncated
+          ? { note: `Diff recortado: van ${r.diff.length} de ${r.totalChars} caracteres. Pide menos archivos con \`paths\` o lee el resto con github_pr_files / github_read_file. No opines de lo que no viste.` }
+          : {}),
+        ...(paths?.length && !r.files.length ? { note: "Ninguna de esas rutas cambia en el PR: revisa los nombres con github_pr_files." } : {}),
+      };
+    },
+  },
+  {
+    name: "github_list_workflow_jobs",
+    description:
+      "Los JOBS de un run de GitHub Actions con su id, estado, conclusión y pasos (el que falló, marcado). El `id` de cada job es lo que pide github_job_logs. " +
+      "El run_id sale de github_workflow_runs.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...repoProp,
+        run_id: { type: "number", description: "id del workflow run." },
+        filter: { type: "string", enum: ["latest", "all"], description: 'Default "latest" (el último intento de cada job); "all" incluye reintentos.' },
+      },
+      required: ["repo", "run_id"],
+    },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const id = Number(a.run_id ?? a.runId);
+      if (!Number.isInteger(id) || id <= 0) return { error: "Falta el run_id (sale de github_workflow_runs)." };
+      const filter = a.filter === "all" ? "all" : "latest";
+      const r = await api(sub, `/repos/${p}/actions/runs/${id}/jobs?per_page=100&filter=${filter}`);
+      if (r?.error) return r;
+      const jobs = (r?.jobs ?? []).map((j: any) => ({
+        id: j?.id,
+        name: j?.name,
+        status: j?.status,
+        conclusion: j?.conclusion,
+        startedAt: j?.started_at,
+        completedAt: j?.completed_at,
+        url: j?.html_url,
+        failedStep: (j?.steps ?? []).find((x: any) => x?.conclusion === "failure")?.name ?? null,
+        steps: (j?.steps ?? []).map((x: any) => ({ n: x?.number, name: x?.name, status: x?.status, conclusion: x?.conclusion })),
+      }));
+      return { runId: id, total: r?.total_count ?? jobs.length, jobs };
+    },
+  },
+  {
+    name: "github_job_logs",
+    description:
+      "El log de UN job de GitHub Actions: sus últimas `lines` líneas (default 200, máximo 2000), sin marcas de tiempo, más las líneas que parecen error. " +
+      "El job_id sale de github_list_workflow_jobs. Para el diagnóstico rápido de un run entero, github_workflow_run_logs.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...repoProp,
+        job_id: { type: "number", description: "id del job (de github_list_workflow_jobs)." },
+        lines: { type: "number", description: "Cuántas líneas del final. Default 200, máximo 2000." },
+      },
+      required: ["repo", "job_id"],
+    },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const id = Number(a.job_id ?? a.jobId);
+      if (!Number.isInteger(id) || id <= 0) return { error: "Falta el job_id (sale de github_list_workflow_jobs)." };
+      const raw = await apiText(sub, `/repos/${p}/actions/jobs/${id}/logs`);
+      if (typeof raw !== "string") {
+        if (raw.githubStatus === 410) return { error: "GitHub ya borró el log de ese job (caducó). Da la url del job en vez de inventar líneas." };
+        return raw;
+      }
+      const n = Math.min(Math.max(Number(a.lines) || 200, 1), 2000);
+      const t = tailLines(raw, n);
+      return { jobId: id, errorLines: trimLog(raw).errorLines, ...t };
+    },
+  },
+];
+
+/**
+ * Nombres que los agentes inventan (medidos en sus transcripciones) → la tool real. Se contesta
+ * con un error «¿quisiste decir…?» en vez de un alias mudo: así el modelo aprende el nombre en
+ * el mismo turno y la medición sigue viendo el intento.
+ */
+const INVENTED_GITHUB_NAMES: Record<string, string> = {
+  github_job_log: "github_job_logs",
+  github_get_workflow_job_logs: "github_job_logs",
+  github_check_log: "github_job_logs",
+  github_workflow_log: "github_workflow_run_logs",
+  github_run_log: "github_workflow_run_logs",
+  github_actions_log: "github_workflow_run_logs",
+  github_job: "github_list_workflow_jobs",
+  github_workflow_jobs: "github_list_workflow_jobs",
+  github_list_runs: "github_workflow_runs",
+  github_runs: "github_workflow_runs",
+  github_actions_runs: "github_workflow_runs",
+  github_list_workflow_runs: "github_workflow_runs",
+  github_workflow_run_list: "github_workflow_runs",
+  github_workflow_run: "github_get_workflow_run",
+  github_run: "github_get_workflow_run",
+  github_workflow_rerun: "github_rerun_workflow",
+  github_rerun_failed_workflow: "github_rerun_workflow",
+  github_rerun: "github_rerun_workflow",
+  github_commit_files: "github_push_files",
+  github_create_commit: "github_push_files",
+  github_commit: "github_push_files",
+  github_commit_file: "github_push_files",
+  github_put_file: "github_write_file",
+  github_create_or_update_file: "github_write_file",
+  github_create_file: "github_write_file",
+  github_update_file: "github_write_file",
+  github_upsert_file: "github_write_file",
+  github_save_file: "github_write_file",
+  github_file: "github_read_file",
+  github_get_file: "github_read_file",
+  github_get_file_contents: "github_read_file",
+  github_list_files: "github_repo_tree",
+  github_list_tree: "github_repo_tree",
+  github_files: "github_repo_tree",
+  github_list_dir: "github_repo_tree",
+  github_branches: "github_list_branches",
+  github_pr_view: "github_get_pr",
+  github_view_pr: "github_get_pr",
+  github_pull_request: "github_get_pr",
+  github_pr_info: "github_get_pr",
+  github_pr_create: "github_create_pr",
+  github_open_pr: "github_create_pr",
+  github_create_pull_request: "github_create_pr",
+  github_commits: "github_list_commits",
+  github_diff: "github_pr_diff",
+  github_compare: "github_pr_diff",
+  github_compare_commits: "github_pr_diff",
+};
+
+/**
+ * Si `name` empieza con `github_` y NO es una tool real, el error útil con la(s) más
+ * parecida(s). `null` si es real o no es de GitHub (entonces sigue el camino normal).
+ */
+export function suggestGithubTool(name: string): string | null {
+  if (!name.startsWith("github_")) return null;
+  const real = allTools().map((t) => t.name);
+  if (real.includes(name)) return null;
+  if (name === "github_list_tools") {
+    return `${name} no existe: la lista de tools sale de list() del SDK de conectores (filtra las que empiezan con "github_").`;
+  }
+  if (name === "github_api" || name === "github_request") {
+    return `${name} no existe: no hay llamada cruda a la API de GitHub. Usa la tool específica (list() del SDK las enumera) o github_checkout para trabajar con git en tu caja.`;
+  }
+  const exact = INVENTED_GITHUB_NAMES[name];
+  const picks = exact ? [exact] : closestGithubTools(name, real);
+  return picks.length
+    ? `${name} no existe. ¿Quisiste decir ${picks.join(" o ")}? Llama a esa con sus argumentos (list() da el inputSchema).`
+    : `${name} no existe. Las tools de GitHub las enumera list() del SDK de conectores.`;
+}
+
+/** Hasta 3 nombres reales que comparten más palabras con el inventado. */
+function closestGithubTools(name: string, real: string[]): string[] {
+  const norm = (w: string) => (w === "pull" || w === "request" ? "pr" : w.replace(/s$/, ""));
+  const words = (n: string) => new Set(n.replace(/^github_/, "").split("_").map(norm).filter(Boolean));
+  const want = words(name);
+  return real
+    .map((r) => ({ r, score: [...words(r)].filter((w) => want.has(w)).length }))
+    .filter((x) => x.score > 0)
+    .sort((x, y) => y.score - x.score || x.r.length - y.r.length)
+    .slice(0, 3)
+    .map((x) => x.r);
+}
+
 /**
  * El set de tools depende de DÓNDE ocurre el turno. Mismo criterio que las alertas de Sentry
  * (`sentry.server.ts`), pero aquí la razón es más fuerte que ahorrar contexto: es la
@@ -3114,13 +3461,14 @@ const ALL_TOOLS: ConnectorTool[] = [
  * ⚠️ No la use nada que corra en nombre del modelo. Para eso está `tools(sub, dest)`.
  */
 export function allTools(): ConnectorTool[] {
-  return [...ALL_TOOLS, watchTool(null)];
+  return [...ALL_TOOLS, ...CI_DIFF_TOOLS, watchTool(null)];
 }
 
 export async function tools(_sub: string, dest: ToolDest | null): Promise<ConnectorTool[]> {
   const allowed = await allowedRepos(dest);
   if (allowed && !allowed.length) return [];
-  const base = allowed ? ALL_TOOLS.filter((t) => !PERSONAL_ONLY_TOOLS.has(t.name)) : ALL_TOOLS;
+  const all = [...ALL_TOOLS, ...CI_DIFF_TOOLS];
+  const base = allowed ? all.filter((t) => !PERSONAL_ONLY_TOOLS.has(t.name)) : all;
   return [...base, watchTool(dest)];
 }
 
