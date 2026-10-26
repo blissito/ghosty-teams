@@ -51,6 +51,7 @@ import { Route as ArtefactoIdRawRouteImport } from './routes/artefacto.$id.raw'
 import { Route as ApiProspeccionAgentRouteImport } from './routes/api.prospeccion.agent'
 import { Route as ApiPSesRouteImport } from './routes/api.p.ses'
 import { Route as ApiInternalScheduleTurnRouteImport } from './routes/api.internal.schedule-turn'
+import { Route as ApiInternalRepoAutomationsRouteImport } from './routes/api.internal.repo-automations'
 import { Route as ApiInternalProspeccionRunRouteImport } from './routes/api.internal.prospeccion-run'
 import { Route as ApiInternalPostMessageRouteImport } from './routes/api.internal.post-message'
 import { Route as ApiInternalMembersRouteImport } from './routes/api.internal.members'
@@ -303,6 +304,12 @@ const ApiInternalScheduleTurnRoute = ApiInternalScheduleTurnRouteImport.update({
   path: '/api/internal/schedule-turn',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiInternalRepoAutomationsRoute =
+  ApiInternalRepoAutomationsRouteImport.update({
+    id: '/api/internal/repo-automations',
+    path: '/api/internal/repo-automations',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiInternalProspeccionRunRoute =
   ApiInternalProspeccionRunRouteImport.update({
     id: '/api/internal/prospeccion-run',
@@ -579,6 +586,7 @@ export interface FileRoutesByFullPath {
   '/api/internal/members': typeof ApiInternalMembersRoute
   '/api/internal/post-message': typeof ApiInternalPostMessageRoute
   '/api/internal/prospeccion-run': typeof ApiInternalProspeccionRunRoute
+  '/api/internal/repo-automations': typeof ApiInternalRepoAutomationsRoute
   '/api/internal/schedule-turn': typeof ApiInternalScheduleTurnRoute
   '/api/p/ses': typeof ApiPSesRoute
   '/api/prospeccion/agent': typeof ApiProspeccionAgentRoute
@@ -663,6 +671,7 @@ export interface FileRoutesByTo {
   '/api/internal/members': typeof ApiInternalMembersRoute
   '/api/internal/post-message': typeof ApiInternalPostMessageRoute
   '/api/internal/prospeccion-run': typeof ApiInternalProspeccionRunRoute
+  '/api/internal/repo-automations': typeof ApiInternalRepoAutomationsRoute
   '/api/internal/schedule-turn': typeof ApiInternalScheduleTurnRoute
   '/api/p/ses': typeof ApiPSesRoute
   '/api/prospeccion/agent': typeof ApiProspeccionAgentRoute
@@ -749,6 +758,7 @@ export interface FileRoutesById {
   '/api/internal/members': typeof ApiInternalMembersRoute
   '/api/internal/post-message': typeof ApiInternalPostMessageRoute
   '/api/internal/prospeccion-run': typeof ApiInternalProspeccionRunRoute
+  '/api/internal/repo-automations': typeof ApiInternalRepoAutomationsRoute
   '/api/internal/schedule-turn': typeof ApiInternalScheduleTurnRoute
   '/api/p/ses': typeof ApiPSesRoute
   '/api/prospeccion/agent': typeof ApiProspeccionAgentRoute
@@ -836,6 +846,7 @@ export interface FileRouteTypes {
     | '/api/internal/members'
     | '/api/internal/post-message'
     | '/api/internal/prospeccion-run'
+    | '/api/internal/repo-automations'
     | '/api/internal/schedule-turn'
     | '/api/p/ses'
     | '/api/prospeccion/agent'
@@ -920,6 +931,7 @@ export interface FileRouteTypes {
     | '/api/internal/members'
     | '/api/internal/post-message'
     | '/api/internal/prospeccion-run'
+    | '/api/internal/repo-automations'
     | '/api/internal/schedule-turn'
     | '/api/p/ses'
     | '/api/prospeccion/agent'
@@ -1005,6 +1017,7 @@ export interface FileRouteTypes {
     | '/api/internal/members'
     | '/api/internal/post-message'
     | '/api/internal/prospeccion-run'
+    | '/api/internal/repo-automations'
     | '/api/internal/schedule-turn'
     | '/api/p/ses'
     | '/api/prospeccion/agent'
@@ -1090,6 +1103,7 @@ export interface RootRouteChildren {
   ApiInternalMembersRoute: typeof ApiInternalMembersRoute
   ApiInternalPostMessageRoute: typeof ApiInternalPostMessageRoute
   ApiInternalProspeccionRunRoute: typeof ApiInternalProspeccionRunRoute
+  ApiInternalRepoAutomationsRoute: typeof ApiInternalRepoAutomationsRoute
   ApiInternalScheduleTurnRoute: typeof ApiInternalScheduleTurnRoute
   ApiPSesRoute: typeof ApiPSesRoute
   ApiProspeccionAgentRoute: typeof ApiProspeccionAgentRoute
@@ -1403,6 +1417,13 @@ declare module '@tanstack/react-router' {
       path: '/api/internal/schedule-turn'
       fullPath: '/api/internal/schedule-turn'
       preLoaderRoute: typeof ApiInternalScheduleTurnRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/internal/repo-automations': {
+      id: '/api/internal/repo-automations'
+      path: '/api/internal/repo-automations'
+      fullPath: '/api/internal/repo-automations'
+      preLoaderRoute: typeof ApiInternalRepoAutomationsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/internal/prospeccion-run': {
@@ -1786,6 +1807,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiInternalMembersRoute: ApiInternalMembersRoute,
   ApiInternalPostMessageRoute: ApiInternalPostMessageRoute,
   ApiInternalProspeccionRunRoute: ApiInternalProspeccionRunRoute,
+  ApiInternalRepoAutomationsRoute: ApiInternalRepoAutomationsRoute,
   ApiInternalScheduleTurnRoute: ApiInternalScheduleTurnRoute,
   ApiPSesRoute: ApiPSesRoute,
   ApiProspeccionAgentRoute: ApiProspeccionAgentRoute,

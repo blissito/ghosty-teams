@@ -159,3 +159,44 @@ export const workspaceRoomReposFn = createServerFn({ method: "GET" }).handler(as
   const db = await import("../db.server");
   return await db.listWorkspaceRoomRepos(me.sub, me.isOwner);
 });
+
+// ── Automatizaciones de GitHub del repo en este room (`server/automations/`) ──
+// Una fila por tipo, apagadas por default. Las toca cualquiera que vea el room (como el automerge);
+// el agente trabaja a nombre de quien la prendió, así que queda registrado.
+
+async function repoOfRoom(channelId: number, repo: string) {
+  const ctx = await visibleChannel(channelId);
+  const fila = (await ctx.db.listRoomRepos(channelId)).find((r) => r.repo.toLowerCase() === String(repo).toLowerCase());
+  if (!fila) throw new Error("ese repositorio no está conectado a este room");
+  return { ...ctx, repo: fila.repo };
+}
+
+export const roomRepoAutomationsFn = createServerFn({ method: "POST" })
+  .validator((d: { channelId: number; repo: string }) => d)
+  .handler(async ({ data }) => {
+    const { repo } = await repoOfRoom(Number(data.channelId), data.repo);
+    const { listRepoAutomations } = await import("./automations/store.server");
+    const rows = await listRepoAutomations(Number(data.channelId), repo);
+    return rows.map((r) => ({ kind: r.kind as string, enabled: r.enabled }));
+  });
+
+export const setRoomRepoAutomationFn = createServerFn({ method: "POST" })
+  .validator((d: { channelId: number; repo: string; kind: string; enabled: boolean; settings?: Record<string, unknown> }) => d)
+  .handler(async ({ data }) => {
+    const { me, repo } = await repoOfRoom(Number(data.channelId), data.repo);
+    const { isAutomationKind } = await import("./automations/catalog");
+    if (!isAutomationKind(data.kind)) throw new Error("automatización desconocida");
+    const { currentNamespace } = await import("./tenant.server");
+    const S = await import("./automations/store.server");
+    await S.setRepoAutomation({
+      ns: await currentNamespace(),
+      roomId: Number(data.channelId),
+      repo,
+      kind: data.kind,
+      enabled: data.enabled === true,
+      settings: data.settings && typeof data.settings === "object" ? data.settings : undefined,
+      by: me.sub,
+    });
+    const rows = await S.listRepoAutomations(Number(data.channelId), repo);
+    return rows.map((r) => ({ kind: r.kind as string, enabled: r.enabled }));
+  });

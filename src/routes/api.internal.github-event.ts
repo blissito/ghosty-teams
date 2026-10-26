@@ -12,6 +12,11 @@ import { createFileRoute } from "@tanstack/react-router";
 // Firma de partner sobre el CUERPO crudo (`ts.<rawBody>`), como `api/internal/board-event`; el
 // namespace lo resuelve el HOST. Idempotente por `delivery` (gt_github_deliveries): gs reintenta
 // y GitHub reenvía.
+//
+// Automatizaciones (25-oct): gs cuelga un `repoEvent` (`server/automations/types.ts`) del aviso de
+// PR, o lo manda solo con `action: "event"` (issues, CI terminado, reviews, alertas…). Se reparte a
+// las automatizaciones que cada room prendió para ese repo, SIN esperar: la respuesta a gs no
+// depende de lo que tarde un agente.
 
 async function verify(ts: string, sig: string, rawBody: string): Promise<boolean> {
   const crypto = await import("node:crypto");
@@ -41,7 +46,28 @@ type PrEvent = {
   ask?: { text: string; url: string; path?: string; line?: number };
   /** Sólo en `ci`: terminó el CI de la cabeza del PR. */
   ci?: { conclusion: string; sha: string };
+  /** Para las automatizaciones de los rooms. */
+  repoEvent?: import("../server/automations/types").RepoEvent;
 };
+
+/** `action: "event"`: sólo trae `repoEvent` (no es aviso de PR). */
+type EventOnly = { delivery: string; action: "event"; repo: string; repoEvent: import("../server/automations/types").RepoEvent };
+
+/** Reparte el `repoEvent` a las automatizaciones sin bloquear la respuesta. Nunca lanza. */
+async function dispatchAutomations(re: PrEvent["repoEvent"]): Promise<void> {
+  if (!re?.repo || !re.event) return;
+  try {
+    const { currentNamespace, withNamespace } = await import("../server/tenant.server");
+    const ns = await currentNamespace();
+    const origin = await (await import("../origin.server")).reqOrigin().catch(() => "");
+    const { dispatchRepoEvent } = await import("../server/automations/dispatch.server");
+    void withNamespace(ns, () => dispatchRepoEvent(re, { ns, origin })).catch((e) =>
+      console.error(`[github-event] automatizaciones ${re.repo} ${re.event}: ${e instanceof Error ? e.message : e}`),
+    );
+  } catch (e) {
+    console.error(`[github-event] automatizaciones ${re.repo}: ${e instanceof Error ? e.message : e}`);
+  }
+}
 
 const LINE: Record<PrEvent["action"], (ev: PrEvent) => string> = {
   opened: (ev) => `🟢 **PR #${ev.number} abierto**${ev.author ? ` por @${ev.author}` : ""}`,
@@ -124,6 +150,19 @@ export const Route = createFileRoute("/api/internal/github-event")({
         } catch {
           return new Response("json inválido", { status: 400 });
         }
+        // Sólo para las automatizaciones: se reclama la entrega, se reparte y listo.
+        if ((ev as unknown as EventOnly).action === "event") {
+          const only = ev as unknown as EventOnly;
+          if (!only.delivery || !only.repo || !only.repoEvent?.event) return new Response("evento inválido", { status: 400 });
+          await (await import("../server/schema.server")).ensureSchema().catch(() => {});
+          const { dbq } = await import("../dbq.server");
+          const claimed = await dbq("INSERT OR IGNORE INTO gt_github_deliveries (delivery) VALUES (?) RETURNING delivery", [only.delivery]);
+          if (!claimed.length) return Response.json({ ok: true, repeated: true });
+          await dispatchAutomations(only.repoEvent);
+          // `rooms` = cuántos rooms tienen el repo: gs aprende de ahí a quién mandarle lo siguiente.
+          const rooms = await (await import("../db.server")).roomsOfRepo(only.repo).catch(() => []);
+          return Response.json({ ok: true, rooms: rooms.length });
+        }
         if (!ev.delivery || !ev.repo || !ev.number || !/^https:\/\/github\.com\//.test(ev.url ?? "") || !LINE[ev.action]) {
           return new Response("evento inválido", { status: 400 });
         }
@@ -134,6 +173,7 @@ export const Route = createFileRoute("/api/internal/github-event")({
         // gs la procese entera. Un reintento de algo ya avisado contesta `repeated`.
         const claimed = await dbq("INSERT OR IGNORE INTO gt_github_deliveries (delivery) VALUES (?) RETURNING delivery", [ev.delivery]);
         if (!claimed.length) return Response.json({ ok: true, repeated: true });
+        await dispatchAutomations(ev.repoEvent);
 
         try {
           const db = await import("../db.server");

@@ -93,6 +93,7 @@ import {
 } from "../server/room-repos";
 import { roomSalesBoardFn, salesBoardsFn, setRoomSalesBoardFn, clearRoomSalesBoardFn } from "../server/room-sales-board";
 import ConfirmModal from "../components/ConfirmModal";
+import { RepoAutomations } from "../components/RepoAutomations";
 import { createFileRoute, notFound, Link, useRouter } from "@tanstack/react-router";
 import type { Channel, Message, DmConversation, RoomHit, ViewHit, CustomEmoji } from "../db.server";
 import { listEmojisFn } from "../server/emojis";
@@ -6595,6 +6596,11 @@ function RepoPanel({
           {focus && ya.has(focus.toLowerCase()) && (
             <section className="border-b border-border py-1">
               <RepoReadiness channelId={channelId} repo={focus} compact onLevel={readinessLevel} />
+            </section>
+          )}
+          {focus && ya.has(focus.toLowerCase()) && (
+            <section className="border-b border-border py-1">
+              <RepoAutomations channelId={channelId} repo={focus} />
             </section>
           )}
 

@@ -807,6 +807,46 @@ async function migrate(): Promise<void> {
     delivery   TEXT PRIMARY KEY,
     created_at INTEGER NOT NULL DEFAULT (unixepoch())
   )`);
+  // Automatizaciones de GitHub por room + repo + tipo (`server/automations/`). Apagadas por
+  // default: sin fila no corre nada. `repo` en minúsculas; `settings_json` = ajustes libres por
+  // tipo; `updated_by` = quien la prendió, y a su nombre (sus conectores, su bolsa) trabaja el agente.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_repo_automations (
+    ns            TEXT NOT NULL,
+    room_id       INTEGER NOT NULL,
+    repo          TEXT NOT NULL,
+    kind          TEXT NOT NULL,
+    enabled       INTEGER NOT NULL DEFAULT 0,
+    settings_json TEXT,
+    updated_by    TEXT,
+    updated_at    INTEGER NOT NULL DEFAULT (unixepoch()),
+    PRIMARY KEY (room_id, repo, kind)
+  )`);
+  await exec("CREATE INDEX IF NOT EXISTS gt_repo_automations_repo ON gt_repo_automations(repo)");
+  // Anti-bucle/dedupe de las automatizaciones (`ctx.claim`): una clave por tipo vale hasta `expires_at`.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_automation_claims (
+    kind       TEXT NOT NULL,
+    key        TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    claimed_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    PRIMARY KEY (kind, key)
+  )`);
+  // Tope diario por repo y tipo (`ctx.budget`); `day` en CDMX.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_automation_budget (
+    repo TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    day  TEXT NOT NULL,
+    n    INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (repo, kind, day)
+  )`);
+  // El hilo del room donde trabaja cada automatización (`ctx.wake`): el mismo `thread_key` vuelve
+  // al mismo hilo (el 2.º intento sobre un PR se lee junto al 1.º).
+  await exec(`CREATE TABLE IF NOT EXISTS gt_automation_threads (
+    room_id     INTEGER NOT NULL,
+    thread_key  TEXT NOT NULL,
+    root_msg_id INTEGER NOT NULL,
+    created_at  INTEGER NOT NULL DEFAULT (unixepoch()),
+    PRIMARY KEY (room_id, thread_key)
+  )`);
   // La tarjeta de cada PR en cada room: el siguiente evento (mezclado, cerrado) EDITA esa tarjeta
   // en vez de dejarla diciendo «abierto» y publicar otra suelta. `repo` en minúsculas.
   await exec(`CREATE TABLE IF NOT EXISTS gt_pr_cards (

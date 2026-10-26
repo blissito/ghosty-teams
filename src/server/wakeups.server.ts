@@ -298,6 +298,10 @@ export async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
     ? `🔎 Alerta de la plataforma para revisar. ${w.text}`
     : w.key.startsWith("factory:")
       ? `🏭 Encargo de la Software Factory (${w.cause}). ${w.text}`
+      // Automatización de GitHub del room (`automations/ctx.server.ts`): un encargo concreto que
+      // disparó un evento del repo, sin la cláusula del OK.
+      : w.key.startsWith("auto:")
+        ? `🤖 Automatización de GitHub de este room (${w.cause}). ${w.text}`
       : w.key.startsWith("handoff:") || w.key.startsWith("gap:")
         ? w.text
         // Turno programado desde el CLI (`api/internal/schedule-turn`): el encargo tal cual, como
