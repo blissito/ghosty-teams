@@ -73,27 +73,24 @@ export async function adoptDependabotPr(ev: PrOpened, opts: { room?: number } = 
     const sub = row.connectedBy;
     const level = bumpLevel(ev.title);
 
-    const { dbq } = await import("../../dbq.server");
-    const bus = await import("../bus.server");
-    const { currentNamespace } = await import("../tenant.server");
-    const ns = await currentNamespace();
-    const { resolvedAgents } = await import("../../agents.server");
-    const check = (await resolvedAgents()).find((a) => a.handle === "check");
-    const rootBody = `📦 **Dependabot · ${ev.title}** · PR #${ev.number}\n${LEVEL_TEXT[level]}.`;
-    const { id: rootId } = await db.postAgent(room, null, rootBody, "msg", "check", check?.name ?? "Check", "general", check?.avatar ?? "");
-    const rootMsg = await db.getMessage(rootId);
-    if (rootMsg) bus.publish(bus.ch.room(ns, room), { t: "message:new", msg: rootMsg });
-
     const head = await R.prHead(sub, ev.url).catch(() => null);
-    const rows = await dbq(
+    const { openAdoptedRun } = await import("./factory-adopt.server");
+    const run = await openAdoptedRun({
+      room,
+      sub,
+      repo: ev.repo,
+      title: ev.title,
+      rootBody: `📦 **Dependabot · ${ev.title}** · PR #${ev.number}\n${LEVEL_TEXT[level]}.`,
+      rootHandle: "check",
+      status: "checking",
+      kind: "dependabot",
+      taskRef: dependabotRef(level),
+      prUrl: ev.url,
+      headSha: head?.sha ?? null,
       // `branch` = la cabeza del PR: si @build lo arregla, empuja AHÍ (el CI y la preview viven en ese PR).
-      `INSERT INTO gt_factory_runs (channel_id, root_msg_id, topic, title, status, repo, requested_by, approved_by, kind, task_ref, pr_url, head_sha, branch)
-       VALUES (?, ?, 'general', ?, 'checking', ?, ?, ?, 'dependabot', ?, ?, ?, ?) RETURNING id`,
-      [room, rootId, ev.title.slice(0, 200), ev.repo, sub, sub, dependabotRef(level), ev.url, head?.sha ?? null, head?.ref ?? null],
-    );
-    const run = (await R.getRun(Number(rows[0].id)))!;
-    await R.logEvent(run.id, "adopted", "dependabot", { pr: ev.url, level });
-    await R.ensureRunCard(run);
+      branch: head?.ref ?? null,
+      event: { type: "adopted", actor: "dependabot", data: { pr: ev.url, level } },
+    });
     await R.handoff(
       run,
       "check",
