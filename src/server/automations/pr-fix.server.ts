@@ -9,7 +9,8 @@
 //   branch»; si choca, @build hace el merge con los choques resueltos. Nunca mergea el PR.
 //
 // Es el mismo flujo que la fábrica ya tiene para sus pedidos (`onPrCiRed`/`onPrConflict` en
-// `apps/factory-runs.server.ts`); un PR de un pedido se deja a ese camino y aquí se ignora.
+// `apps/factory-runs.server.ts`); un PR de un pedido se deja a ese camino y aquí se ignora. Los
+// textos del encargo son los de la fábrica (`apps/factory-fix-hints.ts`), no una copia.
 // Sólo se escucha `workflow_run` (no `check_suite`): es lo único cuyo log puede leer @build con
 // `github_workflow_run_logs`, y un check_suite también llega por checks ajenos (previews,
 // el propio «Ghosty · Preview»), que no se arreglan tocando código.
@@ -17,6 +18,7 @@
 // Anti-bucle: una vez por cabeza (`<repo>#<n>:<sha>`) y máximo 3 intentos por PR. El rojo que
 // llega DESPUÉS de que @build empujó su arreglo lo causa nuestro bot: en ci_fix/dep_fix sí cuenta
 // (es el intento siguiente, y el tope de 3 lo frena); en pr_to_green no.
+import { ciRedNote, DEP_RED_FROM_MAIN_HINT, MERGE_FROM_HINT, RERUN_HINT, WORK_BOX_HINT } from "../apps/factory-fix-hints";
 import type { AppPrInfo } from "../connectors/github.server";
 import type { Automation, AutomationCtx, AutomationKind, RepoEvent } from "./types";
 
@@ -143,25 +145,31 @@ export async function claimAttempt(ctx: AutomationCtx, kind: AutomationKind, rep
 
 const short = (sha: string | null) => (sha ? sha.slice(0, 7) : "?");
 
+/** En un room con la fábrica, @build recibe su rol de pedido: aquí no hay pedido que cerrar. */
+const NOT_A_RUN =
+  "Esto NO es un pedido de la fábrica: no hay plan, ni factory_build_done, ni factory_git_remote (exige pedido). El alcance es el del PR, no lo amplíes.";
+
 export function ciFixText(kind: "ci_fix" | "dep_fix", ev: RepoEvent, pr: PrView, attempt: number): string {
   const run = ev.run!;
   const fork = isFork(pr, ev.repo);
+  const what = `${run.name ?? "workflow"}: ${run.conclusion}`;
   const lines = [
     `🔧 CI en rojo en el PR #${pr.number} de ${ev.repo} (intento ${attempt} de ${MAX_ATTEMPTS}).`,
     `PR: ${pr.url} · rama \`${pr.head ?? "?"}\` · sha \`${short(pr.headSha)}\``,
-    `Run: ${run.name ?? "workflow"} (${run.conclusion}) ${run.url ?? ""} · runId ${run.id}`,
+    `Run: ${what} ${run.url ?? ""} · runId ${run.id}`,
+    NOT_A_RUN,
     "",
   ];
   if (kind === "dep_fix") {
     lines.push(
-      `Este PR lo abrió ${pr.author ?? "un bot de dependencias"} para subir una dependencia. El trabajo es ADAPTAR el código a la versión nueva: lee sus notas de versión o changelog (breaking changes) y cambia lo que haga falta.`,
+      `Este PR lo abrió ${pr.author ?? "un bot de dependencias"} para subir una dependencia. ${DEP_RED_FROM_MAIN_HINT}. Si es la subida, el trabajo es ADAPTAR el código a la versión nueva: lee sus notas de versión o changelog (breaking changes, y dónde los usa el repo) y cambia lo que haga falta; si es un grupo, sube juntos los paquetes hermanos.`,
       "Nunca bajes la versión ni la fijes en la vieja sin decirlo, en el PR y aquí, con el motivo.",
       "",
     );
   }
   lines.push(
-    `1. Lee el log con github_workflow_run_logs {repo: "${ev.repo}", runId: ${run.id}}. Si no lo puedes leer, dilo y da la liga del run; nunca inventes una línea de log.`,
-    "2. Si la falla no viene del PR (truena igual en la rama principal, es intermitente, falta un secreto o una cuota), no toques código: comenta el diagnóstico en el PR con github_comment.",
+    `1. ${ciRedNote(what)} Usa github_workflow_run_logs {repo: "${ev.repo}", runId: ${run.id}}; si no lo puedes leer, dilo y da la liga del run. Nunca inventes una línea de log. Método: skill dev-depurar.`,
+    `2. Si la falla no viene del PR (truena igual en la rama principal, falta un secreto o una cuota) no toques código: comenta el diagnóstico en el PR con github_comment. Si es pasajera, ${RERUN_HINT}.`,
   );
   if (fork) {
     lines.push(
@@ -169,8 +177,9 @@ export function ciFixText(kind: "ci_fix" | "dep_fix", ev: RepoEvent, pr: PrView,
     );
   } else {
     lines.push(
-      `3. Si es del PR: reprodúcelo con github_checkout {repo: "${ev.repo}", pr: ${pr.number}} y corre las pruebas en tu caja. Arregla con github_push_files en la MISMA rama \`${pr.head ?? "?"}\` (un solo commit; nunca la principal, nunca force-push). Si GitHub te niega empujar, sólo comenta el diagnóstico.`,
-      "4. Contesta en el PR con github_comment qué falló y qué cambiaste (con la liga del commit).",
+      `3. Si es del PR, reprodúcelo: github_checkout {repo: "${ev.repo}", pr: ${pr.number}}. ${WORK_BOX_HINT}`,
+      `4. Arregla con github_push_files en la MISMA rama \`${pr.head ?? "?"}\` (varios archivos en UN commit; nunca la principal, nunca force-push). Antes de empujar, skill dev-verificar. Si GitHub te niega empujar, sólo comenta el diagnóstico.`,
+      "5. Contesta en el PR con github_comment qué falló y qué cambiaste (con la liga del commit).",
     );
   }
   lines.push(
@@ -186,11 +195,12 @@ export function toGreenText(ev: RepoEvent, pr: PrView, why: "dirty" | "behind", 
   return [
     `🔀 El PR #${pr.number} de ${ev.repo} ${why === "dirty" ? "tiene conflictos con" : "está atrás de"} \`${base}\` (intento ${attempt} de ${MAX_ATTEMPTS}).`,
     `PR: ${pr.url} · rama \`${pr.head ?? "?"}\` · sha \`${short(pr.headSha)}\``,
+    NOT_A_RUN,
     "",
     `1. Primero github_update_branch {repo: "${ev.repo}", number: ${pr.number}}. Si pasa, no hay más que hacer.`,
     fork
       ? `2. Si choca: el PR viene de un fork (${pr.headRepo}) y la App no le empuja. Comenta en el PR con github_comment qué archivos chocan y deja que el autor lo resuelva.`
-      : `2. Si choca: fusiona \`${base}\` en la rama con github_push_files y \`mergeFrom: "${base}"\` (commit de MERGE de verdad; en \`files\` va el contenido final de los archivos que chocan). Resuelve sin cambiar el alcance del PR. Si un choque pide decidir algo del producto, no lo adivines: comenta en el PR qué choca y que lo decida una persona.`,
+      : `2. Si choca: ${MERGE_FROM_HINT} Aquí la rama principal es \`${base}\` (\`mergeFrom: "${base}"\`). Si un choque pide decidir algo del producto, no lo adivines: comenta en el PR qué choca y que lo decida una persona.`,
     "3. Nunca mergees el PR, nunca force-push ni rebase.",
     "",
     "Al final, resume aquí en 1-2 líneas con la liga del PR (y en el PR, con github_comment, si resolviste choques).",
