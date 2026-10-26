@@ -211,7 +211,7 @@ export async function claimAttempt(ctx: AutomationCtx, kind: AutomationKind, rep
   }
   if (await ctx.claim(kind, `${attemptKey(repo, number, 0)}:exhausted`, CLAIM_TTL_MS)) {
     const what = kind === "pr_to_green" ? "ponerlo al día" : "arreglar su CI";
-    await ctx.post(`⚠️ Ya van ${MAX_ATTEMPTS} intentos de ${what} en el PR #${number} de \`${repo}\` y no quedó. Lo dejo en manos de una persona${url ? `: ${url}` : "."}`).catch(() => null);
+    await ctx.post(`⚠️ Ya van ${MAX_ATTEMPTS} intentos de ${what} en el PR #${number} de \`${repo}\` y no quedó. Lo dejo en manos de una persona${url ? `: ${url}` : "."}`, { threadKey: threadKeyOf(repo, number) }).catch(() => {});
   }
   return 0;
 }

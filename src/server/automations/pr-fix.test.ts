@@ -28,7 +28,7 @@ function fakeCtx(settings: Record<string, unknown> = {}, budgetOk = true) {
   const ctx: AutomationCtx = {
     ns: "acme", roomId: "1", repo: REPO,
     wake: async (o) => { wakes.push(o); },
-    post: async (t: string) => { posts.push(t); return 1; },
+    post: async (t: string) => { posts.push(t); },
     claim: async (kind: AutomationKind, key: string) => {
       const k = `${kind}|${key}`;
       if (claimed.has(k)) return false;

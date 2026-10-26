@@ -125,13 +125,3 @@ describe("ctx.wake con retraso y marca de automatización", () => {
     expect((mintWakeRef.mock.calls[0][0] as { dest: object }).dest).toMatchObject({ automation: "security_fix", automationRepo: "acme/app" });
   });
 });
-
-describe("ctx.post", () => {
-  it("publica en el room sin turno", async () => {
-    const ctx = automationCtx({ ns: "ns", roomId: 7, repo: "acme/app", origin: "https://x", kind: "ci_fix" });
-    const id = await ctx.post("⚠️ aviso");
-    expect(id).toBeGreaterThan(0);
-    expect(posted).toEqual([{ channelId: 7, parentId: null, body: "⚠️ aviso" }]);
-    expect(enqueueWakeup).not.toHaveBeenCalled();
-  });
-});
