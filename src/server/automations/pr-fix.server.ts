@@ -15,6 +15,13 @@
 // `github_workflow_run_logs`, y un check_suite también llega por checks ajenos (previews,
 // el propio «Ghosty · Preview»), que no se arreglan tocando código.
 //
+// Con la fábrica instalada, ci_fix/dep_fix NO despiertan un turno suelto: el PR se ADOPTA como
+// pedido (`openAdoptedRun`, lo mismo que adopta los PRs de Dependabot y los lotes de seguridad) con
+// el plan ya firmado. Así @build empuja con git real (`factory_git_remote`, en la rama del PR), @check
+// revisa, un rojo después lo regresa `onPrCiRed` (2 vueltas y aviso a una persona) y la tarjeta
+// cuenta todo. Un PR de Dependabot que la fábrica ya adoptó sólo avisaba al rojo: con dep_fix
+// prendido se hace lo de «Pedir arreglo a @build». Sin fábrica (o en un fork) queda el turno suelto.
+//
 // Anti-bucle: una vez por cabeza (`<repo>#<n>:<sha>`) y máximo 3 intentos por PR. El rojo que
 // llega DESPUÉS de que @build empujó su arreglo lo causa nuestro bot: en ci_fix/dep_fix sí cuenta
 // (es el intento siguiente, y el tope de 3 lo frena); en pr_to_green no.
@@ -34,7 +41,13 @@ export type PrFixSettings = { includeDrafts?: boolean };
 export type PrFixDeps = {
   fetchPr(repo: string, number: number): Promise<AppPrInfo | null>;
   isFactoryPr(repo: string, number: number): Promise<boolean>;
+  /** El arreglo como pedido de la fábrica. "no_factory" = sin fábrica en el room: turno suelto. */
+  openFactoryFix(ctx: AutomationCtx, o: FactoryFixInput): Promise<FactoryFixOutcome>;
 };
+
+export type FactoryFixInput = { kind: "ci_fix" | "dep_fix"; ev: RepoEvent; pr: PrView };
+/** opened = pedido nuevo · fixing = pedido de Dependabot reabierto a @build · handled = ya es de la fábrica. */
+export type FactoryFixOutcome = "opened" | "fixing" | "handled" | "no_factory";
 
 const defaultDeps: PrFixDeps = {
   async fetchPr(repo, number) {
@@ -45,7 +58,62 @@ const defaultDeps: PrFixDeps = {
     const R = await import("../apps/factory-runs.server");
     return (await R.runsByPr(repo, number).catch(() => [])).length > 0;
   },
+  openFactoryFix: openFactoryFixRun,
 };
+
+/**
+ * ci_fix/dep_fix como pedido de la fábrica (mismo molde que `openSecurityRun`): `openAdoptedRun`
+ * con la rama y la cabeza del PR + plan firmado + `decide`, que pide la caja y le pasa el plan a
+ * @build. Si el PR ya es un pedido de Dependabot esperando revisión, es «Pedir arreglo a @build»
+ * (`factoryFixCiFn`): nota + `reopenWithNotes` en la misma rama. Cualquier otro pedido lo lleva la
+ * fábrica sola (`onPrCiRed`).
+ */
+async function openFactoryFixRun(ctx: AutomationCtx, o: FactoryFixInput): Promise<FactoryFixOutcome> {
+  const channelId = Number(ctx.roomId);
+  const { isInstalled } = await import("../apps/installed.server");
+  if (!Number.isFinite(channelId) || !(await isInstalled("factory").catch(() => false))) return "no_factory";
+  const db = await import("../../db.server");
+  const row = (await db.listRoomRepos(channelId)).find((r) => r.repo.toLowerCase() === o.ev.repo.toLowerCase());
+  if (!row) return "no_factory";
+  const R = await import("../apps/factory-runs.server");
+  const runs = await R.runsByPr(o.ev.repo, o.pr.number).catch(() => []);
+  if (runs.length) {
+    const run = runs.find((r) => r.channelId === channelId && r.status === "pr_review" && String(r.taskRef ?? "").startsWith("dependabot:"));
+    if (o.kind !== "dep_fix" || !run) return "handled";
+    const what = `${o.ev.run?.name ?? "workflow"}: ${o.ev.run?.conclusion}`;
+    const who = "La automatización «Arreglar dependencias»";
+    // `ci_red` con esta cabeza: `onPrCiRed` ya no la vuelve a tratar, y sus 2 vueltas cuentan ésta.
+    await R.logEvent(run.id, "ci_red", "dep_fix", { sha: o.pr.headSha, failed: [what] });
+    await R.addNote(run.id, who, `${ciRedNote(what)} ${depFixRule(o.pr)}`);
+    await R.postInThread(run, "plan", `🔧 ${who} pidió arreglar el CI del PR (${what}).`);
+    const next = await R.reopenWithNotes(run, who, "", "", { ci: [what] });
+    void R.refreshRoom(channelId);
+    return next ? "fixing" : "handled";
+  }
+  const A = await import("../apps/factory-adopt.server");
+  const run = await A.openAdoptedRun({
+    room: channelId,
+    sub: row.connectedBy,
+    repo: o.ev.repo,
+    title: `${o.kind === "dep_fix" ? "Arreglar dependencia" : "Arreglar CI"} · PR #${o.pr.number}`,
+    rootBody: `🔧 **CI en rojo · PR #${o.pr.number}** · \`${o.ev.repo}\`\n${o.pr.url}`,
+    rootHandle: "build",
+    status: "plan_review",
+    kind: o.kind,
+    prUrl: o.pr.url,
+    headSha: o.pr.headSha,
+    // La cabeza del PR: `factory_git_remote` empuja AHÍ (su CI y su preview viven en ese PR).
+    branch: o.pr.head,
+    planVersion: 1,
+    event: { type: "adopted", actor: o.kind, data: { pr: o.pr.url, runId: o.ev.run?.id ?? null } },
+  });
+  const { dbq } = await import("../../dbq.server");
+  await dbq("INSERT INTO gt_factory_plans (run_id, version, plan_md) VALUES (?, 1, ?)", [run.id, ciFixPlan(o.kind, o.ev, o.pr)]);
+  const who = o.kind === "dep_fix" ? "La automatización «Arreglar dependencias»" : "La automatización «Arreglar CI»";
+  await R.decide({ run, version: 1, decision: "approve", sub: row.connectedBy, who, origin: "" });
+  void R.refreshRoom(channelId);
+  return "opened";
+}
 
 // ── Lógica pura (con pruebas) ────────────────────────────────────────────────
 
@@ -149,6 +217,39 @@ const short = (sha: string | null) => (sha ? sha.slice(0, 7) : "?");
 const NOT_A_RUN =
   "Esto NO es un pedido de la fábrica: no hay plan, ni factory_build_done, ni factory_git_remote (exige pedido). El alcance es el del PR, no lo amplíes.";
 
+/** Lo que dep_fix le pide de más a @build (turno suelto, plan del pedido o nota de reapertura). */
+export function depFixRule(pr: PrView): string {
+  return (
+    `Este PR lo abrió ${pr.author ?? "un bot de dependencias"} para subir una dependencia. ${DEP_RED_FROM_MAIN_HINT}. Si es la subida, el trabajo es ADAPTAR el código a la versión nueva: lee sus notas de versión o changelog (breaking changes, y dónde los usa el repo) y cambia lo que haga falta; si es un grupo, sube juntos los paquetes hermanos. ` +
+    "Nunca bajes la versión ni la fijes en la vieja sin decirlo, en el PR y en el hilo, con el motivo."
+  );
+}
+
+/** El PLAN del pedido adoptado: lo lee @build al construir y @check al revisar (criterios al final). */
+export function ciFixPlan(kind: "ci_fix" | "dep_fix", ev: RepoEvent, pr: PrView): string {
+  const run = ev.run!;
+  const what = `${run.name ?? "workflow"}: ${run.conclusion}`;
+  return [
+    `## Objetivo`,
+    `Dejar en verde el CI del PR ${pr.url} (rama \`${pr.head ?? "?"}\`, sha \`${short(pr.headSha)}\`). Falló ${what}: ${run.url ?? ""} (runId ${run.id}).`,
+    ...(kind === "dep_fix" ? ["", depFixRule(pr)] : []),
+    "",
+    "## Pasos",
+    `1. ${ciRedNote(what)} Usa github_workflow_run_logs {repo: "${ev.repo}", runId: ${run.id}}; nunca inventes una línea de log.`,
+    `2. Si la falla no viene del PR (truena igual en la rama principal, falta un secreto o una cuota), no toques código: dilo en factory_build_done y comenta el diagnóstico en el PR. Si es pasajera, ${RERUN_HINT}.`,
+    `3. Trabaja en la rama EXISTENTE del PR (\`${pr.head ?? "?"}\`) con factory_git_remote: no abras otra rama ni otro PR, y no lo saques de borrador ni le cambies título o descripción (es de su autor).`,
+    "4. Contesta en el PR con github_comment qué falló y qué cambiaste (con la liga del commit), y cierra con factory_build_done.",
+    "",
+    "## Criterios de aceptación",
+    "- El check que falló pasa en el último commit del PR, sin saltarse ni desactivar pruebas.",
+    "- El diff sólo toca lo necesario para el arreglo: el alcance es el del PR.",
+    ...(kind === "dep_fix" ? ["- La versión subida se conserva (o el PR explica por qué no)."] : []),
+    "",
+    "## Riesgos y fuera de alcance",
+    "Nunca mergear, cerrar el PR ni force-push: el PR es de otra persona.",
+  ].join("\n");
+}
+
 export function ciFixText(kind: "ci_fix" | "dep_fix", ev: RepoEvent, pr: PrView, attempt: number): string {
   const run = ev.run!;
   const fork = isFork(pr, ev.repo);
@@ -160,13 +261,7 @@ export function ciFixText(kind: "ci_fix" | "dep_fix", ev: RepoEvent, pr: PrView,
     NOT_A_RUN,
     "",
   ];
-  if (kind === "dep_fix") {
-    lines.push(
-      `Este PR lo abrió ${pr.author ?? "un bot de dependencias"} para subir una dependencia. ${DEP_RED_FROM_MAIN_HINT}. Si es la subida, el trabajo es ADAPTAR el código a la versión nueva: lee sus notas de versión o changelog (breaking changes, y dónde los usa el repo) y cambia lo que haga falta; si es un grupo, sube juntos los paquetes hermanos.`,
-      "Nunca bajes la versión ni la fijes en la vieja sin decirlo, en el PR y aquí, con el motivo.",
-      "",
-    );
-  }
+  if (kind === "dep_fix") lines.push(depFixRule(pr), "");
   lines.push(
     `1. ${ciRedNote(what)} Usa github_workflow_run_logs {repo: "${ev.repo}", runId: ${run.id}}; si no lo puedes leer, dilo y da la liga del run. Nunca inventes una línea de log. Método: skill dev-depurar.`,
     `2. Si la falla no viene del PR (truena igual en la rama principal, falta un secreto o una cuota) no toques código: comenta el diagnóstico en el PR con github_comment. Si es pasajera, ${RERUN_HINT}.`,
@@ -214,9 +309,11 @@ async function handleRed(kind: "ci_fix" | "dep_fix", ev: RepoEvent, ctx: Automat
   // El propio bot NO se ignora aquí: su empuje provoca el run del intento siguiente (tope de 3).
   const n = prNumberOf(ev);
   if (!n) return; // sin PR (o de un fork: GitHub no liga el run a su PR)
-  if (await deps.isFactoryPr(ev.repo, n)) return; // lo lleva la fábrica (`onPrCiRed`)
   const pr = prView(ev, n, await deps.fetchPr(ev.repo, n));
   if (isDepPr(pr.author ?? ev.sender?.login, pr.head) !== (kind === "dep_fix")) return;
+  // Pedido de una persona: lo lleva la fábrica (`onPrCiRed`). Uno de Dependabot adoptado sólo
+  // avisaba al rojo: ése sí pasa (dep_fix lo reabre a @build más abajo).
+  if (kind === "ci_fix" && (await deps.isFactoryPr(ev.repo, n))) return;
   if (skipReason(pr, await ctx.settings<PrFixSettings>(kind))) return;
   // El run es de una cabeza vieja: ya hay un commit encima y su CI dirá.
   const runSha = ev.run?.headSha ?? null;
@@ -227,6 +324,11 @@ async function handleRed(kind: "ci_fix" | "dep_fix", ev: RepoEvent, ctx: Automat
   const attempt = await claimAttempt(ctx, kind, ev.repo, n);
   if (!attempt) return;
   if (!(await ctx.budget(kind))) return;
+  if (!isFork(pr, ev.repo)) {
+    const outcome = await deps.openFactoryFix(ctx, { kind, ev, pr });
+    if (outcome !== "no_factory") return;
+  } else if (await deps.isFactoryPr(ev.repo, n)) return;
+  // Sin fábrica (o en un fork, donde sólo se diagnostica): turno suelto de @build.
   await ctx.wake({
     handle: "build",
     text: ciFixText(kind, ev, pr, attempt),

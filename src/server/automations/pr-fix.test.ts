@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { AppPrInfo } from "../connectors/github.server";
 import {
   attemptKey, buildPrFixAutomations, headKey, isDepPr, isFork, isOwnBot, isRedRun, needsGreen,
-  prNumberOf, prView, skipReason, threadKeyOf, type PrFixDeps,
+  ciFixPlan, prNumberOf, prView, skipReason, threadKeyOf, type FactoryFixInput, type FactoryFixOutcome, type PrFixDeps,
 } from "./pr-fix.server";
 import type { AutomationCtx, AutomationKind, RepoEvent } from "./types";
 
@@ -39,9 +39,11 @@ function fakeCtx(settings: Record<string, unknown> = {}, budgetOk = true) {
   return { ctx, wakes, claimed };
 }
 
-const deps = (pr: AppPrInfo | null, factory = false): PrFixDeps => ({
+let factoryCalls: FactoryFixInput[] = [];
+const deps = (pr: AppPrInfo | null, factory = false, outcome: FactoryFixOutcome = "no_factory"): PrFixDeps => ({
   fetchPr: async () => pr,
   isFactoryPr: async () => factory,
+  openFactoryFix: async (_ctx, o) => { factoryCalls.push(o); return outcome; },
 });
 
 const byKind = (d: PrFixDeps, kind: AutomationKind) => buildPrFixAutomations(d).find((a) => a.kind === kind)!;
@@ -175,5 +177,37 @@ describe("pr_to_green", () => {
     await byKind(deps(livePr({ mergeableState: "dirty" })), "pr_to_green").handle(prEv({ sender: { login: "ghosty-studio[bot]", type: "Bot" } }), ctx);
     await byKind(deps(livePr({ mergeableState: "dirty" }), true), "pr_to_green").handle(prEv(), ctx);
     expect(wakes).toHaveLength(0);
+  });
+});
+
+describe("con la fábrica instalada", () => {
+  it("ci_fix adopta el PR como pedido y no despierta turno suelto", async () => {
+    factoryCalls = [];
+    const { ctx, wakes } = fakeCtx();
+    await byKind(deps(livePr(), false, "opened"), "ci_fix").handle(redRun(), ctx);
+    expect(wakes).toHaveLength(0);
+    expect(factoryCalls).toHaveLength(1);
+    expect(factoryCalls[0].pr.head).toBe("feat/x");
+  });
+  it("fork: nunca pedido (no se le puede empujar), turno suelto de diagnóstico", async () => {
+    factoryCalls = [];
+    const { ctx, wakes } = fakeCtx();
+    await byKind(deps(livePr({ headRepo: "otro/web" }), false, "opened"), "ci_fix").handle(redRun(), ctx);
+    expect(factoryCalls).toHaveLength(0);
+    expect(wakes).toHaveLength(1);
+  });
+  it("dep_fix sí pasa con un PR de Dependabot ya adoptado (lo reabre la fábrica)", async () => {
+    factoryCalls = [];
+    const { ctx, wakes } = fakeCtx();
+    await byKind(deps(livePr({ author: "dependabot[bot]" }), true, "fixing"), "dep_fix").handle(redRun(), ctx);
+    expect(factoryCalls.map((c) => c.kind)).toEqual(["dep_fix"]);
+    expect(wakes).toHaveLength(0);
+  });
+  it("el plan pide la rama existente con factory_git_remote y trae criterios para @check", () => {
+    const plan = ciFixPlan("dep_fix", redRun(), prView(redRun(), 7, livePr({ author: "dependabot[bot]" })));
+    expect(plan).toContain("factory_git_remote");
+    expect(plan).toContain("`feat/x`");
+    expect(plan).toContain("## Criterios de aceptación");
+    expect(plan).toContain("Nunca bajes la versión");
   });
 });
