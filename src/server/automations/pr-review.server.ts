@@ -29,11 +29,10 @@ export function mentionsGhosty(text?: string): boolean {
   return !!text && GHOSTY_MENTION.test(text);
 }
 
-/** `head` llega como rama o como label `owner:rama`; si el dueño no es el del repo, es un fork. */
-export function isForkHead(repo: string, head?: string): boolean {
-  if (!head || !head.includes(":")) return false;
-  const owner = head.split(":")[0].toLowerCase();
-  return owner !== repo.split("/")[0].toLowerCase();
+/** ¿La rama del PR vive en otro repo? Entonces la App no puede empujar. `fork` lo pone gs; si no, se compara `headRepo`. */
+export function isFork(repo: string, pr: { fork?: boolean; headRepo?: string }): boolean {
+  if (typeof pr.fork === "boolean") return pr.fork;
+  return !!pr.headRepo && pr.headRepo.toLowerCase() !== repo.toLowerCase();
 }
 
 export function normalizeSeverity(v: unknown): Severity {
@@ -142,8 +141,7 @@ export function autofixSkip(ev: RepoEvent): string | null {
     // automatizaciones (`ghosty/<kind>-<n>`) sí: una persona los está revisando.
     return "PR de un bot ajeno";
   }
-  // gs manda `fork` (head.repo ≠ repo); `owner:rama` queda por si llega la etiqueta.
-  if (pr.fork === true || isForkHead(ev.repo, pr.head)) return "rama de un fork: la App no puede empujar";
+  if (isFork(ev.repo, pr)) return "rama de un fork: la App no puede empujar";
   if (ev.event === "pull_request_review_comment") {
     if (ev.action !== "created" || !ev.comment) return "acción sin interés";
     if (isBot(ev.comment.author)) return "comentario de un bot";
