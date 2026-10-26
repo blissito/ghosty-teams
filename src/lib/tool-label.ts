@@ -144,6 +144,7 @@ export const TOOL_LABELS: Record<string, { ing: string; done: string }> = {
   github_update_branch: { ing: "Actualizando la rama del PR", done: "Actualicé la rama del PR" },
   github_update_pr_base: { ing: "Cambiando la base del PR", done: "Cambié la base del PR" },
   github_watch_pr: { ing: "Dejando vigilado el PR", done: "Dejé vigilado el PR" },
+  github_resolve_review_thread: { ing: "Resolviendo el hilo de la review", done: "Resolví el hilo de la review" },
   // Memoria de la conversación. Sin etiqueta propia salía como "Memory: write" (el
   // humanizado genérico de cualquier MCP), que no dice qué pasó ni suena a esta app.
   // Comentarios del documento. `doc_comments` es lectura → sin etiqueta, como el resto
