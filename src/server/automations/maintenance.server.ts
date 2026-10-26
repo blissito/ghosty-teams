@@ -13,6 +13,7 @@
 // Si no hay nada que hacer el agente contesta «OK» y `fire()` borra la burbuja: un repo sano
 // no deja ruido en el room.
 import type { Automation } from "./types";
+import { wallOf } from "../reminders.server";
 import { MAINT_BRANCH_PREFIX, MAINT_ISSUE_PREFIX, MAINT_LABEL } from "./safe-outputs";
 
 export const MAINTENANCE_RECIPES = ["deps", "docs", "todos", "tests"] as const;
@@ -32,23 +33,24 @@ export type MaintenanceSettings = {
 const TICK_MS = 15 * 60_000;
 /** Ventana de gracia: un tick perdido (deploy, reinicio) no se come la semana. */
 const DUE_WINDOW_MIN = 60;
-/** CDMX no tiene horario de verano desde 2022: UTC−6 fijo. */
-const CDMX_OFFSET_MIN = -6 * 60;
+const CDMX_TZ = "America/Mexico_City";
 
 // ── Reloj ────────────────────────────────────────────────────────────────────
 
 type WallClock = { minute: number; hour: number; dom: number; month: number; dow: number; date: string };
 
-/** La hora de pared de CDMX de un instante (ms epoch). */
+/** La hora de pared de CDMX de un instante (ms epoch). El reloj es el de los recordatorios y
+ *  las tareas de la fábrica (`wallOf`), no uno propio. */
 export function cdmxClock(ms: number): WallClock {
-  const d = new Date(ms + CDMX_OFFSET_MIN * 60_000);
+  const w = wallOf(ms, CDMX_TZ);
+  const pad = (n: number) => String(n).padStart(2, "0");
   return {
-    minute: d.getUTCMinutes(),
-    hour: d.getUTCHours(),
-    dom: d.getUTCDate(),
-    month: d.getUTCMonth() + 1,
-    dow: d.getUTCDay(),
-    date: d.toISOString().slice(0, 10),
+    minute: w.mi,
+    hour: w.h,
+    dom: w.d,
+    month: w.mo,
+    dow: new Date(Date.UTC(w.y, w.mo - 1, w.d)).getUTCDay(),
+    date: `${w.y}-${pad(w.mo)}-${pad(w.d)}`,
   };
 }
 
@@ -146,6 +148,7 @@ const RECIPE_TITLE: Record<MaintenanceRecipe, string> = {
 const RECIPE_TASK: Record<MaintenanceRecipe, string> = {
   deps:
     "Actualiza las dependencias MENORES y de PARCHE del repo (nunca mayores: ésas sólo las mencionas en la descripción del PR). " +
+    "Si ya hay un PR abierto de Dependabot o Renovate para un paquete, ése no lo repitas (la fábrica ya los adopta). " +
     "Respeta el gestor y el lockfile que ya usa el repo. Corre la instalación, el build y los tests; si algo truena por una " +
     "actualización, quítala del lote y dilo. Abre UN PR borrador con el lote y espera a que el CI pase (github_pr_checks).",
   docs:
@@ -232,8 +235,15 @@ export async function sweepMaintenance(ns: string, now = Date.now()): Promise<nu
   const { resolvedAgents, agentGroupId } = await import("../../agents.server");
   const { enqueueWakeup, mintWakeRef, armWakeups } = await import("../wakeups.server");
   const agents = await resolvedAgents();
+  // La revisión semanal de dependencias de la fábrica (`factory-schedules.server.ts`) ya hace
+  // `deps` por @plan con firma: si está prendida, la receta no corre dos veces.
+  const factoryDeps = await import("../apps/factory-schedules.server")
+    .then((m) => m.listSchedules())
+    .then((l) => l.some((x) => x.kind === "deps" && x.enabled))
+    .catch(() => false);
   let fired = 0;
   for (const job of jobs) {
+    if (job.recipe === "deps" && factoryDeps) continue;
     // El room tiene que seguir teniendo ese repo: desconectarlo apaga el mantenimiento de hecho.
     const repos = await db.listRoomRepos(job.roomId).catch(() => []);
     const link = repos.find((x) => x.repo.toLowerCase() === job.repo.toLowerCase());
@@ -250,7 +260,7 @@ export async function sweepMaintenance(ns: string, now = Date.now()): Promise<nu
         ns,
         groupId: await agentGroupId(agent, `auto-maint-${job.recipe}-${job.repo}`),
         // Top-level en el room: la burbuja abre el hilo propio de la receta.
-        dest: { channelId: job.roomId, topic: "general", handle: agent.handle, name: agent.name, avatar: agent.avatar, automation: "maintenance" },
+        dest: { channelId: job.roomId, topic: "general", handle: agent.handle, name: agent.name, avatar: agent.avatar, automation: "maintenance", automationRepo: job.repo },
       }),
       cause: `mantenimiento de ${RECIPE_TITLE[job.recipe]}`,
       text: recipeText(job.recipe, job.repo, job.date),

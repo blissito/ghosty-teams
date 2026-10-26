@@ -1571,6 +1571,15 @@ export async function isCriticTurn(dest: ToolDest | null): Promise<boolean> {
   return plan?.critique === "pending";
 }
 
+/** Las convenciones del repo (`.ghosty/factory.md`) tal como las ve un rol: las comparten los
+ *  turnos de pedido y los de mantenimiento programado. */
+function repoConventionLines(repo: string, h: string | null, notes: string | null | undefined, roleNotes: string | null | undefined): string[] {
+  const out: string[] = [];
+  if (notes) out.push(`Convenciones del repo ${repo} (.ghosty/factory.md, las escribió el equipo; le ganan a lo general): ${notes}`);
+  if (roleNotes && h) out.push(`Reglas de @${h} en ${repo} (sección «## @${h}» de .ghosty/factory.md; le ganan a lo general): ${roleNotes}`);
+  return out;
+}
+
 /** Bloque de contexto del turno: el papel del rol, la corrida del hilo y las alertas. null sin la app. */
 export async function factoryContext(dest: ToolDest | null, toolChannel: ToolChannel = "gs-sdk"): Promise<string | null> {
   if (!(await isInstalled("factory").catch(() => false))) return null;
@@ -1584,6 +1593,25 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
     const { ADVISOR_ROLE } = await import("./factory-roles");
     parts.push("En ESTE turno no actúas como ningún rol del pedido: eres Arqui asesorando a Worker; tu identidad de siempre se queda.");
     parts.push(ADVISOR_ROLE);
+    return parts.join("\n\n") + "]";
+  }
+  if (dest?.automation === "maintenance") {
+    // Turno de mantenimiento programado (`automations/maintenance.server.ts`): no es un pedido,
+    // así que nada de las instrucciones del rol (factory_build_done, veredicto…). Sí lleva lo que
+    // el equipo escribió del repo en `.ghosty/factory.md`, como cualquier turno de la fábrica.
+    parts.push(`En ESTE turno no actúas como rol de ningún pedido: es mantenimiento programado del repo. El encargo trae el trabajo y lo que puedes entregar; no uses las tools factory_* del pedido.`);
+    const repo = dest.automationRepo;
+    if (repo && dest.channelId) {
+      const db = await import("../../db.server");
+      const link = (await db.listRoomRepos(dest.channelId).catch(() => [])).find((r) => r.repo.toLowerCase() === repo.toLowerCase());
+      const { repoTeamFile, repoKnowledge } = await import("./factory-team.server");
+      const file = link ? await repoTeamFile(link.repo, link.connectedBy).catch(() => null) : null;
+      const role = (h && (FACTORY_HANDLES as readonly string[]).includes(h) ? h : null) as (typeof FACTORY_HANDLES)[number] | null;
+      if (file) parts.push(...repoConventionLines(repo, role, file.notes, role ? file.roleNotes[role] : null));
+      const { setupLine, knowledgeLine } = await import("./factory-team");
+      if (file?.setup && role === "build") parts.push(setupLine(repo, file.setup));
+      if (link) parts.push(knowledgeLine(repo, await repoKnowledge(repo, link.connectedBy).catch(() => [])));
+    }
     return parts.join("\n\n") + "]";
   }
   if (dest?.handle === "eval") {
@@ -1602,8 +1630,7 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
     // Convenciones del repo (`.ghosty/factory.md`): le ganan a lo genérico de arriba.
     const { factoryTurnFor } = await import("./factory-team.server");
     const ft = await factoryTurnFor(h, dest, "").catch(() => null);
-    if (ft?.notes) parts.push(`Convenciones del repo ${ft.repo} (.ghosty/factory.md, las escribió el equipo; le ganan a lo general): ${ft.notes}`);
-    if (ft?.roleNotes) parts.push(`Reglas de @${h} en ${ft.repo} (sección «## @${h}» de .ghosty/factory.md; le ganan a lo general): ${ft.roleNotes}`);
+    if (ft?.repo) parts.push(...repoConventionLines(ft.repo, h, ft.notes, ft.roleNotes));
     // El entorno de pruebas declarado: @build y @check lo aplican con una llamada exacta; @plan
     // sólo necesita saber si ya existe para proponerlo cuando falta.
     if (ft?.repo && !critic) {

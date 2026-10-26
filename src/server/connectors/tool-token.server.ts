@@ -42,6 +42,8 @@ export type ToolDest = {
   /** Turno abierto por una automatización de GitHub: sus «safe-outputs» acotan qué escribe
    *  (`automations/safe-outputs.ts`, lo aplica `runTool`). Hoy sólo `maintenance`. */
   automation?: import("../automations/types").AutomationKind;
+  /** El repo del turno de la automatización (un room puede tener varios). */
+  automationRepo?: string;
 };
 
 /**
