@@ -15,95 +15,7 @@
 // ⚠️ Esto NO adivina si el trabajo estuvo bien. Sólo comprueba una contradicción dura:
 // el texto anuncia algo que se mira, y en el mensaje no hay nada que mirar.
 
-/** Frases con las que un agente ANUNCIA que adjunta algo. Deliberadamente cortas y
- *  literales: una lista amplia daría falsos positivos sobre prosa normal, y un falso
- *  positivo aquí le dice a la persona que falta algo que sí está. */
-// ⚠️ Sin `\b` al final: en JS es ASCII, así que después de una vocal acentuada («está»,
-// «así») NO hay frontera de palabra y el patrón no casaba con el caso real que lo motivó.
-// Se ve correcto y no dispara nunca — cazado por el test, no en producción.
-//
-// ⚠️ «AHÍ» cuenta tanto como «aquí», y faltaba. Medido sobre el incidente del 2026-08-31
-// (descti, DM 1): de los CUATRO mensajes que prometieron un .docx sin entregarlo, este
-// patrón cazó UNO. Los otros tres decían «Ahí tienes el .docx», «Ahí va, en la tarjeta de
-// arriba» — la forma que más usa el agente cuando cree que ya entregó, y la única que no
-// estaba. La red de `AMBIGUOS` sigue cubriendo el falso positivo («Ahí va el panorama»).
-// ⚠️ `\b` al inicio de cada uno: sin él «lo dejo» casaba DENTRO de «so*lo dejo*» y una respuesta
-// de @ads sin ninguna promesa («Yo solo dejo los cambios pendientes») salió con el aviso (26-sep).
-const ANUNCIOS = [
-  /\b(?:aqu[ií]|ah[ií]) (?:est[aá]|tienes|va|lo tienes|la tienes|te dejo|te la dejo|te lo dejo)/i,
-  /\b(?:te )?(?:la|lo|las|los) (?:mando|env[ií]o|adjunto|dejo|comparto)/i,
-  /\b(?:ya )?(?:qued[oó]|sali[oó]) (?:as[ií]|listo|lista)/i,
-  /va como imagen/i,
-  /est[aá] (?:lista|listo) (?:la|el)/i,
-];
-
-/** Los anuncios que por sí solos NO prueban nada, porque en español son marcador de
- *  discurso antes que entrega. «Aquí va el panorama», «aquí está el resumen» y «aquí
- *  tienes la comparación» introducen texto que viene a continuación, no un archivo.
- *
- *  ⚠️ Esto se descubrió en producción el 2026-08-25, en el PRIMER mensaje que un cliente
- *  nuevo vio del producto: una respuesta de puro texto rematada con «anuncia un archivo y
- *  no lleva ninguno». El aviso existe para cerrar un hueco mudo; disparado en falso hace
- *  justo lo contrario — le dice a la persona que le falta algo que nunca hubo. */
-const AMBIGUOS = [0, 4];
-
-/** Lo que hay que mirar o abrir: un archivo, no un párrafo. Un anuncio ambiguo sólo cuenta
- *  si nombra uno de éstos cerca.
- *
- *  Es una ALLOWLIST a propósito, y por eso deja fuera «reporte», «informe» y «análisis»:
- *  esos se entregan como prosa en el chat la mayoría de las veces, y el modo de falla
- *  tolerable aquí es callarse de más, nunca avisar de menos. Ver la nota de arriba.
- *
- *  ⚠️ «tarjeta» entró el 2026-08-31 y no es un sustantivo cualquiera: es la palabra con la
- *  que el agente afirma en falso. «Ahí va, en la tarjeta de arriba» apunta a la tarjeta de
- *  descarga que la plataforma pinta — o sea, afirma algo COMPROBABLE sobre nuestra propia
- *  UI, y en ese caso la tarjeta no existía.
- *  «Excel» y «Word» entraron el 2026-10-15: en descti son lo que más se pide. */
-const ENTREGABLE =
-  /\b(archivo|imagen|im[aá]genes|foto|fotos|captura|gr[aá]fica|gr[aá]fico|diagrama|tabla|tarjeta|hoja|documento|etiqueta|logo|portada|banner|cartel|cat[aá]logo|presentaci[oó]n|cotizaci[oó]n|factura|video|audio|nota de voz|liga|enlace|link|pdf|docx?|xlsx?|pptx?|excel|word|png|jpe?g|svg|zip|csv)\b/i;
-
-/** Un anuncio en FUTURO no es una entrega. «En cuanto termine te la mando en un zip» es
- *  la frase correcta de un encargo asíncrono (montaje de video, audio de YouTube): el
- *  archivo llega en un turno posterior por diseño. Sin esto el aviso disparaba en falso
- *  justo cuando el agente hizo lo correcto (visto el 2026-09-15 con los 20 éxitos de Los
- *  Bukis). Callarse de más es el modo de falla tolerable aquí. */
-const PENDIENTE =
-  /\b(en cuanto (?:termine|est[eé]|acabe|salga)|cuando (?:termine|est[eé] list[oa]|acabe)|te aviso|te avisar[eé]|va a tomar|va a tardar|tardar[aá]|qued[oó] encargad[oa]|encargu[eé]|en proceso|turno posterior|varios minutos)\b/i;
-
-/** Ventana en la que se busca el entregable después del anuncio. «Aquí está de nuevo la
- *  etiqueta» mete tres palabras en medio, así que la adyacencia no sirve. */
-const VENTANA = 60;
-
-/** Lo que cuenta como que SÍ viajó algo: imagen markdown, enlace, o un fence nuestro
- *  (`eb-doc`, `gt-pr`, `eb-file`…) que la plataforma convierte en tarjeta. */
-const LLEVA_ALGO = [
-  /!\[[^\]]*\]\([^)]+\)/,          // imagen markdown
-  /<img\b/i,                        // imagen HTML
-  /\]\(https?:\/\//i,               // enlace markdown
-  /\]\(\/[^)\s]+\)/,                  // enlace markdown relativo (una ruta de la app)
-  /https?:\/\/\S{8,}/i,             // URL suelta
-  /```(?:gt|eb)-[a-z-]+/i,          // fence de la plataforma
-];
-
-/** ¿Este patrón, en este texto, anuncia de verdad una entrega? Los ambiguos exigen además
- *  que se nombre un entregable en la ventana siguiente. */
-function anuncia(re: RegExp, i: number, prosa: string): boolean {
-  const m = re.exec(prosa);
-  if (!m) return false;
-  if (enPregunta(prosa, m.index)) return false;
-  if (!AMBIGUOS.includes(i)) return true;
-  return ENTREGABLE.test(prosa.slice(m.index, m.index + m[0].length + VENTANA));
-}
-
-/** ¿El anuncio cae dentro de una pregunta? «¿Te lo mando también por correo?» es una OFERTA,
- *  no una entrega: el 24-oct disparó el aviso bajo la confirmación de un recordatorio y el
- *  reintento automático quemó un turno entero para que el agente explicara que no había archivo. */
-function enPregunta(prosa: string, at: number): boolean {
-  const before = prosa.slice(0, at);
-  const open = before.lastIndexOf("¿");
-  if (open < 0 || /[.!?\n]/.test(before.slice(open + 1))) return false;
-  return /^[^.!\n]*\?/.test(prosa.slice(at));
-}
+import { announcesMissingDelivery } from "@ghostystudio/computer";
 
 /**
  * La marca del aviso en el cuerpo del mensaje. Es lo que `deliveryGapHint` busca al turno
@@ -120,15 +32,8 @@ export const GAP_MARK = "⚠️ Este mensaje anuncia un archivo y no llegó ning
  * decirle a la persona que falta algo que tiene delante.
  */
 export function deliveryGapNotice(body: string, tieneAdjunto: boolean, reintento = false): string {
-  if (tieneAdjunto) return "";
-  const texto = (body ?? "").trim();
-  if (!texto) return "";
-  // Los bloques de herramientas y pasos no son la respuesta: se quitan antes de buscar el
-  // anuncio, o un `detail` con una URL contaría como entrega.
-  const prosa = texto.replace(/```[\s\S]*?```/g, " ");
-  if (!ANUNCIOS.some((re, i) => anuncia(re, i, prosa))) return "";
-  if (LLEVA_ALGO.some((re) => re.test(prosa))) return "";
-  if (PENDIENTE.test(prosa)) return "";
+  // La detección es la pieza compartida (`@ghostystudio/computer`): la misma regla en WhatsApp.
+  if (!announcesMissingDelivery(body, tieneAdjunto)) return "";
   // ⚠️ Esto lo lee LA PERSONA, no el agente. Hasta el 2026-08-31 decía «hay que publicarlo y
   // pegar la URL — una ruta dentro de la caja del agente (`image.png`, `/tmp/…`)», que es una
   // instrucción para el modelo puesta en la cara del usuario. Y funcionó como tal: el cliente

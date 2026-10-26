@@ -380,8 +380,21 @@ export function addInvokerMessage(
 }
 
 /** Lo que el turno acabó produciendo, para la fila de "terminó". Se calcula UNA vez. */
-export function setTurnOutcome(_ns: string, messageId: number, outcome: string): void {
+export function setTurnOutcome(ns: string, messageId: number, outcome: string): void {
   void persistir("UPDATE gt_turns SET outcome = ? WHERE message_id = ?", [outcome, messageId]);
+  // Un turno que muere deja a una persona sin respuesta: staff se entera (a #soporte, con triage).
+  // Antes sólo quedaba en `gt_turns` y nadie lo miraba (18 errores crudos en octubre).
+  // gs de-duplica por clave (6 h): una racha del mismo espacio llega como un aviso.
+  if (outcome.startsWith("error:")) {
+    const agent = live.get(claveDe(ns, messageId))?.agent;
+    void import("./alert.server").then(({ alertar }) =>
+      alertar({
+        key: `teams-turno-caido:${ns}`,
+        title: "Teams: un turno de agente falló",
+        detail: `espacio ${ns} · ${agent ? `@${agent} · ` : ""}mensaje #${messageId} · ${outcome.slice(0, 400)}`,
+      }),
+    );
+  }
 }
 
 /**
