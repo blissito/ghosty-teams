@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 /**
@@ -9,35 +12,19 @@ import { describe, expect, it } from "vitest";
  * `eb-file` no lo mueve y el hint seguía presentando ese artefacto como el objeto de la
  * conversación.
  *
- * Se prueba la DECISIÓN, que es donde estaba el bug: con qué fechas se enciende la regla.
- * La query vive en `db.server.ts` y el texto en `agents.server.ts`; lo que aquí importa es
- * que la comparación sea por fecha —para que la regla se APAGUE sola cuando el artefacto
- * vuelve a ser lo último— y no un simple "existe un archivo".
+ * La DECISIÓN es donde estaba el bug: la comparación tiene que ser por fecha —para que la
+ * regla se APAGUE sola cuando el artefacto vuelve a ser lo último— y no un simple "existe un
+ * archivo"; en empate (resolución de 1 s de `unixepoch()`) gana el archivo, que es lo que la
+ * persona acabó de recibir. Vive en línea en chat.ts y dm.ts, así que se comprueba sobre su
+ * TEXTO (antes se probaba una copia local de la condición, que no cubría nada).
  */
-function reglaAplica(artefactoAt: number, entrega: { at: number } | null): boolean {
-  // Espejo de la condición de chat.ts / dm.ts.
-  return !!entrega && entrega.at >= artefactoAt;
-}
+const raiz = join(dirname(fileURLToPath(import.meta.url)), "..");
+const leer = (p: string) => readFileSync(join(raiz, p), "utf8");
 
 describe("antecedente de la conversación: archivo vs artefacto", () => {
-  it("el archivo es POSTERIOR al artefacto → la regla se enciende", () => {
-    expect(reglaAplica(1000, { at: 1200 })).toBe(true);
-  });
-
-  it("no hay archivo → la regla no existe (el artefacto es el antecedente)", () => {
-    expect(reglaAplica(1000, null)).toBe(false);
-  });
-
-  it("SE APAGA SOLA: si el artefacto se editó DESPUÉS del archivo, vuelve a ser el antecedente", () => {
-    // Éste es el caso que un "¿existe un archivo?" habría respondido mal para siempre:
-    // tras un `eb-patch` el artefacto es lo último y pedirle cambios debe volver a él.
-    expect(reglaAplica(1500, { at: 1200 })).toBe(false);
-  });
-
-  it("empate (mismo segundo) → gana el archivo", () => {
-    // `unixepoch()` tiene resolución de un segundo, así que un turno que publica artefacto y
-    // archivo casi a la vez empata. Se prefiere el archivo porque es lo que la persona
-    // acabó de recibir en el chat.
-    expect(reglaAplica(1200, { at: 1200 })).toBe(true);
-  });
+  for (const f of ["server/chat.ts", "server/dm.ts"]) {
+    it(`${f}: la regla compara fechas y en empate gana el archivo`, () => {
+      expect(leer(f)).toMatch(/if \(entrega && entrega\.at >= \(currentDoc\.at \?\? 0\)\)/);
+    });
+  }
 });
