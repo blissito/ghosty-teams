@@ -1605,6 +1605,45 @@ const ALL_TOOLS: ConnectorTool[] = [
       return r?.error ? r : { ok: true, url: r?.html_url };
     },
   },
+  {
+    name: "github_update_repo",
+    description:
+      "Cambia la configuración de un repo de la persona: visibilidad (privado/público), descripción, página web o rama principal. " +
+      "Úsala tú cuando lo pida («hazlo privado», «cámbiale la descripción»): no la mandes a Settings. " +
+      "Hacerlo PÚBLICO expone todo el código y su historial: confirma con la persona antes y pasa `confirmado: true`.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...repoProp,
+        private: { type: "boolean", description: "true = privado, false = público." },
+        description: str("Descripción nueva (opcional)."),
+        homepage: str("Página web del repo (opcional)."),
+        default_branch: str("Rama principal nueva (opcional; debe existir)."),
+        confirmado: { type: "boolean", description: "Obligatorio en true para hacerlo público." },
+      },
+      required: ["repo"],
+    },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const patch: Record<string, unknown> = {};
+      if (typeof a.private === "boolean") patch.private = a.private;
+      if (typeof a.description === "string") patch.description = a.description.slice(0, 350);
+      if (typeof a.homepage === "string") patch.homepage = a.homepage.trim();
+      if (typeof a.default_branch === "string" && a.default_branch.trim()) patch.default_branch = a.default_branch.trim();
+      if (!Object.keys(patch).length) return { error: "Pasa private, description, homepage o default_branch." };
+      if (patch.private === false && a.confirmado !== true) {
+        return { error: "Hacerlo público expone el código y todo su historial. Confírmalo con la persona y vuelve a llamar con confirmado: true." };
+      }
+      // Con el token de la persona: cambiar visibilidad exige que ELLA sea admin del repo (GitHub lo
+      // valida) y que la App tenga «Administration: write» sobre él.
+      const r = await api(sub, `/repos/${p}`, { method: "PATCH", body: JSON.stringify(patch) });
+      if (r?.error) {
+        return { error: `${r.error} Si dice «Resource not accessible», la app de Ghosty no tiene ese repo: que lo marque en ${INSTALL_URL} (o elija «All repositories»).` };
+      }
+      return { ok: true, repo: r?.full_name, private: r?.private, url: r?.html_url, defaultBranch: r?.default_branch };
+    },
+  },
   // ── Paridad con el MCP oficial de GitHub (github/github-mcp-server), lo que usa la
   // Software Factory: commit de varios archivos, árbol, commits, comentarios en línea del
   // PR, reintentar CI, avisos de Dependabot y búsqueda de issues/PRs.
