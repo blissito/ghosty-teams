@@ -10,8 +10,9 @@
 // (`safe-outputs.ts`): sólo issues `[ghosty]` con etiqueta `ghosty-maintenance` o PR en
 // BORRADOR desde `ghosty/maint-<receta>-<fecha>`. Nunca mergea ni cierra nada.
 //
-// Si no hay nada que hacer el agente contesta «OK» y `fire()` borra la burbuja: un repo sano
-// no deja ruido en el room.
+// El turno lo abre `automationCtx().wake` (el mismo de las demás automatizaciones y de la
+// estafeta de la fábrica), en un hilo fijo por receta (`maint-<receta>`): cada semana cae en el
+// mismo. Si no hay nada que hacer el agente contesta «OK» y `fire()` borra esa burbuja.
 import type { Automation } from "./types";
 import { wallOf } from "../reminders.server";
 import { MAINT_BRANCH_PREFIX, MAINT_ISSUE_PREFIX, MAINT_LABEL } from "./safe-outputs";
@@ -184,33 +185,37 @@ export function recipeText(recipe: MaintenanceRecipe, repo: string, date: string
 
 // ── Barrido ──────────────────────────────────────────────────────────────────
 
-/** Una fila de `gt_repo_automations` ya leída. `ownerSub` = quien la prendió (`updated_by`);
- *  `origin` = el del espacio (no hay request en un barrido). */
-export type MaintenanceRow = { roomId: number; repo: string; settings: MaintenanceSettings; ownerSub: string | null; origin: string };
+/** Una fila prendida de `gt_repo_automations` (kind = maintenance). */
+export type MaintenanceRow = { roomId: number; repo: string; settings: MaintenanceSettings };
 
 export type MaintenanceJob = {
-  roomId: number; repo: string; recipe: MaintenanceRecipe; date: string; handle: "build" | "plan"; key: string;
-  ownerSub: string | null; origin: string;
+  roomId: number; repo: string; recipe: MaintenanceRecipe; date: string; handle: "build" | "plan";
+  /** Clave del claim: una vez por room, repo, receta y fecha de CDMX. */
+  key: string;
+  /** El hilo propio de la receta en el room: la semana siguiente cae en el mismo. */
+  threadKey: string;
 };
 
-/** Puro: qué recetas tocan AHORA. La llave es la del claim (`sched:maint:<room>:<repo>:<receta>:<fecha>`). */
+/** Puro: qué recetas tocan AHORA. */
 export function dueJobs(rows: MaintenanceRow[], now: number): MaintenanceJob[] {
   const out: MaintenanceJob[] = [];
   for (const r of rows) {
     const date = dueSlot(r.settings, now);
     if (!date) continue;
     for (const recipe of recipesOf(r.settings))
-      out.push({ roomId: r.roomId, repo: r.repo, recipe, date, handle: RECIPE_HANDLE[recipe],
-        key: `sched:maint:${r.roomId}:${r.repo}:${recipe}:${date}`, ownerSub: r.ownerSub, origin: r.origin });
+      out.push({
+        roomId: r.roomId, repo: r.repo, recipe, date, handle: RECIPE_HANDLE[recipe],
+        key: `${r.roomId}:${r.repo}:${recipe}:${date}`,
+        threadKey: `maint-${recipe}`,
+      });
   }
   return out;
 }
 
 function parseSettings(raw: unknown): MaintenanceSettings {
-  if (raw && typeof raw === "object") return raw as MaintenanceSettings;
   try {
     const v = JSON.parse(String(raw ?? "{}"));
-    return v && typeof v === "object" ? v : {};
+    return v && typeof v === "object" && !Array.isArray(v) ? v : {};
   } catch {
     return {};
   }
@@ -218,27 +223,20 @@ function parseSettings(raw: unknown): MaintenanceSettings {
 
 async function loadRows(): Promise<MaintenanceRow[]> {
   const { dbq } = await import("../../dbq.server");
-  // Sin la tabla (espacio sin automatizaciones todavía) no hay nada que barrer.
-  const rows = await dbq(`SELECT * FROM gt_repo_automations WHERE kind = 'maintenance' AND enabled = 1`, []).catch(() => []);
-  if (!rows.length) return [];
-  const { defaultOrigin } = await import("./ctx.server");
-  const origin = await defaultOrigin().catch(() => "");
-  return rows.map((r) => ({
-    roomId: Number(r.room_id),
-    repo: String(r.repo),
-    settings: parseSettings(r.settings_json),
-    ownerSub: r.updated_by ? String(r.updated_by) : null,
-    origin,
-  }));
+  const rows = await dbq(`SELECT room_id, repo, settings_json FROM gt_repo_automations WHERE kind = 'maintenance' AND enabled = 1`, []).catch(() => []);
+  return rows.map((r) => ({ roomId: Number(r.room_id), repo: String(r.repo), settings: parseSettings(r.settings_json) }));
 }
+
+/** Claim de 8 días: cubre la ventana de gracia y nunca choca con la semana siguiente. */
+const CLAIM_TTL_MS = 8 * 24 * 3600_000;
 
 export async function sweepMaintenance(ns: string, now = Date.now()): Promise<number> {
   const jobs = dueJobs(await loadRows(), now);
   if (!jobs.length) return 0;
   const db = await import("../../db.server");
-  const { resolvedAgents, agentGroupId } = await import("../../agents.server");
-  const { enqueueWakeup, mintWakeRef, armWakeups } = await import("../wakeups.server");
-  const agents = await resolvedAgents();
+  const { resolvedAgents } = await import("../../agents.server");
+  const { automationCtx } = await import("./ctx.server");
+  const handles = new Set((await resolvedAgents()).map((a) => a.handle));
   // La revisión semanal de dependencias de la fábrica (`factory-schedules.server.ts`) ya hace
   // `deps` por @plan con firma: si está prendida, la receta no corre dos veces.
   const factoryDeps = await import("../apps/factory-schedules.server")
@@ -250,31 +248,21 @@ export async function sweepMaintenance(ns: string, now = Date.now()): Promise<nu
     if (job.recipe === "deps" && factoryDeps) continue;
     // El room tiene que seguir teniendo ese repo: desconectarlo apaga el mantenimiento de hecho.
     const repos = await db.listRoomRepos(job.roomId).catch(() => []);
-    const link = repos.find((x) => x.repo.toLowerCase() === job.repo.toLowerCase());
-    if (!link) continue;
+    if (!repos.some((x) => x.repo.toLowerCase() === job.repo.toLowerCase())) continue;
     // @plan si no hay @build (y al revés): un room sin fábrica completa igual recibe su receta.
-    const agent = agents.find((a) => a.handle === job.handle) ?? agents.find((a) => a.handle === (job.handle === "build" ? "plan" : "build"));
-    if (!agent) continue;
-    const sub = job.ownerSub || link.connectedBy;
-    const ok = await enqueueWakeup({
-      // La llave ES el claim: `gt_agent_wakeups.key` es única, dos ticks o dos procesos no duplican.
-      key: job.key,
-      ref: mintWakeRef({
-        sub,
-        ns,
-        groupId: await agentGroupId(agent, `auto-maint-${job.recipe}-${job.repo}`),
-        // Top-level en el room: la burbuja abre el hilo propio de la receta.
-        dest: { channelId: job.roomId, topic: "general", handle: agent.handle, name: agent.name, avatar: agent.avatar, automation: "maintenance", automationRepo: job.repo },
-      }),
-      cause: `mantenimiento de ${RECIPE_TITLE[job.recipe]}`,
+    const handle = handles.has(job.handle) ? job.handle : job.handle === "build" ? "plan" : "build";
+    if (!handles.has(handle)) continue;
+    const ctx = automationCtx({ ns, roomId: job.roomId, repo: job.repo, kind: "maintenance" });
+    if (!(await ctx.claim("maintenance", job.key, CLAIM_TTL_MS))) continue;
+    if (!(await ctx.budget("maintenance"))) continue;
+    await ctx.wake({
+      handle,
+      threadKey: job.threadKey,
+      title: `🧹 Mantenimiento de ${RECIPE_TITLE[job.recipe]} · \`${job.repo}\``,
       text: recipeText(job.recipe, job.repo, job.date),
-      // El origin del espacio: aquí no hay request.
-      origin: job.origin,
-      dueAt: Math.floor(now / 1000),
-    }).catch(() => false);
-    if (ok) fired++;
+    });
+    fired++;
   }
-  if (fired) armWakeups(ns);
   return fired;
 }
 

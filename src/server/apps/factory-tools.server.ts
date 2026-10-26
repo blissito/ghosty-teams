@@ -1614,7 +1614,7 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
       const file = link ? await repoTeamFile(link.repo, link.connectedBy).catch(() => null) : null;
       if (file) parts.push(...repoConventionLines(repo, role, file.notes, role ? file.roleNotes[role] : null));
       const { setupLine, knowledgeLine } = await import("./factory-team");
-      if (file?.setup && role === "build") parts.push(setupLine(repo, file.setup));
+      if (file?.setup && (role === "build" || role === "check")) parts.push(setupLine(repo, file.setup));
       if (link) parts.push(knowledgeLine(repo, await repoKnowledge(repo, link.connectedBy).catch(() => [])));
     }
     return parts.join("\n\n") + "]";

@@ -58,13 +58,13 @@ describe("parseCron", () => {
 });
 
 describe("dueJobs", () => {
-  const row = { roomId: 7, repo: "acme/web", settings: { recipes: ["deps", "todos", "inventada", "deps"] }, ownerSub: "u1", origin: "https://x" };
+  const row = { roomId: 7, repo: "acme/web", settings: { recipes: ["deps", "todos", "inventada", "deps"] } };
 
   it("una tarea por receta conocida, con la llave del claim por fecha", () => {
     const jobs = dueJobs([row], MON_9_CDMX);
-    expect(jobs.map((j) => [j.recipe, j.handle, j.key])).toEqual([
-      ["deps", "build", "sched:maint:7:acme/web:deps:2026-10-26"],
-      ["todos", "plan", "sched:maint:7:acme/web:todos:2026-10-26"],
+    expect(jobs.map((j) => [j.recipe, j.handle, j.key, j.threadKey])).toEqual([
+      ["deps", "build", "7:acme/web:deps:2026-10-26", "maint-deps"],
+      ["todos", "plan", "7:acme/web:todos:2026-10-26", "maint-todos"],
     ]);
   });
 
