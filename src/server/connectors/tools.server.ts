@@ -14,6 +14,7 @@ import { taskTools } from "./tasks.native.server";
 import { factoryTools } from "../apps/factory-tools.server";
 import { adsTools } from "../apps/ads-tools.server";
 import { SCOPE_COMPLETO, type ToolScope } from "./tool-token.server";
+import { maintenanceAllows, maintenanceSafeOutputs } from "../automations/safe-outputs";
 
 // Declaración expuesta al modelo (sin el handler).
 export type ToolDecl = { name: string; description: string; inputSchema: Record<string, unknown> };
@@ -128,7 +129,7 @@ export async function listUserTools(
   for (const t of await studioTools(sub).catch(() => [])) out.push(t);
   // Un solo filtro al final, sobre TODO lo reunido: nativas, tablero y conectores. Filtrar en
   // cada rama era lo que dejaba huecos.
-  return out.filter((t) => toolEnScope(t.name, scope));
+  return out.filter((t) => toolEnScope(t.name, scope) && (dest?.automation !== "maintenance" || maintenanceAllows(t.name)));
 }
 
 export type RunResult =
@@ -210,6 +211,13 @@ export async function runTool(
   }
   const denial = await repoScopeDenial(toolName, args ?? {}, dest);
   if (denial) return { ok: false, error: denial };
+  // Safe-outputs del turno de mantenimiento: después del candado de repos, y puede reescribir
+  // los argumentos (prefijo, etiqueta, borrador) antes de que corra la tool.
+  if (dest?.automation === "maintenance") {
+    const v = maintenanceSafeOutputs(toolName, args ?? {});
+    if (!v.ok) return { ok: false, error: v.error };
+    args = v.args;
+  }
   // Las de Tasks antes que nada: su nombre está reservado y no dependen de ningún conector.
   if (toolName.startsWith("task_")) {
     const tt = (await taskTools(sub, dest)).find((t) => t.name === toolName);
