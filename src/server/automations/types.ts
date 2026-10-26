@@ -25,7 +25,9 @@ export type RepoEvent = {
   sender?: { login: string; type?: string };   // type "Bot" para bots
   pr?: { number: number; title?: string; author?: string; authorType?: string; draft?: boolean;
          base?: string; head?: string; headSha?: string; mergeableState?: string; url?: string;
-         /** La rama del PR vive en otro repo: la App no puede empujar ahí. */
+         /** "owner/name" del repo de la rama (`head` es sólo el nombre de la rama). */
+         headRepo?: string;
+         /** La rama del PR vive en otro repo (`headRepo` ≠ `repo`): la App no puede empujar ahí. */
          fork?: boolean };
   issue?: { number: number; title?: string; body?: string; labels?: string[]; author?: string; url?: string };
   review?: { id?: number; state?: string; body?: string; author?: string };
@@ -43,7 +45,12 @@ export type AutomationCtx = {
   repo: string;
   /** Turno de un agente del room en un hilo propio de la automatización (lo implementa EVENTOS
    *  reutilizando el mecanismo de wakeups/relevo existente). `handle` p. ej. "build", "check", "plan". */
-  wake(opts: { handle: string; text: string; threadKey: string; title?: string }): Promise<void>;
+  wake(opts: { handle: string; text: string; threadKey: string; title?: string;
+    /** Segundos antes de abrir el turno (juntar alertas en una ventana). Durable: sobrevive reinicios. */
+    delayS?: number }): Promise<void>;
+  /** Aviso en el room SIN abrir turno (secreto filtrado, se agotaron los intentos…). Con `threadKey`
+   *  va en el hilo de esa clave (lo crea con `title` si no existe); sin ella, suelto en el room. */
+  post(text: string, opts?: { threadKey?: string; title?: string; handle?: string }): Promise<void>;
   /** Dedupe/anti-bucle: true sólo la 1.ª vez para (ns, kind, key) dentro de `ttlMs`. */
   claim(kind: AutomationKind, key: string, ttlMs?: number): Promise<boolean>;
   /** Tope diario por repo y tipo (default 20). false = no correr. */

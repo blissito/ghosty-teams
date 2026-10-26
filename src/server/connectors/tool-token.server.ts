@@ -37,8 +37,12 @@ const DEFAULT_TTL_S = 900; // 15 min: cubre turnos largos con tools encadenadas.
 // mensaje por argumento para poder reaccionarle a quien le habló.
 export type ToolDest = {
   channelId?: number; dmId?: number; parentId?: number; topic?: string; handle?: string; name?: string; avatar?: string; memoryScope?: string; invokerMessageIds?: number[];
-  /** Fábrica: el turno es de Arqui como ASESOR de Worker (sólo aconseja; ver `requestAdvice`). */
-  factoryMode?: "advisor";
+  /** Fábrica: el turno es de Arqui como ASESOR de Worker (sólo aconseja; ver `requestAdvice`).
+   *  `automation`: lo abrió una automatización de GitHub del room (`automations/ctx.server.ts`),
+   *  no un pedido: el rol no recibe sus instrucciones de pedido (veredicto, build_done). */
+  factoryMode?: "advisor" | "automation";
+  /** Qué automatización abrió el turno (con `factoryMode: "automation"`). */
+  automation?: import("../automations/types").AutomationKind;
 };
 
 /**

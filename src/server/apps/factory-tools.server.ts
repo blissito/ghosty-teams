@@ -1586,6 +1586,21 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
     parts.push(ADVISOR_ROLE);
     return parts.join("\n\n") + "]";
   }
+  // Turno de una automatización de GitHub del room: no hay pedido, así que nada de las
+  // instrucciones del rol (plan, veredicto, factory_build_done); sí las convenciones del repo.
+  if (dest?.factoryMode === "automation") {
+    parts.push(
+      `En ESTE turno trabajas para una automatización de GitHub de este room${dest.automation ? ` (${dest.automation})` : ""}, no para un pedido de la fábrica: ` +
+        "no hay plan, ni veredicto, ni factory_build_done/factory_check_verdict. Haz el encargo y cuéntalo en este hilo con la liga a GitHub.",
+    );
+    if (h && (FACTORY_HANDLES as readonly string[]).includes(h)) {
+      const { factoryTurnFor } = await import("./factory-team.server");
+      const ft = await factoryTurnFor(h, dest, "").catch(() => null);
+      if (ft?.notes) parts.push(`Convenciones del repo ${ft.repo} (.ghosty/factory.md, las escribió el equipo; le ganan a lo general): ${ft.notes}`);
+      if (ft?.roleNotes) parts.push(`Reglas de @${h} en ${ft.repo} (sección «## @${h}» de .ghosty/factory.md; le ganan a lo general): ${ft.roleNotes}`);
+    }
+    return parts.join("\n\n") + "]";
+  }
   if (dest?.handle === "eval") {
     const { JUDGE_INSTRUCTIONS } = await import("./factory-roles");
     parts.push("En ESTE turno actúas como @eval; tu identidad de siempre se queda, pero aplica este rol.");

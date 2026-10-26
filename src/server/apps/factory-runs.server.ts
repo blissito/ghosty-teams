@@ -1149,27 +1149,20 @@ export async function handoff(
     const plan = run.planVersion ? await getPlan(run.id, run.planVersion).catch(() => null) : null;
     skills = `\n\n${(await import("./factory-roles")).roleSkillsLine(to, `${run.title}\n${plan?.planMd ?? ""}`)}`;
   }
-  const { enqueueWakeup, mintWakeRef } = await import("../wakeups.server");
-  const ok = await enqueueWakeup({
+  // Encolar + barrer ya: la misma pieza que usan las automatizaciones de GitHub.
+  const { enqueueAgentTurn } = await import("../agent-turn.server");
+  const ok = await enqueueAgentTurn({
+    ns,
+    sub,
+    groupId,
+    dest: { channelId: run.channelId, parentId: run.rootMsgId, topic: run.topic, handle: agent.handle, name: agent.name, avatar: agent.avatar, ...(opts.dest ?? {}) },
     key: `factory:${run.id}:${to}:${Date.now()}${opts.keySuffix ?? ""}`,
-    ref: mintWakeRef({
-      sub,
-      ns,
-      groupId,
-      dest: { channelId: run.channelId, parentId: run.rootMsgId, topic: run.topic, handle: agent.handle, name: agent.name, avatar: agent.avatar, ...(opts.dest ?? {}) },
-    }),
     cause,
     text: `[Pedido #${run.id} · «${run.title}»${run.repo ? ` · repo ${run.repo}` : ""}]\n${text}${skills}`,
     origin,
-    // Vencido YA: con +2 s el barrido inmediato de `kickWakeups` lo veía «aún no» y el relevo
-    // esperaba al siguiente tick (pedir cambios tardó ~30 s en arrancar a @plan, MailMask #15).
-    dueAt: Math.floor(Date.now() / 1000),
   });
   console.log(`[lat] handoff #${run.id} → @${to} encolado en ${Date.now() - t0}ms`);
   if (ok && opts.from && !groupSuffix && opts.keySuffix !== ":msg") postRelay(run, { from: opts.from, to, kind: "handoff" });
-  // `kick`, no `arm`: con sólo armar, el relevo esperaba al siguiente tick (hasta 30 s) y la
-  // persona veía «nada pasó» tras firmar (MailMask, 2026-10-01).
-  if (ok) (await import("../wakeups.server")).kickWakeups(ns);
   return ok;
 }
 

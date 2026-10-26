@@ -822,6 +822,11 @@ async function migrate(): Promise<void> {
     PRIMARY KEY (room_id, repo, kind)
   )`);
   await exec("CREATE INDEX IF NOT EXISTS gt_repo_automations_repo ON gt_repo_automations(repo)");
+  // `owner_sub` = quien la PRENDIÓ (a su nombre trabaja el agente; apagarla no lo cambia) y
+  // `origin` = el host del espacio al prenderla: los turnos sin request (mantenimiento
+  // programado) lo necesitan para acuñar el token de tools.
+  await addColumn("gt_repo_automations", "owner_sub", "TEXT");
+  await addColumn("gt_repo_automations", "origin", "TEXT");
   // Anti-bucle/dedupe de las automatizaciones (`ctx.claim`): una clave por tipo vale hasta `expires_at`.
   await exec(`CREATE TABLE IF NOT EXISTS gt_automation_claims (
     kind       TEXT NOT NULL,
