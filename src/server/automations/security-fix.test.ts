@@ -57,7 +57,27 @@ describe("umbral de severidad", () => {
 });
 
 describe("security_fix", () => {
-  const deps = () => ({ postNotice: vi.fn(async (_c: AutomationCtx, _b: string) => {}), now: () => Date.UTC(2026, 9, 25, 18) });
+  const deps = (outcome: "opened" | "busy" | "no_factory" = "no_factory") => ({
+    postNotice: vi.fn(async (_c: AutomationCtx, _b: string) => {}),
+    openFactoryRun: vi.fn(async (_c: AutomationCtx, _o: { repo: string; title: string; planMd: string }) => outcome),
+    now: () => Date.UTC(2026, 9, 25, 18),
+  });
+
+  it("con fábrica: el lote es un pedido con el plan, sin turno suelto", async () => {
+    const { ctx } = fakeCtx();
+    const d = deps("opened");
+    const a = makeSecurityFix(d);
+    for (let n = 1; n <= 5; n++) await a.handle(codeAlert(n, "critical"), ctx);
+    expect(d.openFactoryRun).toHaveBeenCalledTimes(1);
+    expect(d.openFactoryRun.mock.calls[0][1].planMd).toContain("Criterio para @check");
+    expect(ctx.wake).not.toHaveBeenCalled();
+  });
+
+  it("con un pedido de seguridad vivo en el repo no se abre otro ni hay turno suelto", async () => {
+    const { ctx } = fakeCtx();
+    await makeSecurityFix(deps("busy")).handle(codeAlert(1), ctx);
+    expect(ctx.wake).not.toHaveBeenCalled();
+  });
 
   it("ignora lo que está bajo el umbral del room", async () => {
     const { ctx } = fakeCtx({ minSeverity: "critical" });
@@ -131,7 +151,7 @@ describe("secret scanning: el secreto jamás viaja", () => {
 
   it("avisa directo en el room, sin turno de agente, y sin el valor", async () => {
     const { ctx } = fakeCtx();
-    const d = { postNotice: vi.fn(async (_c: AutomationCtx, _b: string) => {}), now: () => Date.now() };
+    const d = { postNotice: vi.fn(async (_c: AutomationCtx, _b: string) => {}), openFactoryRun: vi.fn(async () => "opened" as const), now: () => Date.now() };
     await makeSecurityFix(d).handle(ev, ctx);
     expect(ctx.wake).not.toHaveBeenCalled();
     expect(d.postNotice).toHaveBeenCalledTimes(1);
@@ -144,7 +164,7 @@ describe("secret scanning: el secreto jamás viaja", () => {
 
   it("un reintento de gs no repite el aviso", async () => {
     const { ctx } = fakeCtx();
-    const d = { postNotice: vi.fn(async (_c: AutomationCtx, _b: string) => {}), now: () => Date.now() };
+    const d = { postNotice: vi.fn(async (_c: AutomationCtx, _b: string) => {}), openFactoryRun: vi.fn(async () => "opened" as const), now: () => Date.now() };
     const a = makeSecurityFix(d);
     await a.handle(ev, ctx);
     await a.handle(ev, ctx);

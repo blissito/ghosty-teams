@@ -4,8 +4,10 @@
 // alerta, pero un análisis de CodeQL o un aviso nuevo de una librería sueltan decenas en segundos.
 // Despertar a @build por cada una serían decenas de turnos y de PRs. Se agrupa:
 //
-// 1. La PRIMERA alerta del repo abre la ventana (`claim` de `<repo>:security:batch`, 10 min) y
-//    encola el turno de @build con retraso (`delayS`; si el ctx no lo soporta sale de inmediato).
+// 1. La PRIMERA alerta del repo abre la ventana (`claim` de `<repo>:security:batch`, 10 min).
+//    Con la fábrica instalada abre un PEDIDO de la fábrica con el plan ya firmado (el camino de
+//    cualquier pedido: caja, git, @check, CI rojo → @build, tarjeta; un solo pedido vivo por repo).
+//    Sin fábrica, un turno suelto de @build con retraso (`delayS`; si el ctx no lo soporta sale ya).
 // 2. Las que llegan dentro de la ventana no despiertan a nadie: cuando @build corre, LISTA las
 //    abiertas con las tools (GitHub es la fuente de verdad, ya trae las que llegaron después y no
 //    las que alguien cerró a mano) y arregla hasta 25 en un PR borrador.
@@ -83,7 +85,11 @@ export function alertLine(a: NonNullable<RepoEvent["alert"]>): string {
   return `- ${src} #${a.number} · ${what} · severidad ${clean(a.severity, 20) || "?"}${url ? ` · ${url}` : ""}`;
 }
 
-export function buildFixPrompt(o: { repo: string; first: NonNullable<RepoEvent["alert"]>; minSeverity: string; date: string }): string {
+/**
+ * El encargo. Con la fábrica instalada es el PLAN del pedido (lo lee @build al construir y @check
+ * al revisar: los pasos son sus criterios); sin ella, el texto del turno suelto de @build.
+ */
+export function buildFixPrompt(o: { repo: string; first: NonNullable<RepoEvent["alert"]>; minSeverity: string; date: string; factory?: boolean }): string {
   const branch = `ghosty/security-fix-${o.date}`;
   return [
     `🛡️ **Alertas de seguridad en \`${o.repo}\`** (automatización «Arreglar alertas», severidad mínima: ${o.minSeverity}).`,
@@ -93,13 +99,17 @@ export function buildFixPrompt(o: { repo: string; first: NonNullable<RepoEvent["
     "",
     "Qué hacer:",
     `1. Lista las alertas ABIERTAS de severidad ${o.minSeverity} o mayor con \`github_code_scanning_alerts\` y \`github_dependabot_alerts\` (pueden haber llegado más después de este aviso). Toma hasta ${MAX_ALERTS_PER_PR}, primero las críticas.`,
-    `2. Busca con \`github_search\` si ya hay un PR abierto de \`ghosty/security-fix-\` que cite alguna: ésas no se repiten.`,
+    `2. Busca con \`github_search\` si ya hay un PR abierto que las cubra y sáltate ésas: uno de \`ghosty/security-fix-\` que las cite, o uno de Dependabot que ya suba ese paquete (la fábrica revisa esos por su lado).`,
     "3. Lee el detalle de cada una (con `number`) y arréglala de raíz: el código vulnerable o la versión del paquete (la que indica `fixedIn`).",
     "4. Corre los tests y el build del repo. Si algo se rompe por un arreglo, quita ese arreglo en vez de entregar rojo.",
     `5. Abre UN PR en BORRADOR desde la rama \`${branch}\` (si ya existe, agrégale \`-2\`, \`-3\`…). En la descripción cita cada alerta arreglada con su número y su liga.`,
     "6. Comenta en el PR las que NO pudiste arreglar y por qué (sin versión que lo arregle, cambio de API, falso positivo probable…).",
     "",
-    "Nunca descartes (dismiss) alertas, nunca hagas merge y nunca empujes a ramas de otras personas. Al terminar, deja aquí la liga del PR y el conteo: arregladas / pendientes.",
+    "",
+    "Nunca descartes (dismiss) alertas, nunca hagas merge y nunca empujes a ramas de otras personas.",
+    o.factory
+      ? "Criterio para @check: cada alerta citada en el PR está arreglada en el diff (no silenciada ni ignorada con un comentario), tests y build en verde, y las pendientes comentadas con su razón."
+      : "Al terminar, deja aquí la liga del PR y el conteo: arregladas / pendientes.",
   ].join("\n");
 }
 
@@ -115,11 +125,54 @@ export function buildSecretNotice(repo: string, a: NonNullable<RepoEvent["alert"
   ].join("\n");
 }
 
+type FactoryOutcome = "opened" | "busy" | "no_factory";
+
 type Deps = {
   /** Aviso directo en el room, sin turno de agente. */
   postNotice(ctx: AutomationCtx, body: string): Promise<void>;
+  /** El lote como pedido de la fábrica (caja, git, @check, CI, tarjeta). */
+  openFactoryRun(ctx: AutomationCtx, o: { repo: string; title: string; planMd: string; first: NonNullable<RepoEvent["alert"]> }): Promise<FactoryOutcome>;
   now(): number;
 };
+
+/**
+ * Un pedido de la fábrica con el plan ya firmado, como los tickets de sprint que se aprueban solos:
+ * `openAdoptedRun` (lo mismo que adopta los PRs de Dependabot) + `decide`, que pide la caja, encola
+ * si no hay lugar y le pasa el encargo a @build. Así @build empuja con `factory_git_remote` (un
+ * turno suelto no puede: esa tool exige pedido) y el resto del camino es el de cualquier pedido.
+ * Un solo pedido vivo por repo: el que corre ya lista las alertas abiertas.
+ */
+async function openSecurityRun(
+  ctx: AutomationCtx,
+  o: { repo: string; title: string; planMd: string; first: NonNullable<RepoEvent["alert"]> },
+): Promise<FactoryOutcome> {
+  const channelId = Number(ctx.roomId);
+  const { isInstalled } = await import("../apps/installed.server");
+  if (!Number.isFinite(channelId) || !(await isInstalled("factory").catch(() => false))) return "no_factory";
+  const A = await import("../apps/factory-adopt.server");
+  if ((await A.liveRunsOfKind("security", o.repo)) > 0) return "busy";
+  const db = await import("../../db.server");
+  const row = (await db.listRoomRepos(channelId)).find((r) => r.repo.toLowerCase() === o.repo.toLowerCase());
+  if (!row) return "no_factory";
+  const run = await A.openAdoptedRun({
+    room: channelId,
+    sub: row.connectedBy,
+    repo: o.repo,
+    title: o.title,
+    rootBody: `🛡️ **Alertas de seguridad · \`${o.repo}\`**\n${alertLine(o.first)}`,
+    rootHandle: "build",
+    status: "plan_review",
+    kind: "security",
+    planVersion: 1,
+    event: { type: "adopted", actor: "security", data: { alert: `${o.first.kind}#${o.first.number}` } },
+  });
+  const { dbq } = await import("../../dbq.server");
+  await dbq("INSERT INTO gt_factory_plans (run_id, version, plan_md) VALUES (?, 1, ?)", [run.id, o.planMd]);
+  const R = await import("../apps/factory-runs.server");
+  await R.decide({ run, version: 1, decision: "approve", sub: row.connectedBy, who: "La automatización «Arreglar alertas»", origin: "" });
+  void R.refreshRoom(channelId);
+  return "opened";
+}
 
 /** Publica en el room como un agente del espacio, igual que los avisos de PR (`postAgent`, no despierta a nadie). */
 async function postRoomNotice(ctx: AutomationCtx, body: string): Promise<void> {
@@ -135,7 +188,7 @@ async function postRoomNotice(ctx: AutomationCtx, body: string): Promise<void> {
   if (msg) bus.publish(bus.ch.room(ctx.ns, channelId), { t: "message:new", msg });
 }
 
-const defaultDeps: Deps = { postNotice: postRoomNotice, now: () => Date.now() };
+const defaultDeps: Deps = { postNotice: postRoomNotice, openFactoryRun: openSecurityRun, now: () => Date.now() };
 
 /** ¿Le quedan intentos a esta alerta? Reserva el siguiente (1…3). */
 async function takeAttempt(ctx: AutomationCtx, repo: string, alert: NonNullable<RepoEvent["alert"]>): Promise<boolean> {
@@ -179,11 +232,16 @@ export function makeSecurityFix(deps: Deps = defaultDeps): Automation {
 
       const now = deps.now();
       const date = cdmxDate(now);
+      const title = `Alertas de seguridad · ${repo} · ${date}`;
+      const outcome = await deps.openFactoryRun(ctx, { repo, title, planMd: buildFixPrompt({ repo, first: ev.alert, minSeverity, date, factory: true }), first: ev.alert });
+      if (outcome !== "no_factory") return;
+
+      // Sin fábrica: turno suelto de @build en un hilo propio.
       const opts = {
         handle: "build",
         text: buildFixPrompt({ repo, first: ev.alert, minSeverity, date }),
         threadKey: `security:${repoKey(repo)}:${Math.floor(now / 1000)}`,
-        title: `Alertas de seguridad · ${repo} · ${date}`,
+        title,
         // Retraso para juntar el lote. Campo opcional pedido a EVENTOS; si su `wake` no lo
         // conoce, lo ignora y el turno sale ya (sigue funcionando: @build relista con las tools).
         delayS: BATCH_WINDOW_S,
