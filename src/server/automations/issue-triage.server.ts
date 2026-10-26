@@ -55,6 +55,7 @@ export function triagePrompt(ev: RepoEvent, s: IssueTriageSettings): string {
     `2. Busca duplicados con \`github_search\` (\`repo: ${ev.repo}\`, \`type: issue\`, abiertos y cerrados, 2–3 búsquedas con palabras clave del título). Sólo cuenta como duplicado lo que describe el mismo problema.`,
     "3. Deja UN solo comentario con `github_comment`: qué etiquetas pusiste, los posibles duplicados como `#N` (sin cerrar nada) y, si aplica, lo del punto 4. Si no hay nada útil que decir (sin duplicados ni preguntas), no comentes." + repro,
     "",
+    "Este turno NO es un pedido de la fábrica: no uses factory_plan_submit ni factory_suggest; si el issue merece trabajo, dilo aquí en una línea.",
     "Reglas: nunca cierres, asignes, bloquees ni edites el texto del issue. Corto, en el idioma del issue, sin plantillas largas. Al final, resume aquí en 2 renglones con la liga.",
   ].join("\n");
 }

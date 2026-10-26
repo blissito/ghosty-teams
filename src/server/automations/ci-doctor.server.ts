@@ -12,6 +12,7 @@
 import { dbq } from "../../dbq.server";
 import { withNamespace } from "../tenant.server";
 import { appJwtOrNull, installationToken } from "../connectors/github-app.server";
+import { ALERT_DIAGNOSIS } from "../apps/factory-roles";
 import type { Automation, AutomationCtx, RepoEvent } from "./types";
 
 export type CiDoctorSettings = {
@@ -109,9 +110,10 @@ export function diagnosePrompt(ev: RepoEvent): string {
     "",
     "Diagnostica, no arregles:",
     `1. Lee los logs del job que falló con \`github_workflow_run_logs\` (run ${r.id}) y el commit con \`github_get_commit\`.`,
-    "2. Decide la causa probable: el cambio del commit, una dependencia/infra externa, o algo flaky (si el mismo test falla y pasa sin cambios, dilo).",
+    `2. Con el log, ${ALERT_DIAGNOSIS}: el cambio del commit, una dependencia/infra externa, o algo flaky (el mismo test falla y pasa sin cambios).`,
     `3. Busca con \`github_search\` (\`type: issue\`, abiertos) un issue que ya hable de este rojo. Si existe, comenta ahí con \`github_comment\`; si no y la causa es real, abre UNO con \`github_create_issue\` titulado «[ghosty] CI rojo en ${r.headBranch}: ${r.name ?? "workflow"}» con la causa, el paso que falló, el extracto mínimo del log y la liga al run.`,
     "",
+    "Este turno NO es un pedido de la fábrica: no uses factory_plan_submit, factory_check_verdict ni factory_suggest.",
     "Tienes permiso para comentar y abrir ese issue sin pedir confirmación. Nunca empujes código, reintentes runs ni cierres nada. Al final, resume aquí en 2–3 renglones con las ligas.",
   ].join("\n");
 }
@@ -244,6 +246,11 @@ async function upsertFlakyIssue(repo: string, workflow: string, s: CiDoctorSetti
   return hit ? null : n;
 }
 
+async function watchedByPostMerge(repo: string, sha: string): Promise<boolean> {
+  const rows = await dbq("SELECT 1 FROM gt_post_merge WHERE repo = ? AND merge_sha = ? LIMIT 1", [repo.toLowerCase(), sha]).catch(() => []);
+  return rows.length > 0;
+}
+
 async function handle(ev: RepoEvent, ctx: AutomationCtx): Promise<void> {
   const r = ev.run;
   if (ev.event !== "workflow_run" || ev.action !== "completed" || !r?.id || !r.headSha) return;
@@ -279,6 +286,8 @@ async function handle(ev: RepoEvent, ctx: AutomationCtx): Promise<void> {
     if (cls !== "failure" || s.diagnoseMain === false) return;
     if ((r.prNumbers?.length ?? 0) > 0) return; // no consultar GitHub por algo de `ci_fix`
     if (!shouldDiagnose(ev, await mainBranchesOf(ev.repo, s))) return;
+    // El merge de un pedido de la fábrica ya lo vigila `post-merge.server.ts` (avisa en su hilo).
+    if (await watchedByPostMerge(ev.repo, run.headSha)) return;
     if (!(await ctx.claim("ci_doctor", `${ev.repo.toLowerCase()}@${r.headSha}:${workflow}`, 7 * 24 * 3600_000))) return;
     if (!(await ctx.budget("ci_doctor"))) return;
     await ctx.wake({
