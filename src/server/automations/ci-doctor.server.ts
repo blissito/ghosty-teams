@@ -246,6 +246,61 @@ async function upsertFlakyIssue(repo: string, workflow: string, s: CiDoctorSetti
   return hit ? null : n;
 }
 
+// ── Lo que la fábrica le pregunta al historial (post-merge, CI rojo de un pedido) ──────────
+
+export type FlakyInfo = { workflow: string; count: number; windowDays: number; issueUrl: string | null };
+
+/** Sólo los workflows con flaky en la ventana o con issue agrupado. Puro, para las pruebas. */
+export function flakyInfoOf(
+  repo: string,
+  workflow: string,
+  count: number,
+  issueNumber: number | null,
+  windowDays: number,
+): FlakyInfo | null {
+  if (count <= 0 && !issueNumber) return null;
+  return { workflow, count, windowDays, issueUrl: issueNumber ? `https://github.com/${repo}/issues/${issueNumber}` : null };
+}
+
+/**
+ * ¿Estos workflows ya están marcados flaky en el repo? Lee `gt_ci_runs`/`gt_ci_flaky_issues` (los
+ * llena esta automatización en los rooms que la prendieron); sin historial, `[]`. Nunca lanza.
+ * Corre dentro del namespace de quien llama.
+ */
+export async function flakyWorkflows(repo: string, workflows: string[], windowDays = 14): Promise<FlakyInfo[]> {
+  const out: FlakyInfo[] = [];
+  const since = Math.floor(Date.now() / 1000) - windowDays * 86400;
+  for (const workflow of Array.from(new Set(workflows.filter(Boolean)))) {
+    const [c] = await dbq(
+      `SELECT COUNT(*) AS n FROM gt_ci_runs WHERE repo = ? COLLATE NOCASE AND workflow = ? AND flaky = 1 AND at >= ?`,
+      [repo, workflow, since],
+    ).catch(() => []);
+    const [i] = await dbq(`SELECT number FROM gt_ci_flaky_issues WHERE repo = ? COLLATE NOCASE AND workflow = ?`, [repo, workflow]).catch(() => []);
+    const info = flakyInfoOf(repo, workflow, Number(c?.n ?? 0), i?.number ? Number(i.number) : null, windowDays);
+    if (info) out.push(info);
+  }
+  return out;
+}
+
+/** El workflow de cada run rojo (ids sacados de las ligas de los checks): primero el historial, sin red. */
+export async function workflowsOfRuns(repo: string, runIds: number[]): Promise<Map<number, string>> {
+  const out = new Map<number, string>();
+  const ids = Array.from(new Set(runIds.filter((n) => Number.isFinite(n) && n > 0)));
+  if (!ids.length) return out;
+  const rows = await dbq(
+    `SELECT DISTINCT run_id, workflow FROM gt_ci_runs WHERE repo = ? COLLATE NOCASE AND run_id IN (${ids.map(() => "?").join(",")})`,
+    [repo, ...ids],
+  ).catch(() => []);
+  for (const r of rows) out.set(Number(r.run_id), String(r.workflow));
+  return out;
+}
+
+/** El id del run de Actions en la liga de un check (`…/actions/runs/<id>/job/<job>`). */
+export function runIdOfCheckUrl(url: string | null | undefined): number | null {
+  const m = /\/actions\/runs\/(\d+)/.exec(String(url ?? ""));
+  return m ? Number(m[1]) : null;
+}
+
 async function watchedByPostMerge(repo: string, sha: string): Promise<boolean> {
   const rows = await dbq("SELECT 1 FROM gt_post_merge WHERE repo = ? AND merge_sha = ? LIMIT 1", [repo.toLowerCase(), sha]).catch(() => []);
   return rows.length > 0;

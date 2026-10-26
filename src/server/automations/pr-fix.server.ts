@@ -181,7 +181,8 @@ export function prView(ev: RepoEvent, number: number, live: AppPrInfo | null): P
     author: live?.author ?? ev.pr?.author ?? null,
     head: live?.head ?? ev.pr?.head ?? ev.run?.headBranch ?? null,
     headSha: live?.headSha ?? ev.pr?.headSha ?? ev.run?.headSha ?? null,
-    headRepo: live?.headRepo ?? null,
+    // Si GitHub no contestó, el evento ya dice de qué repo sale la rama (forks incluidos).
+    headRepo: live?.headRepo ?? ev.pr?.headRepo ?? (ev.pr?.fork ? "otro repo" : null),
     base: live?.base ?? ev.pr?.base ?? null,
     mergeableState: live?.mergeableState ?? ev.pr?.mergeableState ?? null,
     url: live?.url ?? ev.pr?.url ?? `https://github.com/${ev.repo}/pull/${number}`,

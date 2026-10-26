@@ -514,7 +514,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
               : "") +
             (touchesGithub
               ? `⚠️ Este PR modifica archivos de .github/ (CI o CODEOWNERS). Si el pedido NO es agregar o arreglar el CI, es un hallazgo: repórtalo con pass=false` +
-                (run.kind === "dependabot"
+                (R.isDependabotUpgrade(run)
                   ? ` (excepción: en una subida de Dependabot se pide agregar un grupo de paquetes hermanos a .github/dependabot.yml; sólo eso, nada de workflows ni CODEOWNERS). `
                   : `. `)
               : "") +
