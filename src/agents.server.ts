@@ -2529,6 +2529,9 @@ export async function callAgentBackendStream(
           childProfile: agent.handle === "build" ? "" : "investigador",
         }
       : {}),
+    // Fuera de la fábrica, todo agente nativo pide ayudantes (26-oct): forks para seguir el mismo
+    // trabajo o perfiles; gs decide si su worker los soporta (claude-worker) y los corre `sync`.
+    ...(native && !factoryTurn ? { nativeSubagents: true } : {}),
   };
   if (native) {
     return await nativeAguiTurn({ agent, rt, base, fleetAgentId, groupId, fields, outText, parts, onChunk, onTool, onTruncated, onModel, onFailure, signal, inject, durableOpts });
