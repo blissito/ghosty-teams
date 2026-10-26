@@ -21,6 +21,7 @@ import { RunSlot } from "./RunSlot";
 import { factoryVerdictFn, factoryMergeFn, factoryRunCardFn, factoryDecisionFn, factoryAdviseFn, factoryRetryPreviewFn, factorySetPreviewOffFn, factoryRunActionFn, factoryRunCiFn, factoryFixCiFn } from "../../server/apps/factory";
 import { prepareRepoFn } from "../../server/apps/readiness";
 import type { RunCardData } from "../../lib/ebdoc";
+import { runKindTag } from "../../lib/factory-kinds";
 
 type State = Awaited<ReturnType<typeof factoryRunCardFn>>;
 
@@ -360,7 +361,10 @@ function RunCardBody({ card, channelId, inPanel, msgId }: { card: RunCardData; c
   const mergeQueued = st.status === "pr_review" && !!(review?.mergeQueued ?? st.mergeQueued);
   const mergeAuto = mergeQueued && !!(review?.mergeAuto ?? st.mergeAuto);
   // «En espera de lugar» NO es tuyo: arranca solo cuando se libera un lugar (viewState: nadie).
-  const yourTurn = st.status === "plan_review" || st.status === "escalated" || (st.status === "pr_review" && !mergeQueued) || waiting || (stalled && !waiting);
+  // Adoptado con hora (lote de alertas): arranca solo, no le toca a nadie (se puede arrancar antes).
+  const startsAt = st.status === "plan_review" && st.dueAt ? new Date(st.dueAt * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : null;
+  const kindTag = runKindTag(st.kind, st.kindMeta, st.prUrl);
+  const yourTurn = (st.status === "plan_review" && !startsAt) || st.status === "escalated" || (st.status === "pr_review" && !mergeQueued) || waiting || (stalled && !waiting);
   const ciNow = st.status === "pr_review" ? (review?.ci?.state ?? st.ci?.state) : st.ci?.state;
   const ciChecks = review?.ci?.checks ?? [];
   const effort = review?.effort;
@@ -387,7 +391,9 @@ function RunCardBody({ card, channelId, inPanel, msgId }: { card: RunCardData; c
               ? t("Sin avanzar: nadie está trabajando")
               : WORKING[st.status]
                 ? st.liveTurnId ? t(WORKING[st.status]) : t("Arrancando a @{rol}…").replace("{rol}", st.status === "planning" ? "plan" : st.status === "building" ? "build" : "check")
-                : st.status === "plan_review"
+                : startsAt
+                  ? t("Arranca solo a las {hora}").replace("{hora}", startsAt)
+                  : st.status === "plan_review"
                   ? `${t("Te toca firmar el plan")} v${st.planVersion}`
                   : st.status === "escalated"
                     ? t("Te toca decidir")
@@ -468,6 +474,12 @@ function RunCardBody({ card, channelId, inPanel, msgId }: { card: RunCardData; c
           <p className="truncate text-sm font-semibold text-ink">
             #{st.runId} · {st.title}
           </p>
+          {kindTag ? (
+            <p className="truncate text-[11.5px] text-muted">
+              <span aria-hidden>{kindTag.icon}</span> {t(kindTag.text).replace("{n}", String(kindTag.n ?? ""))}
+              {st.kindMeta?.covered ? ` · ${t("{n} ya las cubre Dependabot").replace("{n}", String(st.kindMeta.covered))}` : ""}
+            </p>
+          ) : null}
         </div>
       </div>
       <div className="px-3.5">
@@ -704,7 +716,9 @@ function RunCardBody({ card, channelId, inPanel, msgId }: { card: RunCardData; c
                   ? confirming
                     ? t("Leí los {n} puntos: que @build lo arregle").replace("{n}", String(st.escalation?.points.length ?? 0))
                     : t("Que @build lo arregle")
-                  : `${t("Aprobar plan")} v${st.planVersion}`}
+                  : startsAt
+                    ? t("Arrancar ya")
+                    : `${t("Aprobar plan")} v${st.planVersion}`}
               </button>
               <button
                 type="button"

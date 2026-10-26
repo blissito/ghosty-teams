@@ -82,7 +82,7 @@ export function RunBar({ channelId, threadId }: { channelId: number; threadId: n
   // UNA acción principal por estado. Las demás (pedir cambios, cancelar) viven en el panel.
   const primary =
     v.primary === "sign" && st.canSign
-      ? { label: `${t("Firmar plan")} v${st.planVersion}`, run: () => factoryDecisionFn({ data: { runId: st.runId, version: st.planVersion, decision: "approve" } }) }
+      ? { label: st.dueAt ? t("Arrancar ya") : `${t("Firmar plan")} v${st.planVersion}`, run: () => factoryDecisionFn({ data: { runId: st.runId, version: st.planVersion, decision: "approve" } }) }
       : v.primary === "merge"
         ? { label: t("Merge"), run: () => factoryMergeFn({ data: { runId: st.runId } }) }
         : v.primary === "resume"

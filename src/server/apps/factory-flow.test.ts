@@ -132,3 +132,11 @@ describe("mergeMode", () => {
     expect(mergeMode(null, null, false)).toBeNull();
   });
 });
+
+describe("viewState de un adoptado con hora", () => {
+  it("arranca solo: no le toca a nadie, pero se puede arrancar antes", () => {
+    const v = viewState({ status: "plan_review", requestedBy: "u1", dueAt: 1000 }, { lastActivityAt: 0, now: 10, busy: false });
+    expect(v).toMatchObject({ column: "waiting", label: "Arranca solo", whoseTurn: null, primary: "sign" });
+    expect(viewState({ status: "plan_review", requestedBy: "u1" }, { lastActivityAt: 0, now: 10, busy: false }).label).toBe("Espera tu firma");
+  });
+});

@@ -30,6 +30,7 @@ import { RepoReadiness } from "../components/RepoReadiness";
 import { RepoTeam } from "../components/RepoTeam";
 import { RolesEditor, SchedulesEditor, SuggestAsks } from "../components/AppsPanel";
 import { AskAgentHint } from "../components/AskAgentHint";
+import { runKindTag } from "../lib/factory-kinds";
 import { Toggle } from "../components/Toggle";
 import ConfirmModal from "../components/ConfirmModal";
 
@@ -649,6 +650,10 @@ function FactoryPage() {
                       {r.title}
                     </a>
                     <p className="truncate text-[11px] text-muted">
+                      {(() => {
+                        const tag = runKindTag(r.kind, r.kindMeta, r.prUrl);
+                        return tag ? `${tag.icon} ${t(tag.text).replace("{n}", String(tag.n ?? ""))} · ` : "";
+                      })()}
                       {r.repo ?? "—"} · {fmt(r.createdAt)}
                       {r.loops ? ` · ${r.loops} ${r.loops === 1 ? t("corrección") : t("correcciones")}` : ""}
                     </p>

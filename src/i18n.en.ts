@@ -2531,4 +2531,16 @@ export const en: Record<string, string> = {
   "Cada issue nuevo recibe etiquetas, se marca si es duplicado o se pide cómo reproducirlo.": "Every new issue gets labels, is flagged if it's a duplicate, or gets asked for repro steps.",
   "Diagnosticar el CI": "Diagnose CI",
   "Cuando falla el CI explica por qué; las pruebas intermitentes se juntan en un issue.": "When CI fails it explains why; flaky tests are grouped in one issue.",
+  // Pedidos adoptados por tipo (lib/factory-kinds.ts) y los que arrancan a su hora.
+  "Seguridad: 1 alerta": "Security: 1 alert",
+  "Seguridad: {n} alertas": "Security: {n} alerts",
+  "Seguridad: lote de alertas": "Security: batch of alerts",
+  "Arreglo de CI de #{n}": "CI fix for #{n}",
+  "Arreglo de CI": "CI fix",
+  "Arreglo de dependencia de #{n}": "Dependency fix for #{n}",
+  "Arreglo de dependencia": "Dependency fix",
+  "{n} ya las cubre Dependabot": "{n} already covered by Dependabot",
+  "Arranca solo a las {hora}": "Starts on its own at {hora}",
+  "Arrancar ya": "Start now",
+  "Arranca solo": "Starts on its own",
 };

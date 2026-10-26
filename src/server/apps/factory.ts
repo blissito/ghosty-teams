@@ -1,3 +1,4 @@
+import { kindSummary, parseKindMeta, type KindSummary } from "../../lib/factory-kinds";
 import { createServerFn } from "@tanstack/react-start";
 import { summarizeEvals } from "./factory-evals";
 import { sessionUser, type SessionMe } from "../chat";
@@ -636,7 +637,11 @@ export const factoryRunCardFn = createServerFn({ method: "POST" })
       // «Merge» picado con el CI corriendo: entra solo al pasar.
       ...(await mergeStateOf(run)),
       // Dependabot entra directo a revisión: Plan y Firma no existieron (la barra los apaga).
-      kind: (await (await import("../../dbq.server")).dbq("SELECT kind FROM gt_factory_runs WHERE id = ?", [run.id]).catch(() => []))[0]?.kind ?? null,
+      kind: run.kind ?? null,
+      // Seguridad: cuántas alertas lleva el lote (y las que cubre Dependabot), para la etiqueta.
+      kindMeta: kindSummary(run.kindMeta),
+      // Adoptado con hora: «Arranca solo a las …» en vez de «Te toca firmar».
+      dueAt: run.status === "plan_review" ? (run.dueAt ?? null) : null,
       // Cancelado: en qué etapa iba y por qué, para conservar las ✓ de lo que sí se hizo.
       cancelled: run.status === "cancelled" ? await cancelledView(run, me.sub) : null,
       ...(await runLive(run)),
@@ -966,6 +971,8 @@ export type FactoryRunRow = {
   prUrl: string | null;
   threadUrl: string | null;
   kind: string | null;
+  /** Datos del tipo (`kind_meta`): las alertas de un pedido de seguridad. */
+  kindMeta: KindSummary | null;
   /** Estado calculado (columna del tablero) y a quién le toca: sólo en pedidos abiertos. */
   column: string | null;
   label: string | null;
@@ -1002,7 +1009,7 @@ export const factoryOverviewFn = createServerFn({ method: "GET" })
   const { dbq } = await import("../../dbq.server");
   const rows = room
     ? await dbq(
-        `SELECT id, channel_id, root_msg_id, title, status, repo, loops, created_at, pr_ready_at, first_review_at, first_review_state, merged_at, pr_url, kind, requested_by, approved_by, box_state, merge_queued_by, merge_queued_auto, task_ref,
+        `SELECT id, channel_id, root_msg_id, title, status, repo, loops, created_at, pr_ready_at, first_review_at, first_review_state, merged_at, pr_url, kind, kind_meta, due_at, requested_by, approved_by, box_state, merge_queued_by, merge_queued_auto, task_ref,
                 MAX(COALESCE((SELECT MAX(at) FROM gt_factory_events e WHERE e.run_id = gt_factory_runs.id), 0),
                     COALESCE((SELECT MAX(created_at) FROM gc_messages m WHERE m.channel_id = gt_factory_runs.channel_id AND m.parent_id = gt_factory_runs.root_msg_id), 0),
                     updated_at) AS last_at
@@ -1044,7 +1051,7 @@ export const factoryOverviewFn = createServerFn({ method: "GET" })
     }
     if (["done", "cancelled"].includes(String(r.status))) return { column: null, label: null, turnSub: null };
     const v = viewState(
-      { status: r.status, requestedBy: String(r.requested_by), approvedBy: r.approved_by ?? null, boxWaiting: r.box_state === "waiting" },
+      { status: r.status, requestedBy: String(r.requested_by), approvedBy: r.approved_by ?? null, boxWaiting: r.box_state === "waiting", dueAt: r.due_at != null ? Number(r.due_at) : null },
       {
         lastActivityAt: Number(r.last_at ?? now),
         now,
@@ -1072,6 +1079,7 @@ export const factoryOverviewFn = createServerFn({ method: "GET" })
       prUrl: r.pr_url ?? null,
       threadUrl: `/c/${byId.get(Number(r.channel_id))!.slug}?thread=${r.root_msg_id}&run=${r.id}`,
       kind: r.kind ?? null,
+      kindMeta: kindSummary(parseKindMeta(r.kind_meta)),
       ...viewOf(r),
     }));
   const { runStats } = await import("./factory-stats");
