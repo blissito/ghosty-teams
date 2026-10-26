@@ -530,6 +530,11 @@ async function graphql(sub: string, query: string, variables: Record<string, unk
   if (!token) {
     return { error: "La cuenta de GitHub no está conectada. Conéctala en Ajustes → Integraciones." };
   }
+  return graphqlWith(token, query, variables);
+}
+
+/** GraphQL con un token dado (p. ej. el de `writeToken`, para escribir como la App). */
+async function graphqlWith(token: string, query: string, variables: Record<string, unknown>): Promise<any> {
   try {
     const res = await fetch(`${API}/graphql`, {
       method: "POST",
@@ -545,6 +550,32 @@ async function graphql(sub: string, query: string, variables: Record<string, unk
   } catch (e) {
     return { error: `No pude contactar a GitHub: ${e instanceof Error ? e.message : String(e)}` };
   }
+}
+
+// ── Hilos de review (GraphQL: REST no da el node id del hilo ni lo deja resolver) ──
+export const REVIEW_THREADS_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) { pullRequest(number: $number) {
+    reviewThreads(first: 100) { nodes { id isResolved isOutdated path line
+      comments(first: 50) { nodes { databaseId author { login } body createdAt } } } }
+  } }
+}`;
+export const RESOLVE_THREAD_MUTATION = `mutation($id: ID!) { resolveReviewThread(input: { threadId: $id }) { thread { id isResolved } } }`;
+
+export type ReviewThread = {
+  threadId: string; resolved: boolean; outdated: boolean; path?: string; line?: number | null;
+  comments: { id: number; author?: string; body: string; at?: string }[];
+};
+
+export function reviewThreadsFrom(d: any): ReviewThread[] {
+  const nodes = d?.repository?.pullRequest?.reviewThreads?.nodes;
+  return (Array.isArray(nodes) ? nodes : []).map((t: any) => ({
+    threadId: String(t?.id ?? ""),
+    resolved: t?.isResolved === true,
+    outdated: t?.isOutdated === true,
+    path: t?.path ?? undefined,
+    line: t?.line ?? null,
+    comments: (t?.comments?.nodes ?? []).map((c: any) => ({ id: Number(c?.databaseId), author: c?.author?.login, body: String(c?.body ?? "").slice(0, 2000), at: c?.createdAt })),
+  }));
 }
 
 /**
@@ -789,7 +820,7 @@ export async function ambientContext(
         `list() y run(name, args). `) +
     `Lectura: github_list_repos, github_list_issues, github_get_issue, ` +
     `github_list_prs, github_get_pr, github_pr_files, github_read_file, github_search_code, ` +
-    `github_checkout, github_workflow_runs, github_workflow_run_logs, github_pr_checks. Escritura: github_create_review, github_merge_pr, github_comment, github_update_issue, github_create_issue, ` +
+    `github_checkout, github_workflow_runs, github_workflow_run_logs, github_pr_checks. Escritura: github_create_review, github_resolve_review_thread, github_merge_pr, github_comment, github_update_issue, github_create_issue, ` +
     `github_create_branch, github_write_file, github_push_files, github_delete_file, github_create_pr, github_update_pr, github_mark_ready, github_enable_auto_merge, ` +
     `github_update_branch, github_update_pr_base, github_watch_pr. ` +
     `También: ramas, colaboradores, releases y tags (github_create_release), etiquetas del repo, ` +
@@ -1980,6 +2011,44 @@ const ALL_TOOLS: ConnectorTool[] = [
         body: JSON.stringify({ body: String(a.body) }),
       });
       return r?.error ? r : { ok: true, url: r?.html_url };
+    },
+  },
+  {
+    name: "github_pr_review_threads",
+    description: "Los HILOS de review de un PR (comentarios en línea agrupados por hilo), con su `threadId` para resolverlos con github_resolve_review_thread, si ya están resueltos y el id de cada comentario para contestar con github_reply_review_comment.",
+    inputSchema: {
+      type: "object",
+      properties: { ...repoProp, number: { type: "number", description: "Número del PR." }, unresolved: { type: "boolean", description: "Sólo los que siguen sin resolver (default false)." } },
+      required: ["repo", "number"],
+    },
+    handler: async (sub, a) => {
+      const repo = normalizeRepo(a.repo);
+      if (!repo) return BAD_REPO;
+      const [owner, name] = repo.split("/");
+      const d = await graphql(sub, REVIEW_THREADS_QUERY, { owner, name, number: Number(a.number) });
+      if (d?.error) return d;
+      const threads = reviewThreadsFrom(d);
+      return a.unresolved === true ? threads.filter((t) => !t.resolved) : threads;
+    },
+  },
+  {
+    name: "github_resolve_review_thread",
+    description: "Marca como RESUELTO un hilo de review de un PR. Úsalo sólo cuando ya arreglaste lo que pedía (y lo contestaste en el hilo). El `threadId` sale de github_pr_review_threads.",
+    inputSchema: {
+      type: "object",
+      properties: { ...repoProp, thread_id: str("threadId del hilo (node id, empieza con PRRT_).") },
+      required: ["repo", "thread_id"],
+    },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const threadId = String(a.thread_id ?? "").trim();
+      if (!threadId) return { error: "Falta `thread_id` (sale de github_pr_review_threads)." };
+      const w = await writeToken(sub, p);
+      if ("error" in w) return w;
+      const r = await graphqlWith(w.token, RESOLVE_THREAD_MUTATION, { id: threadId });
+      if (r?.error) return r;
+      return { ok: true, resolved: r?.resolveReviewThread?.thread?.isResolved ?? true };
     },
   },
   {

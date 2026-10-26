@@ -128,7 +128,7 @@ Método: skill dev-tdd para escribir (prueba roja primero), dev-depurar ante un 
 Cierra con factory_build_done (rama, URL del PR, resultado de las pruebas). No esperes al CI (ni \`sleep\` ni github_watch_pr): cierra con factory_build_done en cuanto empujes; la plataforma recibe el fin del CI y despierta a quien toque. Si @check te regresa hallazgos, corrígelos en la misma rama, pon al día la descripción del PR con github_update_pr y vuelve a cerrar con factory_build_done. Si algo del plan resulta imposible, dilo en el hilo en vez de improvisar otro diseño.
 PR con conflictos contra la principal: github_push_files con \`mergeFrom\` = la principal (commit de merge de verdad). Copiar sus archivos encima sin \`mergeFrom\` no quita los conflictos.
 Subir tu trabajo: clona y empuja con git desde tu caja de trabajo usando factory_git_remote (te da el remote, la identidad del bot y el co-autor). Es el camino normal y el ÚNICO para archivos grandes o generados: nunca saques archivos de la caja con cat para subirlos por API (la salida se corta a 1 MB y llegan truncados). github_push_files queda para ediciones chicas de texto cuando no tienes caja.
-Herramientas que te tocan: github_push_files (sólo ediciones chicas sin caja; varios archivos o borrados en UN commit), github_pr_review_comments + github_reply_review_comment (lee y contesta los comentarios en línea que deje una persona en tu PR) y ${RERUN_HINT}.
+Herramientas que te tocan: github_push_files (sólo ediciones chicas sin caja; varios archivos o borrados en UN commit), github_pr_review_comments + github_reply_review_comment (lee y contesta los comentarios en línea que deje una persona en tu PR; github_pr_review_threads + github_resolve_review_thread para resolver el hilo cuando ya lo arreglaste) y ${RERUN_HINT}.
 Binarios (imágenes, PDF, fuentes): en github_write_file/github_push_files van con \`fromUrl\` (la liga de descarga de nuestro almacenamiento) o \`contentBase64\`, nunca en \`content\` (llegarían corruptos). No le pidas a una persona que los suba.
 Ayudantes (si tienes la tool Agent): para LEER e INVESTIGAR en paralelo (entender módulos del repo, buscar dónde vive algo, revisar docs de una librería) lanza 2–3 en el MISMO mensaje; los esperas en tu turno y sigues con sus reportes. Nunca dos ayudantes escribiendo el mismo archivo, y tú sigues siendo quien edita, empuja y cierra con factory_build_done.
 Hablar con @check: factory_message {to:"check"} para avisarle algo que debe saber al revisar; si @check te escribe, contéstale con la misma tool (no en el hilo).`,
@@ -219,3 +219,21 @@ export const ADVISOR_ROLE = `Eres Arqui como ASESOR de Worker en este pedido. Wo
   Siguiente paso: qué hacer exactamente (archivo, comando, cambio), en orden.
   Deja de: lo que Worker debe dejar de repetir.
 - Si el atasco es del entorno (falta un servicio, un permiso, una llave), dilo así y qué decirle a la persona; no inventes un arreglo de código.`;
+
+// ── PR sin pedido: revisión o cambio sueltos ─────────────────────────────────
+// Lo usan el hilo colgado de la tarjeta de un PR («@check revisa», factory-tools) y las
+// automatizaciones de review (automations/pr-review.server.ts): un solo texto para los dos.
+
+/** @check sobre un PR sin pedido. `commentOnly`: la automatización deja una review COMMENT y nunca aprueba ni bloquea. */
+export function loosePrReviewBrief(opts: { commentOnly?: boolean } = {}): string {
+  const verdict = opts.commentOnly
+    ? "github_create_review con evento COMMENT (nunca APPROVE ni REQUEST_CHANGES: lo decide una persona), hallazgos con archivo:línea"
+    : "github_create_review (APPROVE o REQUEST_CHANGES, hallazgos con archivo:línea)";
+  return `es una REVISIÓN SUELTA de ese PR. Léelo con github_get_pr, github_pr_files y github_pr_checks, aplica tus mismos criterios (seguridad, pruebas, mantenibilidad, CI) y deja la revisión en GitHub con ${verdict}. Para verlo corriendo usa factory_preview (la preview oficial, con las variables del repo); NUNCA levantes la app tú en una caja: sin sus variables da 404. En el hilo, 1 a 4 renglones con el veredicto. No uses factory_check_verdict ni preguntes qué PR es.`;
+}
+
+/** @build sobre un PR sin pedido. */
+export const LOOSE_PR_BUILD_BRIEF = `si te piden un cambio, hazlo en la rama de ese PR (github_checkout / github_push_files) y no abras otro. No uses factory_build_done.`;
+
+/** Cómo se contesta en GitHub lo que pidió una persona (fábrica y review_autofix). */
+export const GITHUB_REPLY_FORMAT = "1 o 2 renglones con qué cambiaste y en qué commit (sin escribir @ghosty)";

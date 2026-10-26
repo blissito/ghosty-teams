@@ -4,6 +4,7 @@
 // (o una persona firma el plan), aquí se cambia el estado y se despierta al rol siguiente
 // con `enqueueWakeup` en el hilo del pedido. Ningún agente decide a quién le toca: así el
 // plan no se construye sin firma y @check no se salta.
+import { GITHUB_REPLY_FORMAT } from "./factory-roles";
 import { dbq } from "../../dbq.server";
 import {
   ESCALATION_ACTIONS,
@@ -1215,7 +1216,7 @@ export async function noteFromGithub(run: Run, by: string, ask: { text: string; 
   const reply = ask.path
     ? "Al terminar, contéstale en ese comentario en línea con github_reply_review_comment"
     : "Al terminar, contéstale en el PR con github_comment";
-  const text = `${ask.text}${where} — ${ask.url}\n${reply}: 1 o 2 renglones con qué cambiaste y en qué commit (sin escribir @ghosty).`;
+  const text = `${ask.text}${where} — ${ask.url}\n${reply}: ${GITHUB_REPLY_FORMAT}.`;
   const who = `@${by} en GitHub`;
   const noteId = await addNote(run.id, who, text);
   if (run.repo) void import("../connectors/github.server").then((g) => g.ackGithubComment(run.repo!, ask.url));
