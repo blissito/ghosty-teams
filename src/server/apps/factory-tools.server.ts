@@ -1508,20 +1508,46 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
 /** Hallazgos de @check como markdown, vengan como texto, lista u objeto. */
 export function findingsText(raw: unknown): string {
   if (raw == null) return "";
-  if (typeof raw === "string") return raw.trim();
+  if (typeof raw === "string") {
+    // A veces llega el JSON como texto (palmera #72/#77/#84): se interpreta en vez de pegarlo.
+    const t = raw.trim();
+    if (/^[[{]/.test(t)) {
+      try {
+        return findingsText(JSON.parse(t));
+      } catch {
+        /* no era JSON: va tal cual */
+      }
+    }
+    return t;
+  }
+  const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
   const uno = (x: unknown): string => {
     if (x == null) return "";
     if (typeof x === "string") return x.trim();
     if (typeof x !== "object") return String(x);
+    if (Array.isArray(x)) return x.map(uno).filter(Boolean).join("; ");
     const o = x as Record<string, unknown>;
+    // Un objeto que envuelve la lista: { findings: [...] } / { items: [...] }.
+    const lista = [o.findings, o.items, o.issues].find(Array.isArray);
+    if (lista) return (lista as unknown[]).map(uno).filter(Boolean).join("\n- ");
     const lugar = [o.file ?? o.path, o.line ?? o.lines].filter((v) => v != null && v !== "").join(":");
-    const texto = [o.issue, o.message, o.text, o.finding, o.description, o.problem, o.detail, o.title].find((v) => typeof v === "string" && v.trim());
-    const arreglo = [o.fix, o.suggestion, o.expected].find((v) => typeof v === "string" && v.trim());
-    if (!texto && !lugar) return JSON.stringify(o);
-    return `${lugar ? `\`${lugar}\` — ` : ""}${texto ?? JSON.stringify(o)}${arreglo ? ` (arreglo: ${arreglo})` : ""}`;
+    const texto = [o.issue, o.message, o.text, o.finding, o.description, o.problem, o.detail, o.body, o.summary, o.reason, o.note, o.title]
+      .map(str)
+      .find(Boolean);
+    const arreglo = [o.fix, o.suggestion, o.expected, o.recommendation].map(str).find(Boolean);
+    const grado = str(o.severity) ?? str(o.level);
+    if (!texto && !lugar) {
+      // Último recurso legible: «clave: valor» de lo que sea texto, nunca el JSON crudo.
+      const pares = Object.entries(o)
+        .filter(([, v]) => typeof v === "string" || typeof v === "number")
+        .map(([k, v]) => `${k}: ${v}`);
+      return pares.join(" · ");
+    }
+    return `${grado ? `**${grado}** ` : ""}${lugar ? `\`${lugar}\` — ` : ""}${texto ?? ""}${arreglo ? ` (arreglo: ${arreglo})` : ""}`.trim();
   };
   if (Array.isArray(raw)) return raw.map(uno).filter(Boolean).map((t) => `- ${t}`).join("\n");
-  return uno(raw);
+  const one = uno(raw);
+  return one.includes("\n- ") ? `- ${one}` : one;
 }
 
 /** ¿Este turno de @check es el del crítico del plan? Pedido del hilo en `plan_review` con su

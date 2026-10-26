@@ -164,6 +164,18 @@ const PATCH_OPEN = /(^|\n)```eb-(patch|insert)[ \t]+([^\n`]+)\n/g;
 const REMOVE_LINE = /(^|\n)```eb-remove[ \t]+([^\n`]+)\n?```/g;
 
 /**
+ * La dirección en la LÍNEA SIGUIENTE (```eb-remove⏎a17⏎```) se sube a la cabecera. El
+ * parser la exige en la misma línea y el modelo a veces la baja: en descti #794 el fence
+ * quedó crudo en la burbuja, el documento no cambió y Eliza pidió el Excel 4 veces.
+ */
+function normalizePatchHeaders(body: string): string {
+  return body.replace(
+    /(^|\n)```eb-(patch|insert|remove)[ \t]*\n[ \t]*([A-Za-z][\w-]{0,40}(?:[ \t]+(?:append|prepend|before|after))?)[ \t]*(?=\n)/g,
+    "$1```eb-$2 $3",
+  );
+}
+
+/**
  * Extrae TODOS los bloques ```eb-patch``` del body acumulado. Igual que `extractEbDoc`:
  * idempotente (se re-escanea el body entero en cada chunk; el llamador compara con lo ya
  * aplicado), tolerante al fence abierto, y el fence SOLO cuenta si abre línea — mencionarlo
@@ -171,6 +183,7 @@ const REMOVE_LINE = /(^|\n)```eb-remove[ \t]+([^\n`]+)\n?```/g;
  * Un patch sin id o con cuerpo vacío no existe: se descarta aquí y nunca llega a aplicarse.
  */
 export function extractEbPatches(body: string): EbPatch[] {
+  body = normalizePatchHeaders(body);
   const out: EbPatch[] = [];
   REMOVE_LINE.lastIndex = 0;
   let r: RegExpExecArray | null;
@@ -242,7 +255,7 @@ export function stripOrphanPatch(body: string): string {
 
 /** Quita los bloques de patch del texto (para el bubble del chat). */
 export function stripEbPatches(body: string): string {
-  return body
+  return normalizePatchHeaders(body)
     .replace(/(^|\n)```eb-(patch|insert)[ \t]+[^\n`]+\n[\s\S]*?(\n```|$)/g, "$1")
     .replace(/(^|\n)```eb-remove[ \t]+[^\n`]+\n?```/g, "$1")
     .trim();

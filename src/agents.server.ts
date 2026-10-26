@@ -2,6 +2,7 @@
 // wizard (config) + los gc_agents extra (fleet o webhook). Módulo puro server
 // (sin createServerFn) para que lo usen tanto chat.ts como server/agents.ts sin
 // ciclos de import.
+import { humanAgentError } from "./lib/agent-error";
 import { PERSONA_ALIASES } from "./server/apps/factory-roles";
 import { hasIds, nodeIndex } from "./lib/artifact-ids";
 import { extractTodos, renderTodosBlock, stripStepsBlock, stripToolBlock, type TodoItem } from "./lib/ebdoc";
@@ -303,11 +304,33 @@ export const REGLA_REENTREGA =
  * "" cuando no hay nada que enumerar: con un solo adjunto propio no hay ambigüedad que
  * resolver, y el manifiesto sería ruido en cada turno.
  */
+/**
+ * Nombres únicos dentro de un mismo lote de adjuntos: el segundo `image.png` pasa a
+ * `image-2.png`. El agente los guarda en `adjuntos/<nombre>`, así que dos homónimos se
+ * PISABAN y el agente veía el mismo archivo dos veces (palmera 7-oct #450 con dos
+ * `CARRUSEL1.png`; descti 19-oct #987 con `image.png`). Determinista: el manifiesto y los
+ * FileParts lo calculan por separado sobre la misma lista y salen iguales.
+ */
+export function uniqueAttachmentNames<T extends { name: string | null }>(atts: T[]): T[] {
+  const seen = new Map<string, number>();
+  return atts.map((a) => {
+    if (!a.name) return a;
+    const key = a.name.toLowerCase();
+    const n = (seen.get(key) ?? 0) + 1;
+    seen.set(key, n);
+    if (n === 1) return a;
+    const dot = a.name.lastIndexOf(".");
+    const name = dot > 0 ? `${a.name.slice(0, dot)}-${n}${a.name.slice(dot)}` : `${a.name}-${n}`;
+    return { ...a, name };
+  });
+}
+
 export function manifiestoAdjuntos(
   atts: { name: string | null; mime: string | null; size: number | null }[],
   opts: { reentrega: boolean; ambito: "hilo" | "conversación" }
 ): string {
   if (!(opts.reentrega || atts.length > 1)) return "";
+  atts = uniqueAttachmentNames(atts);
   // Numerado porque el orden ES la dirección: es el mismo de los FileParts
   // (`gc_attachments ORDER BY id`), y el nombre no distingue (el navegador sube todo como
   // `image.png`).
@@ -374,7 +397,7 @@ export async function buildMediaParts(
   if (!attachments.length) return [];
   const { mintReadUrl, mintFileBytes } = await import("./server/easybits-files.server");
   const parts: MediaPart[] = [];
-  for (const a of attachments) {
+  for (const a of uniqueAttachmentNames(attachments)) {
     const mimeType = a.mime || "application/octet-stream";
     const name = a.name || undefined;
     const small = !opts?.forceUri && a.size != null && a.size < MEDIA_INLINE_MAX_BYTES;
@@ -2068,7 +2091,7 @@ export async function callAgentBackendStream(
         } catch (err) {
           // Que falle una entrega no debe tumbar el turno: el agente sigue hablando y el
           // usuario ve por qué no le llegó el archivo.
-          await onChunk(`\n\n_No pude adjuntar ${e.nombre}: ${err instanceof Error ? err.message : err}_\n\n`);
+          await onChunk(`\n\n_No pude adjuntar ${e.nombre}: ${humanAgentError(err)}_\n\n`);
         }
       },
       // El permiso se resuelve en el HILO, no aquí: se emite la tarjeta con botones y el
@@ -2168,9 +2191,7 @@ export async function callAgentBackendStream(
       // quedaba girando para siempre sin una palabra — que es exactamente lo que vio el
       // usuario el 19 ago con un ticket 401 (la caja llevaba el tenant equivocado). Un
       // agente inalcanzable es una respuesta legítima del turno, no una excepción.
-      const pista = /401|403/.test(msg)
-        ? "el ticket no fue aceptado por la caja (¿tenant o secreto distinto?)"
-        : msg;
+      const pista = humanAgentError(msg);
       // `usage: undefined` explícito: sin él el tipo de la rama de error no encaja con
       // `AcpResult` y el reporte de gasto de abajo deja de compilar. Y es lo correcto —
       // un turno que no llegó a hablar con la caja no gastó un token.
@@ -2682,7 +2703,7 @@ export async function callAgentBackendStream(
     // Si el texto se cortó con un fence abierto (medio ```eb-doc```), el aviso caería DENTRO
     // del fence: el cliente lo trata como documento y la burbuja se ve vacía. Se cierra antes.
     const fenceAbierto = (streamed.match(/^```/gm)?.length ?? 0) % 2 === 1;
-    const msg = `${fenceAbierto ? "\n```\n\n" : ""}⚠️ No pude contactar a @${agent.handle}: ${e instanceof Error ? e.message : e}`;
+    const msg = `${fenceAbierto ? "\n```\n\n" : ""}⚠️ No pude contactar a @${agent.handle}: ${humanAgentError(e)}`;
     // El turno MURIÓ. Se sigue escribiendo el aviso en la burbuja —el usuario tiene que
     // enterarse— pero además se marca como fallo: devolver esto como si fuera la respuesta
     // era lo que hacía que `finishTurn` lo cerrara en `done` y el medidor lo cobrara como
@@ -2843,7 +2864,7 @@ async function nativeAguiTurn(o: {
         }
         const streamed = reader.text;
         const fenceAbierto = (streamed.match(/^```/gm)?.length ?? 0) % 2 === 1;
-        const msg = `${fenceAbierto ? "\n```\n\n" : ""}⚠️ No pude contactar a @${agent.handle}: ${e instanceof Error ? e.message : e}`;
+        const msg = `${fenceAbierto ? "\n```\n\n" : ""}⚠️ No pude contactar a @${agent.handle}: ${humanAgentError(e)}`;
         o.onFailure?.({ message: e instanceof Error ? e.message : String(e) });
         await o.onChunk(msg);
         return msg;
@@ -3832,7 +3853,7 @@ export async function callAgentBackend(
       return data.reply ?? "(sin respuesta)";
     } catch (e) {
       onFailure?.({ message: e instanceof Error ? e.message : String(e) });
-      return `⚠️ No pude contactar a @${agent.handle}: ${e instanceof Error ? e.message : e}`;
+      return `⚠️ No pude contactar a @${agent.handle}: ${humanAgentError(e)}`;
     }
   }
   // ACP va ANTES de resolver el runtime, por la misma razón que en el camino de streaming:
@@ -3890,7 +3911,7 @@ export async function callAgentBackend(
       return r.text || "(sin respuesta)";
     } catch (e) {
       onFailure?.({ message: e instanceof Error ? e.message : String(e) });
-      return `⚠️ No pude contactar a @${agent.handle}: ${e instanceof Error ? e.message : e}`;
+      return `⚠️ No pude contactar a @${agent.handle}: ${humanAgentError(e)}`;
     }
   }
 
@@ -3919,7 +3940,7 @@ export async function callAgentBackend(
       });
     } catch (e) {
       onFailure?.({ message: e instanceof Error ? e.message : String(e) });
-      return `⚠️ No pude contactar a @${agent.handle}: ${e instanceof Error ? e.message : e}`;
+      return `⚠️ No pude contactar a @${agent.handle}: ${humanAgentError(e)}`;
     }
   }
 
@@ -3977,6 +3998,6 @@ export async function callAgentBackend(
     return ((await res.json()) as { reply?: string }).reply ?? "(sin respuesta)";
   } catch (e) {
     onFailure?.({ message: e instanceof Error ? e.message : String(e) });
-    return `⚠️ No pude contactar a @${agent.handle}: ${e instanceof Error ? e.message : e}`;
+    return `⚠️ No pude contactar a @${agent.handle}: ${humanAgentError(e)}`;
   }
 }

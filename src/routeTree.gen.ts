@@ -54,6 +54,7 @@ import { Route as ApiInternalScheduleTurnRouteImport } from './routes/api.intern
 import { Route as ApiInternalRepoAutomationsRouteImport } from './routes/api.internal.repo-automations'
 import { Route as ApiInternalProspeccionRunRouteImport } from './routes/api.internal.prospeccion-run'
 import { Route as ApiInternalPostMessageRouteImport } from './routes/api.internal.post-message'
+import { Route as ApiInternalMessageRepublishRouteImport } from './routes/api.internal.message-republish'
 import { Route as ApiInternalMembersRouteImport } from './routes/api.internal.members'
 import { Route as ApiInternalGithubEventRouteImport } from './routes/api.internal.github-event'
 import { Route as ApiInternalFactoryThreadRouteImport } from './routes/api.internal.factory-thread'
@@ -321,6 +322,12 @@ const ApiInternalPostMessageRoute = ApiInternalPostMessageRouteImport.update({
   path: '/api/internal/post-message',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiInternalMessageRepublishRoute =
+  ApiInternalMessageRepublishRouteImport.update({
+    id: '/api/internal/message-republish',
+    path: '/api/internal/message-republish',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiInternalMembersRoute = ApiInternalMembersRouteImport.update({
   id: '/api/internal/members',
   path: '/api/internal/members',
@@ -584,6 +591,7 @@ export interface FileRoutesByFullPath {
   '/api/internal/factory-thread': typeof ApiInternalFactoryThreadRoute
   '/api/internal/github-event': typeof ApiInternalGithubEventRoute
   '/api/internal/members': typeof ApiInternalMembersRoute
+  '/api/internal/message-republish': typeof ApiInternalMessageRepublishRoute
   '/api/internal/post-message': typeof ApiInternalPostMessageRoute
   '/api/internal/prospeccion-run': typeof ApiInternalProspeccionRunRoute
   '/api/internal/repo-automations': typeof ApiInternalRepoAutomationsRoute
@@ -669,6 +677,7 @@ export interface FileRoutesByTo {
   '/api/internal/factory-thread': typeof ApiInternalFactoryThreadRoute
   '/api/internal/github-event': typeof ApiInternalGithubEventRoute
   '/api/internal/members': typeof ApiInternalMembersRoute
+  '/api/internal/message-republish': typeof ApiInternalMessageRepublishRoute
   '/api/internal/post-message': typeof ApiInternalPostMessageRoute
   '/api/internal/prospeccion-run': typeof ApiInternalProspeccionRunRoute
   '/api/internal/repo-automations': typeof ApiInternalRepoAutomationsRoute
@@ -756,6 +765,7 @@ export interface FileRoutesById {
   '/api/internal/factory-thread': typeof ApiInternalFactoryThreadRoute
   '/api/internal/github-event': typeof ApiInternalGithubEventRoute
   '/api/internal/members': typeof ApiInternalMembersRoute
+  '/api/internal/message-republish': typeof ApiInternalMessageRepublishRoute
   '/api/internal/post-message': typeof ApiInternalPostMessageRoute
   '/api/internal/prospeccion-run': typeof ApiInternalProspeccionRunRoute
   '/api/internal/repo-automations': typeof ApiInternalRepoAutomationsRoute
@@ -844,6 +854,7 @@ export interface FileRouteTypes {
     | '/api/internal/factory-thread'
     | '/api/internal/github-event'
     | '/api/internal/members'
+    | '/api/internal/message-republish'
     | '/api/internal/post-message'
     | '/api/internal/prospeccion-run'
     | '/api/internal/repo-automations'
@@ -929,6 +940,7 @@ export interface FileRouteTypes {
     | '/api/internal/factory-thread'
     | '/api/internal/github-event'
     | '/api/internal/members'
+    | '/api/internal/message-republish'
     | '/api/internal/post-message'
     | '/api/internal/prospeccion-run'
     | '/api/internal/repo-automations'
@@ -1015,6 +1027,7 @@ export interface FileRouteTypes {
     | '/api/internal/factory-thread'
     | '/api/internal/github-event'
     | '/api/internal/members'
+    | '/api/internal/message-republish'
     | '/api/internal/post-message'
     | '/api/internal/prospeccion-run'
     | '/api/internal/repo-automations'
@@ -1101,6 +1114,7 @@ export interface RootRouteChildren {
   ApiInternalFactoryThreadRoute: typeof ApiInternalFactoryThreadRoute
   ApiInternalGithubEventRoute: typeof ApiInternalGithubEventRoute
   ApiInternalMembersRoute: typeof ApiInternalMembersRoute
+  ApiInternalMessageRepublishRoute: typeof ApiInternalMessageRepublishRoute
   ApiInternalPostMessageRoute: typeof ApiInternalPostMessageRoute
   ApiInternalProspeccionRunRoute: typeof ApiInternalProspeccionRunRoute
   ApiInternalRepoAutomationsRoute: typeof ApiInternalRepoAutomationsRoute
@@ -1438,6 +1452,13 @@ declare module '@tanstack/react-router' {
       path: '/api/internal/post-message'
       fullPath: '/api/internal/post-message'
       preLoaderRoute: typeof ApiInternalPostMessageRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/internal/message-republish': {
+      id: '/api/internal/message-republish'
+      path: '/api/internal/message-republish'
+      fullPath: '/api/internal/message-republish'
+      preLoaderRoute: typeof ApiInternalMessageRepublishRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/internal/members': {
@@ -1805,6 +1826,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiInternalFactoryThreadRoute: ApiInternalFactoryThreadRoute,
   ApiInternalGithubEventRoute: ApiInternalGithubEventRoute,
   ApiInternalMembersRoute: ApiInternalMembersRoute,
+  ApiInternalMessageRepublishRoute: ApiInternalMessageRepublishRoute,
   ApiInternalPostMessageRoute: ApiInternalPostMessageRoute,
   ApiInternalProspeccionRunRoute: ApiInternalProspeccionRunRoute,
   ApiInternalRepoAutomationsRoute: ApiInternalRepoAutomationsRoute,
