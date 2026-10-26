@@ -1091,6 +1091,12 @@ async function migrate(): Promise<void> {
   // Lo único que @check revisa en la siguiente vuelta (lo pone quien decide un escalado); se
   // borra con su veredicto.
   await addColumn("gt_factory_runs", "check_scope", "TEXT");
+  // Pedido adoptado que arranca solo a su hora (`openAdoptedRun` con `dueAt`, segundos): espera en
+  // `plan_review` con el plan firmable y el tick de la fábrica lo aprueba a nombre de `due_who`.
+  await addColumn("gt_factory_runs", "due_at", "INTEGER");
+  await addColumn("gt_factory_runs", "due_who", "TEXT");
+  // Datos del tipo de pedido para la tarjeta y su preparación (JSON): `security` = alertas del lote.
+  await addColumn("gt_factory_runs", "kind_meta", "TEXT");
   // Notas sobre un pedido que llegan de cualquier hilo (`factory_note`): «faltan los docs del CLI»
   // dicho en el hilo del PR. El siguiente encargo de @build las incluye y las marca consumidas.
   await exec(`CREATE TABLE IF NOT EXISTS gt_factory_notes (
