@@ -11,6 +11,7 @@
 import { dbq } from "../../dbq.server";
 import { withNamespace } from "../tenant.server";
 import { nextRunAt, SCHEDULE_DEFAULTS, type ScheduleKind } from "./factory-schedule-time";
+import { DEFAULT_DAY, scheduleToCron } from "./factory-repo-schedule";
 
 const TICK_MS = 30_000;
 
@@ -82,8 +83,7 @@ export type RepoSchedule = { roomId: number; repo: string; kind: ScheduleKind; e
 
 /** El cron equivalente a «a las `hour`:00» de cada tarea: nocturna L–V, dependencias los lunes. */
 export function defaultCron(kind: ScheduleKind, hour: number): string {
-  const h = Math.max(0, Math.min(23, Math.floor(hour)));
-  return kind === "deps" ? `0 ${h} * * 1` : `0 ${h} * * 1-5`;
+  return scheduleToCron(DEFAULT_DAY[kind], hour);
 }
 
 const isKind = (k: unknown): k is ScheduleKind => k === "nightly" || k === "deps";

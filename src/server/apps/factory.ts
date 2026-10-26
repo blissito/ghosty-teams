@@ -502,12 +502,27 @@ export const setFactoryScheduleFn = createServerFn({ method: "POST" })
     return { ok: true as const, nextAt };
   });
 
-/** Los horarios propios por room+repo (los que no están siguen el del espacio). */
-export const factoryRepoSchedulesFn = createServerFn({ method: "GET" }).handler(async () => {
-  await requireOwner();
-  const { listRepoSchedules } = await import("./factory-schedules.server");
-  return (await listRepoSchedules()).map(({ ownerSub: _o, origin: _g, ...r }) => r);
-});
+/**
+ * Las tareas programadas vistas desde UN repo del room: el horario del espacio y, si lo tiene,
+ * el suyo. `installed: false` = sin fábrica (la pantalla no pinta la sección).
+ */
+export const factoryRepoSchedulesFn = createServerFn({ method: "POST" })
+  .validator((d: { channelId: number; repo: string }) => d)
+  .handler(async ({ data }) => {
+    await requireOwner();
+    const { isInstalled } = await import("./installed.server");
+    if (!(await isInstalled("factory").catch(() => false))) return { installed: false as const, rows: [] };
+    const S = await import("./factory-schedules.server");
+    const [space, own] = await Promise.all([S.listSchedules(), S.listRepoSchedules()]);
+    const repo = String(data.repo).toLowerCase();
+    return {
+      installed: true as const,
+      rows: space.map((sp) => {
+        const o = own.find((r) => r.roomId === Number(data.channelId) && r.repo.toLowerCase() === repo && r.kind === sp.kind);
+        return { kind: sp.kind, space: { enabled: sp.enabled, hour: sp.hour }, own: o ? { enabled: o.enabled, cron: o.cron } : null };
+      }),
+    };
+  });
 
 /** Horario de una tarea para UN repo del room: `hour` (CDMX) o `cron`; `reset` lo regresa al del espacio. */
 export const setFactoryRepoScheduleFn = createServerFn({ method: "POST" })
