@@ -2884,7 +2884,7 @@ function ChannelPage() {
   // Ajustes/Preferencias como modal in-panel (SPA): estado a nivel shell para que
   // lo abran tanto el footer del sidebar como el "+ Añadir emoji" del picker.
   const t = useT();
-  const [prefsTab, setPrefsTab] = useState<null | "general" | "agentes" | "emojis" | "integraciones">(null);
+  const [prefsTab, setPrefsTab] = useState<null | "general" | "agentes" | "emojis" | "integraciones" | "uso">(null);
   const openPrefs = useCallback((tab: "general" | "agentes" | "emojis" = "general") => setPrefsTab(tab), []);
   // Precalienta la cache de Ajustes al montar el shell (idle) → al abrir Preferencias
   // no hay ni spinner ni pop-in de tabs; la data (setup/agentAccess) ya está lista.
@@ -2902,7 +2902,7 @@ function ChannelPage() {
     const sp = new URLSearchParams(window.location.search);
     const tab = sp.get("ajustes");
     if (!tab) return;
-    if (tab === "general" || tab === "agentes" || tab === "emojis" || tab === "integraciones") {
+    if (tab === "general" || tab === "agentes" || tab === "emojis" || tab === "integraciones" || tab === "uso") {
       setPrefsTab(tab);
     }
     sp.delete("ajustes");
