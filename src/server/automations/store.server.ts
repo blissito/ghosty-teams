@@ -11,6 +11,10 @@ export type RepoAutomation = {
   settings: Record<string, unknown>;
   updatedBy: string | null;
   updatedAt: number;
+  /** Quien la prendió: a su nombre trabaja el agente. */
+  ownerSub: string | null;
+  /** Host del espacio cuando se prendió (turnos sin request). */
+  origin: string | null;
 };
 
 function parseSettings(raw: unknown): Record<string, unknown> {
@@ -26,7 +30,7 @@ function parseSettings(raw: unknown): Record<string, unknown> {
 /** Las filas que existen para ese room y repo (un tipo sin fila = apagado). */
 export async function listRepoAutomations(roomId: number, repo: string): Promise<RepoAutomation[]> {
   const rows = await dbq(
-    "SELECT kind, enabled, settings_json, updated_by, updated_at FROM gt_repo_automations WHERE room_id = ? AND repo = ?",
+    "SELECT kind, enabled, settings_json, updated_by, updated_at, owner_sub, origin FROM gt_repo_automations WHERE room_id = ? AND repo = ?",
     [roomId, repo.toLowerCase()],
   );
   return rows
@@ -37,6 +41,8 @@ export async function listRepoAutomations(roomId: number, repo: string): Promise
       settings: parseSettings(r.settings_json),
       updatedBy: r.updated_by == null ? null : String(r.updated_by),
       updatedAt: Number(r.updated_at ?? 0),
+      ownerSub: r.owner_sub == null ? null : String(r.owner_sub),
+      origin: r.origin == null ? null : String(r.origin),
     }));
 }
 
@@ -49,15 +55,20 @@ export async function setRepoAutomation(p: {
   enabled: boolean;
   settings?: Record<string, unknown>;
   by: string;
+  /** `reqOrigin()` de quien la toca; se guarda al prender. */
+  origin?: string;
 }): Promise<void> {
   const settings = p.settings === undefined ? null : JSON.stringify(p.settings);
+  // `owner_sub`/`origin` sólo cambian al PRENDER: apagarla no le quita el dueño a la fila.
   await dbq(
-    `INSERT INTO gt_repo_automations (ns, room_id, repo, kind, enabled, settings_json, updated_by, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, unixepoch())
+    `INSERT INTO gt_repo_automations (ns, room_id, repo, kind, enabled, settings_json, updated_by, updated_at, owner_sub, origin)
+     VALUES (?, ?, ?, ?, ?, ?, ?, unixepoch(), ?, ?)
      ON CONFLICT(room_id, repo, kind) DO UPDATE SET enabled = excluded.enabled,
        settings_json = COALESCE(excluded.settings_json, gt_repo_automations.settings_json),
-       updated_by = excluded.updated_by, updated_at = unixepoch()`,
-    [p.ns, p.roomId, p.repo.toLowerCase(), p.kind, p.enabled ? 1 : 0, settings, p.by],
+       updated_by = excluded.updated_by, updated_at = unixepoch(),
+       owner_sub = CASE WHEN excluded.enabled = 1 THEN excluded.owner_sub ELSE gt_repo_automations.owner_sub END,
+       origin = CASE WHEN excluded.enabled = 1 AND excluded.origin IS NOT NULL THEN excluded.origin ELSE gt_repo_automations.origin END`,
+    [p.ns, p.roomId, p.repo.toLowerCase(), p.kind, p.enabled ? 1 : 0, settings, p.by, p.enabled ? p.by : null, p.origin || null],
   );
 }
 
@@ -87,13 +98,18 @@ export async function automationSettings(roomId: number, repo: string, kind: Aut
   return parseSettings(row?.settings_json);
 }
 
-/** Quién prendió la automatización (a su nombre trabaja el agente). */
+/** Quién prendió la automatización (a su nombre trabaja el agente) y el host guardado al prenderla. */
 export async function automationOwner(roomId: number, repo: string, kind: AutomationKind): Promise<string | null> {
+  return (await automationRunAs(roomId, repo, kind)).sub;
+}
+
+export async function automationRunAs(roomId: number, repo: string, kind: AutomationKind): Promise<{ sub: string | null; origin: string | null }> {
   const [row] = await dbq(
-    "SELECT updated_by FROM gt_repo_automations WHERE room_id = ? AND repo = ? AND kind = ? AND enabled = 1",
+    "SELECT owner_sub, updated_by, origin FROM gt_repo_automations WHERE room_id = ? AND repo = ? AND kind = ? AND enabled = 1",
     [roomId, repo.toLowerCase(), kind],
   );
-  return typeof row?.updated_by === "string" && row.updated_by ? row.updated_by : null;
+  const s = (v: unknown) => (typeof v === "string" && v ? v : null);
+  return { sub: s(row?.owner_sub) ?? s(row?.updated_by), origin: s(row?.origin) };
 }
 
 /**

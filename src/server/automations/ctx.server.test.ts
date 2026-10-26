@@ -7,6 +7,7 @@ const posted: { channelId: number; parentId: number | null; body: string }[] = [
 const enqueueWakeup = vi.fn(async (_w: unknown) => true);
 const mintWakeRef = vi.fn((_r: unknown) => "ref");
 let owner: string | null = "u_quien_prendio";
+let ownerOrigin: string | null = null;
 
 vi.mock("../../dbq.server", () => ({
   dbq: async (sql: string, args: unknown[] = []) => {
@@ -20,7 +21,7 @@ vi.mock("../../dbq.server", () => ({
   },
 }));
 vi.mock("./store.server", () => ({
-  automationOwner: async () => owner,
+  automationRunAs: async () => ({ sub: owner, origin: ownerOrigin }),
   automationSettings: async () => ({}),
   claimKey: async () => true,
   spendBudget: async () => true,
@@ -52,6 +53,7 @@ beforeEach(() => {
   posted.length = 0;
   vi.clearAllMocks();
   owner = "u_quien_prendio";
+  ownerOrigin = null;
 });
 
 describe("ctx.wake", () => {
@@ -63,6 +65,7 @@ describe("ctx.wake", () => {
     expect(ref.sub).toBe("u_quien_prendio");
     expect(ref.dest).toMatchObject({ channelId: 7, parentId: 101, handle: "build" });
     expect(ref.groupId).toBe("ghosty-chat-build-tech-auto-ci-fix-acme-app-3");
+    expect(ref.dest).toMatchObject({ factoryMode: "automation", automation: "ci_fix" });
     const w = enqueueWakeup.mock.calls[0][0] as { key: string; text: string; origin: string };
     expect(w.key).toMatch(/^auto:7:ci_fix:acme\/app#3:/);
     expect(w.text).toBe("arregla el CI");
@@ -85,6 +88,30 @@ describe("ctx.wake", () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     await ctx.wake({ handle: "check", text: "x", threadKey: "k2" });
     expect(enqueueWakeup).toHaveBeenCalledTimes(1);
+  });
+
+  it("delayS retrasa el turno; sin origin del request usa el guardado al prender", async () => {
+    ownerOrigin = "https://acme.teams.ghosty.studio";
+    const ctx = automationCtx({ ns: "ns", roomId: 7, repo: "acme/app", kind: "security_fix" });
+    const before = Math.floor(Date.now() / 1000);
+    await ctx.wake({ handle: "build", text: "x", threadKey: "sec", delayS: 600 });
+    const w = enqueueWakeup.mock.calls[0][0] as { dueAt: number; origin: string };
+    expect(w.dueAt).toBeGreaterThanOrEqual(before + 600);
+    expect(w.origin).toBe("https://acme.teams.ghosty.studio");
+  });
+});
+
+describe("ctx.post", () => {
+  it("aviso suelto o en el hilo de la clave, sin turno", async () => {
+    const ctx = automationCtx({ ns: "ns", roomId: 7, repo: "acme/app", kind: "security_fix" });
+    await ctx.post("⚠️ secreto filtrado");
+    await ctx.post("se agotaron los intentos", { threadKey: "k", title: "🔧 #3" });
+    expect(posted).toEqual([
+      { channelId: 7, parentId: null, body: "⚠️ secreto filtrado" },
+      { channelId: 7, parentId: null, body: "🔧 #3" },
+      { channelId: 7, parentId: 102, body: "se agotaron los intentos" },
+    ]);
+    expect(enqueueWakeup).not.toHaveBeenCalled();
   });
 });
 

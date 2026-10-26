@@ -196,6 +196,7 @@ export const setRoomRepoAutomationFn = createServerFn({ method: "POST" })
       enabled: data.enabled === true,
       settings: data.settings && typeof data.settings === "object" ? data.settings : undefined,
       by: me.sub,
+      origin: await (await import("../origin.server")).reqOrigin().catch(() => ""),
     });
     const rows = await S.listRepoAutomations(Number(data.channelId), repo);
     return rows.map((r) => ({ kind: r.kind as string, enabled: r.enabled }));

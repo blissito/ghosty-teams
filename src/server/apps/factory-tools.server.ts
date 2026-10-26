@@ -1595,20 +1595,23 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
     parts.push(ADVISOR_ROLE);
     return parts.join("\n\n") + "]";
   }
-  if (dest?.automation) {
-    // Turno de una automatización de GitHub (`automations/`: mantenimiento programado, CI rojo,
-    // revisión, alertas, triage…): no es un pedido, así que nada de las instrucciones del rol
-    // (factory_build_done, veredicto…). Sí lleva lo que el equipo escribió del repo en
-    // `.ghosty/factory.md`, como cualquier turno de la fábrica.
-    const what = dest.automation === "maintenance" ? "mantenimiento programado del repo" : `una automatización de GitHub del repo (${dest.automation})`;
-    parts.push(`En ESTE turno no actúas como rol de ningún pedido: es ${what}. El encargo trae el trabajo y lo que puedes entregar; no uses las tools factory_* del pedido.`);
-    const repo = dest.automationRepo;
+  // Turno de una automatización de GitHub del room (`automations/`): no hay pedido, así que nada de
+  // las instrucciones del rol (plan, veredicto, factory_build_done); sí las convenciones del repo.
+  if (dest?.factoryMode === "automation" || dest?.automation) {
+    const what = dest.automation === "maintenance" ? "el mantenimiento programado del repo" : `una automatización de GitHub de este room${dest.automation ? ` (${dest.automation})` : ""}`;
+    parts.push(
+      `En ESTE turno trabajas para ${what}, no para un pedido de la fábrica: ` +
+        "no hay plan, ni veredicto, ni factory_build_done/factory_check_verdict. Haz el encargo y cuéntalo en este hilo con la liga a GitHub.",
+    );
+    const role = (h && (FACTORY_HANDLES as readonly string[]).includes(h) ? h : null) as (typeof FACTORY_HANDLES)[number] | null;
+    // El repo: el que trae el turno o el del hilo (`gt_factory_thread_overrides`, lo escribe `ctx.wake`).
+    const ft = role ? await (await import("./factory-team.server")).factoryTurnFor(role, dest, "").catch(() => null) : null;
+    const repo = dest.automationRepo ?? ft?.repo ?? null;
     if (repo && dest.channelId) {
       const db = await import("../../db.server");
       const link = (await db.listRoomRepos(dest.channelId).catch(() => [])).find((r) => r.repo.toLowerCase() === repo.toLowerCase());
       const { repoTeamFile, repoKnowledge } = await import("./factory-team.server");
       const file = link ? await repoTeamFile(link.repo, link.connectedBy).catch(() => null) : null;
-      const role = (h && (FACTORY_HANDLES as readonly string[]).includes(h) ? h : null) as (typeof FACTORY_HANDLES)[number] | null;
       if (file) parts.push(...repoConventionLines(repo, role, file.notes, role ? file.roleNotes[role] : null));
       const { setupLine, knowledgeLine } = await import("./factory-team");
       if (file?.setup && role === "build") parts.push(setupLine(repo, file.setup));

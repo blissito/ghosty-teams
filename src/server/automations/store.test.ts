@@ -13,7 +13,7 @@ const S = await import("./store.server");
 beforeEach(() => {
   db = new DatabaseSync(":memory:");
   db.exec(`CREATE TABLE gt_repo_automations (ns TEXT NOT NULL, room_id INTEGER NOT NULL, repo TEXT NOT NULL, kind TEXT NOT NULL,
-    enabled INTEGER NOT NULL DEFAULT 0, settings_json TEXT, updated_by TEXT, updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    enabled INTEGER NOT NULL DEFAULT 0, settings_json TEXT, updated_by TEXT, updated_at INTEGER NOT NULL DEFAULT (unixepoch()), owner_sub TEXT, origin TEXT,
     PRIMARY KEY (room_id, repo, kind))`);
   db.exec(`CREATE TABLE gt_automation_claims (kind TEXT NOT NULL, key TEXT NOT NULL, expires_at INTEGER NOT NULL,
     claimed_at INTEGER NOT NULL DEFAULT (unixepoch()), PRIMARY KEY (kind, key))`);
@@ -43,14 +43,15 @@ describe("lo durable de las automatizaciones", () => {
   it("política: apagada por default; prender guarda quién y los ajustes; apagar no los borra", async () => {
     expect(await S.listRepoAutomations(7, "acme/app")).toEqual([]);
     expect((await S.enabledByRoom("acme/app")).size).toBe(0);
-    await S.setRepoAutomation({ ns: "ns", roomId: 7, repo: "Acme/App", kind: "security_fix", enabled: true, settings: { minSeverity: "high" }, by: "u1" });
+    await S.setRepoAutomation({ ns: "ns", roomId: 7, repo: "Acme/App", kind: "security_fix", enabled: true, settings: { minSeverity: "high" }, by: "u1", origin: "https://acme.teams.ghosty.studio" });
     const on = await S.enabledByRoom("ACME/app");
     expect([...on.get(7)!.kinds]).toEqual(["security_fix"]);
-    expect(await S.automationOwner(7, "acme/app", "security_fix")).toBe("u1");
+    expect(await S.automationRunAs(7, "acme/app", "security_fix")).toEqual({ sub: "u1", origin: "https://acme.teams.ghosty.studio" });
     expect(await S.automationSettings(7, "acme/app", "security_fix")).toEqual({ minSeverity: "high" });
     await S.setRepoAutomation({ ns: "ns", roomId: 7, repo: "acme/app", kind: "security_fix", enabled: false, by: "u2" });
     expect((await S.enabledByRoom("acme/app")).size).toBe(0);
     expect(await S.automationOwner(7, "acme/app", "security_fix")).toBe(null);
+    expect((await S.listRepoAutomations(7, "acme/app"))[0]).toMatchObject({ enabled: false, ownerSub: "u1", updatedBy: "u2" });
     expect(await S.automationSettings(7, "acme/app", "security_fix")).toEqual({ minSeverity: "high" });
   });
 });

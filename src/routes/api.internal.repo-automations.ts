@@ -61,6 +61,7 @@ export const Route = createFileRoute("/api/internal/repo-automations")({
             enabled: body.enabled === true,
             settings: body.settings && typeof body.settings === "object" ? body.settings : undefined,
             by: member.sub,
+            origin: await (await import("../origin.server")).reqOrigin().catch(() => ""),
           });
         } else if (body.action !== "ls") return bad("action: ls | set");
         const rows = new Map((await S.listRepoAutomations(room.id, linked.repo)).map((r) => [r.kind, r]));
