@@ -14,3 +14,8 @@ todos.json
 
 # Backups del .env (contienen secretos — nunca al repo)
 .env.bak.*
+
+# Base SQLite local de desarrollo (nunca al repo: es público)
+ghosty-chat.db
+ghosty-chat.db-shm
+ghosty-chat.db-wal
