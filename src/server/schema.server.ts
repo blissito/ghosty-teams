@@ -1303,6 +1303,32 @@ async function migrate(): Promise<void> {
   )`);
   await exec(`CREATE INDEX IF NOT EXISTS gt_pr_watches_open ON gt_pr_watches(done_at, created_at)`);
 
+  // CI doctor (automatización `ci_doctor`): una fila por intento terminado de un workflow, para
+  // reconocer lo flaky (mismo sha: un intento falló y otro posterior pasó). Sólo metadatos, sin logs.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_ci_runs (
+    repo        TEXT NOT NULL,
+    workflow    TEXT NOT NULL,
+    head_sha    TEXT NOT NULL,
+    run_id      INTEGER NOT NULL,
+    attempt     INTEGER NOT NULL DEFAULT 1,
+    conclusion  TEXT NOT NULL,
+    branch      TEXT,
+    url         TEXT,
+    flaky       INTEGER NOT NULL DEFAULT 0,
+    at          INTEGER NOT NULL DEFAULT (unixepoch()),
+    PRIMARY KEY (repo, run_id, attempt)
+  )`);
+  await exec(`CREATE INDEX IF NOT EXISTS gt_ci_runs_sha ON gt_ci_runs(repo, workflow, head_sha)`);
+  await exec(`CREATE INDEX IF NOT EXISTS gt_ci_runs_flaky ON gt_ci_runs(repo, workflow, flaky, at)`);
+  // El issue agrupado «[ghosty] Tests flaky: <workflow>» que abrió el doctor, para actualizarlo en vez de abrir otro.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_ci_flaky_issues (
+    repo        TEXT NOT NULL,
+    workflow    TEXT NOT NULL,
+    number      INTEGER NOT NULL,
+    created_at  INTEGER NOT NULL DEFAULT (unixepoch()),
+    PRIMARY KEY (repo, workflow)
+  )`);
+
   // ¿Además del mensaje, correo? Se pregunta AL PROGRAMAR y se guarda por recordatorio:
   // querer un correo por el pago de la tarjeta no significa quererlo por todo.
   await addColumn("gc_reminders", "email", "INTEGER NOT NULL DEFAULT 0");
