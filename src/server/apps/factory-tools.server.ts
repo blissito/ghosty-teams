@@ -1598,6 +1598,13 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
       const ft = await factoryTurnFor(h, dest, "").catch(() => null);
       if (ft?.notes) parts.push(`Convenciones del repo ${ft.repo} (.ghosty/factory.md, las escribió el equipo; le ganan a lo general): ${ft.notes}`);
       if (ft?.roleNotes) parts.push(`Reglas de @${h} en ${ft.repo} (sección «## @${h}» de .ghosty/factory.md; le ganan a lo general): ${ft.roleNotes}`);
+      // Como en un pedido: el entorno de pruebas declarado y las fichas del repo (el
+      // mantenimiento de deps/tests corre la suite igual que @build).
+      if (ft?.repo && !ft.refusal) {
+        const { setupLine, knowledgeLine } = await import("./factory-team");
+        if (ft.setup && (h === "build" || h === "check")) parts.push(setupLine(ft.repo, ft.setup));
+        parts.push(knowledgeLine(ft.repo, ft.knowledge));
+      }
     }
     return parts.join("\n\n") + "]";
   }
