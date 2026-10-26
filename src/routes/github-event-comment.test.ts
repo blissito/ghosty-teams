@@ -26,6 +26,9 @@ vi.mock("../server/apps/factory-runs.server", () => ({
   recordFirstReview: async (runId: number, state: string) => (reviews.push({ runId, state }), true),
   noteFromGithub: async (run: { id: number }, by: string, ask: { text: string }) => (asked.push({ runId: run.id, by, text: ask.text }), "reopened"),
   onPrEvent: async () => {},
+  onPrReopened: async () => {},
+  sweepRunNow: async () => {},
+  refreshRoom: async () => {},
 }));
 
 process.env.GHOSTY_PARTNER_SECRET = "s3cr3t";

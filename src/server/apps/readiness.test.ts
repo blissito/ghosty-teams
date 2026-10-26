@@ -192,7 +192,10 @@ describe("Listo para agentes", () => {
     expect(out.files.map((f) => f.path).sort()).toEqual(
       [".github/CODEOWNERS", ".github/dependabot.yml", ".github/workflows/ci.yml", "AGENTS.md", "README.md"].sort(),
     );
-    expect(out.files.find((f) => f.path.endsWith("ci.yml"))!.content).toContain("[self-hosted, ws-acme]");
+    // El repo del mock es público: el CI se queda en GitHub aunque el espacio tenga caja (13-oct).
+    const ci = out.files.find((f) => f.path.endsWith("ci.yml"))!.content;
+    expect(ci).toContain("runs-on: ubuntu-latest");
+    expect(ci).not.toContain("self-hosted");
   });
 
   it("con CI ya puesto no se reescribe; sólo lo que falta", async () => {

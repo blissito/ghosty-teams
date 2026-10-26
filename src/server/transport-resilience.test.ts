@@ -81,7 +81,8 @@ describe("un reinicio de Teams no mata los turnos durables", () => {
     // AG-UI: adoptar = reengancharse al mismo runId con `messages: []`; sólo se guarda el run propio.
     expect(a).toMatch(/const adopting = !!durableOpts\?\.resumeTurnId;/);
     expect(a).toMatch(/message: reconnect \? null : message/);
-    expect(a).toMatch(/if \(rid === runId\) durableOpts\?\.onDurable\?\.\(rid\);/);
+    // Sólo el run propio se guarda como durable; el RUN_STARTED de un steer no (24-oct).
+    expect(a).toMatch(/if \(rid !== runId \|\| steer\) return;[\s\S]{0,80}durableOpts\?\.onDurable\?\.\(rid\);/);
   });
 });
 

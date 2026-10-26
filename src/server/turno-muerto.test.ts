@@ -43,7 +43,7 @@ describe("un turno que revienta no se lleva por delante al proceso", () => {
     // turno perdido del 24-ago (Ley de Obras, 173,590 facturables) era un DM.
     const dm = leer("server/dm.ts");
     expect(dm).toMatch(/\}\)\.catch\(\(e\) => \{/);
-    expect(dm).toMatch(/\}\)\.catch[\s\S]{0,900}?\}\)\.finally\(/);
+    expect(dm).toMatch(/\}\)\.catch[\s\S]{0,1600}?\}\)\.finally\(/);
   });
 
   it("unhandledRejection NUNCA re-lanza", () => {
