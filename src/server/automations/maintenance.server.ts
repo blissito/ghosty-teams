@@ -109,12 +109,18 @@ export function scheduleOf(s: MaintenanceSettings): CronSpec | null {
  * (`<repo>:<receta>:<fecha>`), así que dos ticks dentro de la ventana disparan una sola vez.
  */
 export function dueSlot(s: MaintenanceSettings, now: number, windowMin = DUE_WINDOW_MIN): string | null {
+  return dueSlotAt(s, now, windowMin)?.date ?? null;
+}
+
+/** Como `dueSlot`, con la hora del instante (`HH:MM` de CDMX): para un cron que corre varias veces al día. */
+export function dueSlotAt(s: MaintenanceSettings, now: number, windowMin = DUE_WINDOW_MIN): { date: string; time: string } | null {
   const c = scheduleOf(s);
   if (!c) return null;
   const base = Math.floor(now / 60_000) * 60_000;
+  const pad = (n: number) => String(n).padStart(2, "0");
   for (let i = 0; i < windowMin; i++) {
     const w = cdmxClock(base - i * 60_000);
-    if (cronMatches(c, w)) return w.date;
+    if (cronMatches(c, w)) return { date: w.date, time: `${pad(w.hour)}:${pad(w.minute)}` };
   }
   return null;
 }
@@ -237,15 +243,15 @@ export async function sweepMaintenance(ns: string, now = Date.now()): Promise<nu
   const { resolvedAgents } = await import("../../agents.server");
   const { automationCtx } = await import("./ctx.server");
   const handles = new Set((await resolvedAgents()).map((a) => a.handle));
-  // La revisión semanal de dependencias de la fábrica (`factory-schedules.server.ts`) ya hace
-  // `deps` por @plan con firma: si está prendida, la receta no corre dos veces.
+  // UNA sola vía de dependencias: con la fábrica instalada y su revisión de dependencias
+  // prendida para ese room+repo (`factory-schedules.server.ts`, @plan propone y alguien firma),
+  // la receta `deps` no corre. Sin fábrica, o con su revisión apagada, la receta sí.
   const factoryDeps = await import("../apps/factory-schedules.server")
-    .then((m) => m.listSchedules())
-    .then((l) => l.some((x) => x.kind === "deps" && x.enabled))
-    .catch(() => false);
+    .then((m) => m.factoryDepsCoverage())
+    .catch(() => () => false);
   let fired = 0;
   for (const job of jobs) {
-    if (job.recipe === "deps" && factoryDeps) continue;
+    if (job.recipe === "deps" && factoryDeps(job.roomId, job.repo)) continue;
     // El room tiene que seguir teniendo ese repo: desconectarlo apaga el mantenimiento de hecho.
     const repos = await db.listRoomRepos(job.roomId).catch(() => []);
     if (!repos.some((x) => x.repo.toLowerCase() === job.repo.toLowerCase())) continue;

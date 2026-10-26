@@ -71,6 +71,98 @@ export async function saveSchedule(
   return next;
 }
 
+// ── Por room+repo ────────────────────────────────────────────────────────────
+//
+// Un room puede tener varios repos y cada uno su horario: una fila de
+// `gt_factory_repo_schedules` le gana a la del espacio para ESE room+repo (con `enabled = 0` lo
+// apaga ahí). El horario es un cron de 5 campos en hora de CDMX, el mismo reloj del
+// mantenimiento (`automations/maintenance.server.ts`: `dueSlotAt`).
+
+export type RepoSchedule = { roomId: number; repo: string; kind: ScheduleKind; enabled: boolean; cron: string; ownerSub: string; origin: string };
+
+/** El cron equivalente a «a las `hour`:00» de cada tarea: nocturna L–V, dependencias los lunes. */
+export function defaultCron(kind: ScheduleKind, hour: number): string {
+  const h = Math.max(0, Math.min(23, Math.floor(hour)));
+  return kind === "deps" ? `0 ${h} * * 1` : `0 ${h} * * 1-5`;
+}
+
+const isKind = (k: unknown): k is ScheduleKind => k === "nightly" || k === "deps";
+
+export async function listRepoSchedules(): Promise<RepoSchedule[]> {
+  const rows = await dbq("SELECT * FROM gt_factory_repo_schedules", []).catch(() => []);
+  return rows
+    .filter((r) => isKind(r.kind))
+    .map((r) => ({
+      roomId: Number(r.room_id),
+      repo: String(r.repo),
+      kind: r.kind as ScheduleKind,
+      enabled: !!r.enabled,
+      cron: String(r.cron),
+      ownerSub: String(r.owner_sub),
+      origin: String(r.origin ?? ""),
+    }));
+}
+
+/**
+ * Guarda el horario de un room+repo. `patch = null` lo quita y el repo vuelve al default del
+ * espacio. `cron` gana sobre `hour`; un cron inválido se rechaza (no se guarda algo que nunca corre).
+ */
+export async function saveRepoSchedule(
+  roomId: number,
+  repo: string,
+  kind: ScheduleKind,
+  patch: { enabled: boolean; hour?: number; cron?: string } | null,
+  ownerSub: string,
+  origin: string,
+): Promise<RepoSchedule | null> {
+  if (!patch) {
+    await dbq("DELETE FROM gt_factory_repo_schedules WHERE room_id = ? AND repo = ? AND kind = ?", [roomId, repo, kind]);
+    return null;
+  }
+  const cron = patch.cron?.trim() || defaultCron(kind, patch.hour ?? SCHEDULE_DEFAULTS[kind].hour);
+  const { parseCron } = await import("../automations/maintenance.server");
+  if (!parseCron(cron)) throw new Error(`horario inválido: «${cron}» (cron de 5 campos, hora de CDMX)`);
+  await dbq(
+    `INSERT INTO gt_factory_repo_schedules (room_id, repo, kind, enabled, cron, owner_sub, origin, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, unixepoch())
+     ON CONFLICT(room_id, repo, kind) DO UPDATE SET enabled = excluded.enabled, cron = excluded.cron,
+       owner_sub = excluded.owner_sub, origin = excluded.origin, updated_at = unixepoch()`,
+    [roomId, repo, kind, patch.enabled ? 1 : 0, cron, ownerSub, origin],
+  );
+  return { roomId, repo, kind, enabled: patch.enabled, cron, ownerSub, origin };
+}
+
+const pairKey = (roomId: number, repo: string, kind: ScheduleKind) => `${roomId}:${repo.toLowerCase()}:${kind}`;
+
+export type RepoScheduleJob = { roomId: number; repo: string; kind: ScheduleKind; key: string; ownerSub: string; origin: string };
+
+/** Puro: qué horarios por repo tocan AHORA. La llave (única en `gt_agent_wakeups`) es el claim. */
+export async function dueRepoJobs(rows: RepoSchedule[], now: number): Promise<RepoScheduleJob[]> {
+  const { dueSlotAt } = await import("../automations/maintenance.server");
+  const out: RepoScheduleJob[] = [];
+  for (const r of rows) {
+    if (!r.enabled) continue;
+    const slot = dueSlotAt({ cron: r.cron }, now);
+    if (!slot) continue;
+    out.push({ roomId: r.roomId, repo: r.repo, kind: r.kind, ownerSub: r.ownerSub, origin: r.origin,
+      key: `sched:factory-${r.kind}:${r.roomId}:${r.repo}:${slot.date}T${slot.time}` });
+  }
+  return out;
+}
+
+/**
+ * ¿La revisión de dependencias de la fábrica cubre este room+repo? Fábrica instalada y la tarea
+ * prendida (la del repo, o la del espacio si el repo no tiene la suya). Con eso el mantenimiento
+ * no corre su receta `deps`: una sola vía.
+ */
+export async function factoryDepsCoverage(): Promise<(roomId: number, repo: string) => boolean> {
+  const { isInstalled } = await import("./installed.server");
+  if (!(await isInstalled("factory").catch(() => false))) return () => false;
+  const spaceOn = (await listSchedules()).some((x) => x.kind === "deps" && x.enabled);
+  const own = new Map((await listRepoSchedules()).filter((r) => r.kind === "deps").map((r) => [pairKey(r.roomId, r.repo, "deps"), r.enabled]));
+  return (roomId, repo) => own.get(pairKey(roomId, repo, "deps")) ?? spaceOn;
+}
+
 // ── El tick ──────────────────────────────────────────────────────────────────
 
 const tenants = new Set<string>();
@@ -127,38 +219,66 @@ export async function sweepTenant(ns: string): Promise<void> {
     if (!claimed.length) continue;
     await fireSchedule(ns, kind, String(r.owner_sub), String(r.origin ?? "")).catch((e) => console.error(`[factory] tarea ${kind}`, e));
   }
+  await sweepRepoSchedules(ns).catch((e) => console.error("[factory] tareas por repo", e));
+}
+
+async function sweepRepoSchedules(ns: string, now = Date.now()): Promise<void> {
+  const jobs = await dueRepoJobs(await listRepoSchedules(), now);
+  if (!jobs.length) return;
+  const { isInstalled } = await import("./installed.server");
+  if (!(await isInstalled("factory").catch(() => false))) return;
+  const db = await import("../../db.server");
+  let fired = 0;
+  for (const job of jobs) {
+    // El room tiene que seguir teniendo ese repo: desconectarlo apaga su tarea de hecho.
+    const link = (await db.listRoomRepos(job.roomId).catch(() => [])).find((x) => x.repo.toLowerCase() === job.repo.toLowerCase());
+    if (!link) continue;
+    if (await wakePlan(ns, job.kind, job.roomId, link.repo, job.ownerSub || link.connectedBy, job.origin, job.key)) fired++;
+  }
+  if (fired) (await import("../wakeups.server")).armWakeups(ns);
+}
+
+/** Despierta a @plan con el encargo de `kind` sobre UN repo, top-level en su room. */
+async function wakePlan(ns: string, kind: ScheduleKind, roomId: number, repo: string, ownerSub: string, origin: string, key: string): Promise<boolean> {
+  const { resolvedAgents, agentGroupId } = await import("../../agents.server");
+  const plan = (await resolvedAgents()).find((a) => a.handle === "plan");
+  if (!plan) return false;
+  const { enqueueWakeup, mintWakeRef } = await import("../wakeups.server");
+  return enqueueWakeup({
+    key,
+    ref: mintWakeRef({
+      sub: ownerSub,
+      ns,
+      groupId: await agentGroupId(plan, `factory-sched-${kind}-${repo}`),
+      // Top-level en el room: si propone un plan, `factory_plan_submit` publica la raíz.
+      // `factorySched` le pone los safe-outputs de la tarea (sólo leer y proponer con firma);
+      // `automationRepo` le dice a la fábrica de qué repo es (room con varios).
+      dest: { channelId: roomId, topic: "general", handle: plan.handle, name: plan.name, avatar: plan.avatar, factorySched: kind, automationRepo: repo },
+    }),
+    cause: kind === "nightly" ? "revisión nocturna" : "revisión de dependencias",
+    text: `[factory-sched:${kind}] Trabaja SÓLO sobre el repo ${repo} (pásalo en \`repo\` si propones un plan). ` + ENCARGO[kind],
+    // El origin guardado al programar (aquí no hay request).
+    origin,
+    dueAt: Math.floor(Date.now() / 1000),
+  }).catch(() => false);
 }
 
 async function fireSchedule(ns: string, kind: ScheduleKind, ownerSub: string, origin: string): Promise<void> {
   const { isInstalled } = await import("./installed.server");
   if (!(await isInstalled("factory").catch(() => false))) return; // sin fábrica no hay a quién despertar
-  const { resolvedAgents, agentGroupId } = await import("../../agents.server");
-  const plan = (await resolvedAgents()).find((a) => a.handle === "plan");
-  if (!plan) return;
-  const { enqueueWakeup, mintWakeRef, armWakeups } = await import("../wakeups.server");
   const day = new Date().toISOString().slice(0, 10);
+  // Los repos con horario propio (prendido o apagado) no siguen el del espacio.
+  const own = new Set((await listRepoSchedules()).filter((r) => r.kind === kind).map((r) => pairKey(r.roomId, r.repo, kind)));
   // UN despertar por repo de CADA room de la fábrica (todo room con repos lo es): cada revisión
   // es un turno aislado (si uno falla o tarda, los demás no) y cae en el room de su repo.
   const db = await import("../../db.server");
   const { factoryRoomIds } = await import("./factory");
   for (const roomId of await factoryRoomIds()) {
     for (const { repo } of await db.listRoomRepos(roomId)) {
-      await enqueueWakeup({
-        key: `sched:factory-${kind}:${roomId}:${repo}:${day}`,
-        ref: mintWakeRef({
-          sub: ownerSub,
-          ns,
-          groupId: await agentGroupId(plan, `factory-sched-${kind}-${repo}`),
-          // Top-level en el room: si propone un plan, `factory_plan_submit` publica la raíz.
-          dest: { channelId: roomId, topic: "general", handle: plan.handle, name: plan.name, avatar: plan.avatar },
-        }),
-        cause: kind === "nightly" ? "revisión nocturna" : "revisión de dependencias",
-        text: `[factory-sched:${kind}] Trabaja SÓLO sobre el repo ${repo} (pásalo en \`repo\` si propones un plan). ` + ENCARGO[kind],
-        // El origin guardado al programar (aquí no hay request).
-        origin,
-        dueAt: Math.floor(Date.now() / 1000),
-      });
+      if (own.has(pairKey(roomId, repo, kind))) continue;
+      await wakePlan(ns, kind, roomId, repo, ownerSub, origin, `sched:factory-${kind}:${roomId}:${repo}:${day}`);
     }
   }
+  const { armWakeups } = await import("../wakeups.server");
   armWakeups(ns);
 }

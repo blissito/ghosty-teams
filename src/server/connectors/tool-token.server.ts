@@ -45,6 +45,9 @@ export type ToolDest = {
   automation?: import("../automations/types").AutomationKind;
   /** El repo del turno de la automatización (un room puede tener varios). */
   automationRepo?: string;
+  /** Tarea programada de la fábrica (revisión nocturna, dependencias): @plan con su papel de
+   *  siempre, pero con safe-outputs propios (`factorySchedSafeOutputs`). Va con `automationRepo`. */
+  factorySched?: import("../automations/safe-outputs").FactorySchedTask;
 };
 
 /**

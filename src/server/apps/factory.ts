@@ -502,6 +502,36 @@ export const setFactoryScheduleFn = createServerFn({ method: "POST" })
     return { ok: true as const, nextAt };
   });
 
+/** Los horarios propios por room+repo (los que no están siguen el del espacio). */
+export const factoryRepoSchedulesFn = createServerFn({ method: "GET" }).handler(async () => {
+  await requireOwner();
+  const { listRepoSchedules } = await import("./factory-schedules.server");
+  return (await listRepoSchedules()).map(({ ownerSub: _o, origin: _g, ...r }) => r);
+});
+
+/** Horario de una tarea para UN repo del room: `hour` (CDMX) o `cron`; `reset` lo regresa al del espacio. */
+export const setFactoryRepoScheduleFn = createServerFn({ method: "POST" })
+  .validator((d: { roomId: number; repo: string; kind: "nightly" | "deps"; enabled?: boolean; hour?: number; cron?: string; reset?: boolean }) => d)
+  .handler(async ({ data }) => {
+    const user = await requireOwner();
+    if (data.kind !== "nightly" && data.kind !== "deps") throw new Error("tarea desconocida");
+    const db = await import("../../db.server");
+    const link = (await db.listRoomRepos(Number(data.roomId)).catch(() => [])).find((r) => r.repo.toLowerCase() === String(data.repo).toLowerCase());
+    if (!link) throw new Error("ese repo no está conectado a ese room");
+    const { saveRepoSchedule } = await import("./factory-schedules.server");
+    const { reqOrigin } = await import("../../origin.server");
+    const origin = await reqOrigin().catch(() => "");
+    const saved = await saveRepoSchedule(
+      Number(data.roomId),
+      link.repo,
+      data.kind,
+      data.reset ? null : { enabled: !!data.enabled, hour: data.hour, cron: data.cron },
+      user.sub,
+      origin,
+    );
+    return { ok: true as const, schedule: saved ? { roomId: saved.roomId, repo: saved.repo, kind: saved.kind, enabled: saved.enabled, cron: saved.cron } : null };
+  });
+
 // ── El pedido que abrió un mensaje («Pedir»), para seguirlo desde otro hilo ────
 
 /** Como `factoryRunOfThreadFn` pero con el slug del room (lo que tiene «Pedir»); runId null = Arqui

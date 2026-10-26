@@ -14,7 +14,7 @@ import { taskTools } from "./tasks.native.server";
 import { factoryTools } from "../apps/factory-tools.server";
 import { adsTools } from "../apps/ads-tools.server";
 import { SCOPE_COMPLETO, type ToolScope } from "./tool-token.server";
-import { maintenanceAllows, maintenanceSafeOutputs } from "../automations/safe-outputs";
+import { factorySchedAllows, factorySchedSafeOutputs, maintenanceAllows, maintenanceSafeOutputs } from "../automations/safe-outputs";
 
 // Declaración expuesta al modelo (sin el handler).
 export type ToolDecl = { name: string; description: string; inputSchema: Record<string, unknown> };
@@ -129,7 +129,12 @@ export async function listUserTools(
   for (const t of await studioTools(sub).catch(() => [])) out.push(t);
   // Un solo filtro al final, sobre TODO lo reunido: nativas, tablero y conectores. Filtrar en
   // cada rama era lo que dejaba huecos.
-  return out.filter((t) => toolEnScope(t.name, scope) && (dest?.automation !== "maintenance" || maintenanceAllows(t.name)));
+  return out.filter(
+    (t) =>
+      toolEnScope(t.name, scope) &&
+      (dest?.automation !== "maintenance" || maintenanceAllows(t.name)) &&
+      (!dest?.factorySched || factorySchedAllows(dest.factorySched, t.name)),
+  );
 }
 
 export type RunResult =
@@ -222,6 +227,12 @@ export async function runTool(
   // los argumentos (prefijo, etiqueta, borrador) antes de que corra la tool.
   if (dest?.automation === "maintenance") {
     const v = maintenanceSafeOutputs(toolName, args ?? {});
+    if (!v.ok) return { ok: false, error: v.error };
+    args = v.args;
+  }
+  // Y los de las tareas programadas de la fábrica (revisión nocturna, dependencias).
+  if (dest?.factorySched) {
+    const v = factorySchedSafeOutputs(dest.factorySched, dest.automationRepo, toolName, args ?? {});
     if (!v.ok) return { ok: false, error: v.error };
     args = v.args;
   }

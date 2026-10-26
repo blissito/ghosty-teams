@@ -1116,6 +1116,20 @@ async function migrate(): Promise<void> {
     origin        TEXT NOT NULL DEFAULT '',
     updated_at    INTEGER NOT NULL DEFAULT (unixepoch())
   )`);
+  // Las mismas tareas por room+repo con su propio horario (cron de 5 campos en hora de CDMX).
+  // Una fila aquí le gana a la del espacio (`gt_factory_schedules`, que sigue siendo el default)
+  // para ese repo; `enabled = 0` lo apaga sólo ahí. Sin filas, todo sigue como antes.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_factory_repo_schedules (
+    room_id    INTEGER NOT NULL,
+    repo       TEXT NOT NULL,
+    kind       TEXT NOT NULL,
+    enabled    INTEGER NOT NULL DEFAULT 1,
+    cron       TEXT NOT NULL,
+    owner_sub  TEXT NOT NULL,
+    origin     TEXT NOT NULL DEFAULT '',
+    updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    PRIMARY KEY (room_id, repo, kind)
+  )`);
   // Repos con la preview apagada a mano («Sin preview» en la tarjeta): sus variables son de
   // prod y nadie quiere la caja. La tarjeta queda gris en vez de pedir variables o fallar en rojo.
   await exec(`CREATE TABLE IF NOT EXISTS gt_factory_repo_prefs (
