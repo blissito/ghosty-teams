@@ -17,7 +17,7 @@ export type RepoEvent = {
   repo: string;             // "owner/name"
   sender?: { login: string; type?: string };   // type "Bot" para bots
   pr?: { number: number; title?: string; author?: string; authorType?: string; draft?: boolean;
-         base?: string; head?: string; headSha?: string; mergeableState?: string; url?: string };
+         base?: string; head?: string; headSha?: string; headRepo?: string; fork?: boolean; mergeableState?: string; url?: string };
   issue?: { number: number; title?: string; body?: string; labels?: string[]; author?: string; url?: string };
   review?: { id?: number; state?: string; body?: string; author?: string };
   comment?: { id: number; body?: string; path?: string; line?: number; author?: string; inReplyTo?: number; url?: string };

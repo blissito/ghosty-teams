@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AutomationCtx, AutomationKind, RepoEvent } from "./types";
 import {
-  autofixSkip, handlePrReview, handleReviewAutofix, isForkHead, mentionsGhosty, normalizeSeverity,
+  autofixSkip, handlePrReview, handleReviewAutofix, isFork, mentionsGhosty, normalizeSeverity,
   prReviewPrompt, prReviewSkip, reviewKey, MAX_ATTEMPTS,
 } from "./pr-review.server";
 
@@ -112,15 +112,17 @@ describe("review_autofix: filtros", () => {
     expect(autofixSkip(review("changes_requested", "@ghosty mira"))).toBe("mención @ghosty: la atiende el chat");
   });
   it("forks y PRs de bots ajenos fuera; las ramas ghosty/ sí", () => {
-    expect(autofixSkip(comment("x", { pr: { ...opened().pr!, head: "otra:fix" } }))).toMatch(/fork/);
-    expect(autofixSkip(comment("x", { pr: { ...opened().pr!, head: "acme:fix" } }))).toBeNull();
+    expect(autofixSkip(comment("x", { pr: { ...opened().pr!, fork: true, headRepo: "otra/app" } }))).toMatch(/fork/);
+    expect(autofixSkip(comment("x", { pr: { ...opened().pr!, headRepo: "otra/app" } }))).toMatch(/fork/);
+    expect(autofixSkip(comment("x", { pr: { ...opened().pr!, fork: false, headRepo: "acme/app" } }))).toBeNull();
     expect(autofixSkip(comment("x", { pr: { ...opened().pr!, author: "dependabot[bot]", authorType: "Bot", head: "dependabot/npm/x" } }))).toBe("PR de un bot ajeno");
     expect(autofixSkip(comment("x", { pr: { ...opened().pr!, author: "ghosty-studio[bot]", authorType: "Bot", head: "ghosty/ci_fix-7" } }))).toBeNull();
   });
   it("mentionsGhosty no confunde correos ni otros handles", () => {
     expect(mentionsGhosty("escribe a hola@ghosty.studio")).toBe(false);
     expect(mentionsGhosty("@ghostyx")).toBe(false);
-    expect(isForkHead("acme/app", "fix")).toBe(false);
+    expect(isFork("acme/app", {})).toBe(false);
+    expect(isFork("Acme/App", { headRepo: "acme/app" })).toBe(false);
   });
 });
 
