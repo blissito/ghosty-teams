@@ -833,6 +833,7 @@ export const en: Record<string, string> = {
   "Volver a Documentos": "Back to Documents",
   "Volver a Ghosty Studio": "Back to Ghosty Studio",
   "Volver al room": "Back to room",
+  "Copiar liga al hilo": "Copy link to thread",
   "Webhook externo": "External webhook",
   "Webhook externo · sin persona": "External webhook · no persona",
   "Workspace": "Workspace",

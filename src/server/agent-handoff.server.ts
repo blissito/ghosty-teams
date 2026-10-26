@@ -184,6 +184,19 @@ export async function handoffTurnInput(parentId: number | null, from: string, te
     if (root) {
       const [full] = await db.attachAttachments([root]).catch(() => [root]);
       atts = (full?.attachments ?? []).map((a) => ({ fileId: a.file_id, mime: a.mime, size: a.size, name: a.name }));
+      // También lo último que se adjuntó EN el hilo (el Word que entregó quien releva, una foto
+      // que mandó la persona). Sólo con la raíz, @goose despertó diciendo «no veo el Word» que
+      // @ghosty acababa de entregar (descti 19-oct, hilo 973).
+      const replies = await db.listThread(parentId).catch(() => []);
+      const withAtts = await db.attachAttachments(replies.slice(-30)).catch(() => []);
+      const seen = new Set(atts.map((a) => a.fileId));
+      const recent = withAtts
+        .flatMap((m) => m.attachments ?? [])
+        .reverse()
+        .filter((a) => !seen.has(a.file_id) && (seen.add(a.file_id), true))
+        .slice(0, 6)
+        .reverse();
+      atts.push(...recent.map((a) => ({ fileId: a.file_id, mime: a.mime, size: a.size, name: a.name })));
       const body = (root.body ?? "").trim();
       if (body) ctx = `[Pedido original del hilo — ${root.sender || "una persona"}]\n${body.length > 3000 ? body.slice(0, 3000) + "…" : body}\n\n`;
     }

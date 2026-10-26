@@ -1764,8 +1764,7 @@ export const askAgentAs = createServerOnlyFn(async (me: SessionMe | null, data: 
     // 11-sep, sin aviso ni botón «Retomar». El `finally` sigue corriendo (acuse y fin de turno).
     if (turnResult.failure) return { ok: true as const };
     const { detectArtifact, mintCollabEmbed, resolveFileKind } = await import("./easybits-documents.server");
-    const { extractEbDoc, extractEbPatches, isSameDocument, draftTitle, bubbleWithoutEbDoc, extractAskUser, stripAskUser, extractAllEbAudio, stripEbAudio, extractAllEbFile, stripEbFile } = await import("../lib/ebdoc");
-    const { randomUUID } = await import("node:crypto");
+    const { extractEbPatches, draftTitle, bubbleWithoutEbDoc, extractAskUser, stripAskUser, extractAllEbAudio, stripEbAudio, extractAllEbFile, stripEbFile } = await import("../lib/ebdoc");
 
     // Nota de voz: el agente emitió ```eb-audio``` (voice.mjs sintetizó + publicó el
     // ogg). Re-subimos el audio a nuestro storage y lo colgamos como adjunto → burbuja
@@ -1984,46 +1983,29 @@ export const askAgentAs = createServerOnlyFn(async (me: SessionMe | null, data: 
       return { ok: true as const };
     }
 
-    const ebdoc = extractEbDoc(reply);
-    if (ebdoc?.closed && ebdoc.md.trim()) {
-      const cleaned = bubbleWithoutEbDoc(reply, undefined, { keepStatus: true });
-      await db.setMessageBody(id, cleaned);
-      bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: cleaned });
-      // ¿Versión del artefacto del hilo, o documento nuevo? Ver isSameDocument: antes
-      // se reusaba el puntero SIEMPRE, así que todo lo que se pidiera después caía
-      // como versión de lo anterior.
-      const documentId =
-        currentDocId && isSameDocument(ebdoc, currentDoc)
-          ? currentDocId
-          : `${ebdoc.kind}_${randomUUID()}`;
-      const title = draftTitle(ebdoc.md, ebdoc.kind, ebdoc.fenceTitle);
-      // Publicación por el camino ÚNICO (mismo que la edición humana del Canvas): siembra
-      // los `data-id` del artefacto (dirección para el próximo ```eb-patch```), sube el HTML
-      // a storage como enlace compartible, INSERTa la versión, apunta el hilo y refresca.
-      const { publishArtifactVersion, imageGapNotice } = await import("./artifacts");
-      const pub = await publishArtifactVersion({
-        messageId: id,
-        documentId,
-        kind: ebdoc.kind, // "doc" | "sheet" | "artifact"
-        title,
-        md: ebdoc.md,
-        // `undefined` cuando el agente no dijo nada, y eso NO es "con marca": es "lo que
-        // ya dijera el documento". Re-emitir un oficio sin repetir la marca no debe
-        // devolverle el membrete que alguien pidió quitar.
-        unbranded: ebdoc.unbranded,
-        ownerSub: poster?.sub ?? null,
-        setPointer: (docId) => db.setThreadArtifact(channel.id, data.parentId, docId),
-        notify: () =>
-          bus.publish(bus.ch.room(ns, channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId }),
-      });
-      // El hueco se sabe DESPUÉS de publicar, así que el body se reescribe aquí. Sólo
-      // cuando de verdad falló algo: en el camino normal no hay segundo write.
-      const aviso = imageGapNotice(pub.imagesFailed);
-      if (aviso) {
-        const conAviso = `${cleaned}\n\n${aviso}`.trim();
-        await db.setMessageBody(id, conAviso);
-        bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: conAviso });
-      }
+    const { publishEbDocFromReply } = await import("./ebdoc-publish.server");
+    const showBody = async (b: string) => {
+      await db.setMessageBody(id, b);
+      bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: b });
+    };
+    let cleanedBody = "";
+    const published = await publishEbDocFromReply({
+      messageId: id,
+      reply,
+      ownerSub: poster?.sub ?? null,
+      currentDocId,
+      currentDoc,
+      setPointer: (docId) => db.setThreadArtifact(channel.id, data.parentId, docId),
+      notify: () =>
+        bus.publish(bus.ch.room(ns, channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId }),
+      onCleaned: async (b) => {
+        cleanedBody = b;
+        await showBody(b);
+      },
+    });
+    if (published != null) {
+      // El hueco de imágenes se sabe DESPUÉS de publicar: segundo write sólo si falló algo.
+      if (published !== cleanedBody) await showBody(published);
       return { ok: true as const };
     }
 

@@ -486,7 +486,32 @@ export async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
       gapNotice = await notificarMencionesDelAgente(ns, channel, finalBody, name, { app, parentId: dest.parentId ?? null }).catch(() => "");
     }
   }
-  const body = [delivered?.body ?? finalBody, handoffNotice, gapNotice].filter(Boolean).join("\n\n");
+  // Un ```eb-doc``` del relevo se publica como en un turno de chat (antes quedaba crudo y la
+  // burbuja prometía un documento que no existía: descti 19-oct, #1005).
+  let main = delivered?.body ?? finalBody;
+  if ((dest.channelId != null || dest.dmId != null) && (await import("../lib/ebdoc")).extractEbDoc(main)?.closed) {
+    const { publishEbDocFromReply } = await import("./ebdoc-publish.server");
+    const currentDocId =
+      dest.channelId != null
+        ? await db.resolveThreadArtifact(dest.channelId, dest.parentId ?? null).catch(() => null)
+        : await db.getDmArtifact(dest.dmId!).catch(() => null);
+    const currentDoc = currentDocId ? await db.getDoc(currentDocId).catch(() => null) : null;
+    const published = await publishEbDocFromReply({
+      messageId: id,
+      reply: main,
+      ownerSub: ref.sub ?? null,
+      currentDocId,
+      currentDoc,
+      setPointer: (docId) =>
+        dest.channelId != null ? db.setThreadArtifact(dest.channelId, dest.parentId ?? null, docId) : db.setDmArtifact(dest.dmId!, docId),
+      notify: () => publish({ t: "refresh", channelId: dest.channelId ?? null, parentId: dest.parentId ?? null, dmId: dest.dmId ?? null }),
+    }).catch((e) => {
+      console.warn(`[wake] eb-doc ${id}: ${(e as Error).message}`);
+      return null;
+    });
+    if (published != null) main = published;
+  }
+  const body = [main, handoffNotice, gapNotice].filter(Boolean).join("\n\n");
   await db.setMessageBody(id, body);
   publish({ t: "message:body", id, body });
   // El reintento de una entrega que no llegó se revisa igual, pero SIN otro reintento: si

@@ -163,6 +163,11 @@ export async function notificarMencionesDelAgente(
   );
   // senderSub vacío: el agente no tiene sub que excluir. allowGroup=false: nada de @todos.
   const { unresolved } = await notifyMentions(ns, channel, prosa, agentName, "", false, extra);
+  // Un @ que es el NOMBRE de un agente del espacio («@minighosty» por MiniGhosty, cuyo handle es
+  // @mini) no es una persona sin encontrar: el aviso sólo ensuciaba la burbuja (descti 19-oct).
+  const compact = (x: string) => x.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const agents = unresolved.length ? await (await import("../db.server")).listAgents().catch(() => []) : [];
+  const names = new Set(agents.map((a) => compact(a.name)));
   const { mentionGapNotice } = await import("./artifacts");
-  return mentionGapNotice(unresolved);
+  return mentionGapNotice(unresolved.filter((h) => !names.has(compact(h))));
 }

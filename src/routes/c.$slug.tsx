@@ -6120,6 +6120,34 @@ function NewDmModal({
 // Botón de Documentos del CASO (matter-centric): abre el índice Cowork del room en
 // el panel (todos sus docs generados + subidos). Convención Slack/Zulip: acción por
 // canal a la derecha del header. Mismo channelId para el room y sus hilos.
+// Copia la liga directa al hilo (`/c/<room>?thread=<id>`) para pegarla en otro chat o en un
+// pedido. Pedido de bliss (26-oct): sin esto había que abrir el hilo y copiar la barra.
+function CopyThreadLinkButton({ channelSlug, threadRootId }: { channelSlug: string; threadRootId: number }) {
+  const t = useT();
+  const [copied, setCopied] = useState(false);
+  const label = copied ? t("¡Copiado!") : t("Copiar liga al hilo");
+  return (
+    <button
+      type="button"
+      onClick={async () => {
+        const url = `${window.location.origin}/c/${channelSlug}?thread=${threadRootId}`;
+        try {
+          await navigator.clipboard.writeText(url);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1800);
+        } catch {
+          /* sin permiso de portapapeles: no hay nada más que hacer */
+        }
+      }}
+      title={label}
+      aria-label={label}
+      className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-muted transition hover:bg-surface-3 hover:text-ink"
+    >
+      {copied ? <Check size={17} className="text-brand" /> : <Link2 size={17} />}
+    </button>
+  );
+}
+
 function DocsButton({ channelId, channelSlug, threadRootId, dmId }: { channelId: number; channelSlug: string; threadRootId?: number; dmId?: number }) {
   const t = useT();
   const { onOpenArtifact } = useContext(ChatCtx);
@@ -7901,6 +7929,7 @@ function ThreadView({
           {/* Buscar DENTRO del hilo. Una conversación larga (un contrato revisado a lo largo
               de 20 mensajes) no se recorre a scroll, y hasta hoy el buscador ni siquiera
               existía aquí — ni la búsqueda global miraba dentro de los hilos. */}
+          <CopyThreadLinkButton channelSlug={channel.slug} threadRootId={threadId} />
           <SearchButton onOpenDm={() => {}} threadRootId={threadId} />
           <DocsButton channelId={channel.id} channelSlug={channel.slug} threadRootId={threadId} />
         </div>
