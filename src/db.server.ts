@@ -3021,10 +3021,8 @@ export async function recentContext(
 /**
  * Cuerpo del ÚLTIMO mensaje del agente en un scope, o null.
  *
- * Lo usa `deliveryGapHint`: el aviso de "prometió un archivo y no llegó" se persiste en ese
- * cuerpo, y el agente **no lo ve por el catch-up** — `gapDesdeUltimaRespuesta` empieza
- * justo DESPUÉS de su propia última respuesta, así que su burbuja queda fuera por
- * construcción. Por eso hay que ir a buscarla.
+ * El agente no ve su propia última burbuja por el catch-up (`gapDesdeUltimaRespuesta`
+ * empieza justo DESPUÉS de ella), así que hay que ir a buscarla.
  *
  * ⚠️ `TRIM(body) <> ''` no es higiene, es el filtro que hace que esto funcione: la cáscara
  * del turno se crea VACÍA y EAGER (`postDmMessageFn`), así que sin él el mensaje del agente

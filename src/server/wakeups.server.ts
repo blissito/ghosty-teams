@@ -514,11 +514,5 @@ export async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
   const body = [main, handoffNotice, gapNotice].filter(Boolean).join("\n\n");
   await db.setMessageBody(id, body);
   publish({ t: "message:body", id, body });
-  // El reintento de una entrega que no llegó se revisa igual, pero SIN otro reintento: si
-  // tampoco entrega, la burbuja dice «pídeselo de nuevo» y ahí para.
-  if (w.key.startsWith("gap:")) {
-    const { warnIfNothingDelivered } = await import("./delivery-gap");
-    await warnIfNothingDelivered(id, (b) => publish({ t: "message:body", id, body: b })).catch(() => {});
-  }
   if (delivered?.attached) publish({ t: "refresh", channelId: dest.channelId ?? null, parentId: dest.parentId ?? null, dmId: dest.dmId ?? null });
 }

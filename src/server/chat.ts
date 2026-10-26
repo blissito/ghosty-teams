@@ -2049,19 +2049,7 @@ export const askAgentAs = createServerOnlyFn(async (me: SessionMe | null, data: 
     console.error("[artifact] detect/mint failed", e);
   } finally {
     // ⚠️ UN SOLO punto de enganche. El bloque de arriba tiene SIETE ramas y cada una hace
-    // su propio `return`: colgar esto rama por rama garantiza que alguna se quede sin
-    // aviso. El `finally` es el único sitio por el que pasan todas.
-    // ⚠️ ANTES del aviso de fin de turno: la barra resume lo que se entregó, y con el
-    // hueco ya escrito la burbuja y el resumen cuentan lo mismo.
-    const { warnIfNothingDelivered } = await import("./delivery-gap");
-    await warnIfNothingDelivered(
-      id,
-      (body) => bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body }),
-      // Detenido por la persona: no se reabre nada.
-      !controller.signal.aborted && poster?.sub
-        ? { ns, groupId, sub: poster.sub, dest: destDelTurno, origin: origenDelTurno }
-        : null,
-    ).catch(() => {});
+    // su propio `return`: el `finally` es el único sitio por el que pasan todas.
     await avisarFinDeTurno({
       ns, messageId: id, channelId: channel.id, channelSlug: channel.slug,
       parentId: data.parentId ?? null, invokerSub: poster?.sub ?? null,

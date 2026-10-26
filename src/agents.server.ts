@@ -1927,11 +1927,6 @@ export async function callAgentBackendStream(
         // Va PRIMERO y manda sobre todo lo demás, igual que en el nativo: sin tools, los
         // bloques de abajo describen lo que hay CONECTADO, no lo que puede ejecutar ahora.
         Promise.resolve(publicChannel || toolToken ? "" : SIN_TOOLS_HINT),
-        // Gemelo del `huecoHint` del camino nativo — ver allí el porqué, incluido el gate de
-        // canal público. Aquí no lleva `\n\n` final: este bloque se une con `join("\n\n")`.
-        publicChannel
-          ? Promise.resolve("")
-          : import("./server/delivery-gap").then((m) => m.deliveryGapHint(dest)).catch(() => ""),
         invokerSub && !publicChannel
           ? import("./server/connectors/context.server")
               .then((m) => m.buildConnectorContext(invokerSub, sender || "el usuario", text, dest ?? null, "mcp"))
@@ -2396,19 +2391,6 @@ export async function callAgentBackendStream(
   // docHint (contexto por-doc del turno) va PRIMERO en el texto; el system prompt
   // queda estable (base) → la sesión persistente del worker no se rompe al cambiar doc.
   const docHint = await docHintFor(currentDoc, dest, lu);
-  // El hueco de entrega del turno ANTERIOR. Sin esto el aviso muere en la burbuja: el
-  // catch-up empieza después de la propia respuesta del agente, así que nunca se entera de
-  // que falló — y repite «está en la tarjeta de arriba» mientras la persona dice que no le
-  // aparece (2026-08-31, descti). Va en el TEXTO como todos los demás.
-  //
-  // ⚠️ En un canal PÚBLICO no: allá no hay tarjetas, un ```eb-file llega como basura literal
-  // (WhatsApp no renderiza markdown) y `/opt/gs-sdk/storage.mjs` puede no existir en esa
-  // caja. Mandarlo ahí crearía un incidente nuevo para arreglar otro.
-  const huecoHint = publicChannel
-    ? ""
-    : await import("./server/delivery-gap")
-        .then((m) => m.deliveryGapHint(dest))
-        .catch(() => "");
   // AHORA, en el reloj del que escribe. Sin esto el modelo no puede convertir "el 1 de
   // agosto" o "mañana a las 9" en una fecha concreta para reminder_create — adivinaba el
   // año o daba por hecho UTC. Va por-TURNO (dato variable), nunca en el system prompt.
@@ -2477,10 +2459,7 @@ export async function callAgentBackendStream(
   // valor, y una lista que cambia por canal reciclaría la sesión en cada turno.
   const rosterHint = await buildRosterHint(dest, publicChannel).catch(() => "");
   const outText = stripLoneSurrogates(
-    // `huecoHint` va justo tras `sinToolsHint` y ANTES de `docHint`: contradice lo que el
-    // modelo cree que ya hizo, y en el caso de fallo `docHint` le presenta un artefacto que
-    // NO es el archivo prometido. El que corrige tiene que pesar más que el que describe.
-    sinToolsHint + huecoHint + connHint + nowHint + memHint + brandHint + docHint + rosterHint + text + canalHint
+    sinToolsHint + connHint + nowHint + memHint + brandHint + docHint + rosterHint + text + canalHint
   );
   // El tablero de ventas que sigue este room (gt_room_sales_boards): el agente trabaja ÉSE
   // aquí. gs lo valida contra el workspace que firma; si no es suyo, lo ignora.
