@@ -36,20 +36,38 @@ async function publishNew(ns: string, roomId: number, id: number): Promise<void>
   bus.publish(bus.ch.room(ns, roomId), { t: "message:new", msg });
 }
 
+/**
+ * El repo del hilo en `gt_factory_thread_overrides`, como si alguien hubiera escrito «en <repo>»:
+ * en un room con varios repos `factoryTurnFor` lo lee de aquí para traer `.ghosty/factory.md`
+ * (el turno no trae mensajes de quién lo invocó). Combina con lo que el hilo ya traía (modelos,
+ * agentes de un eval) en vez de pisarlo.
+ */
+export async function pinThreadRepo(roomId: number, rootId: number, repo: string): Promise<void> {
+  const rows = await dbq("SELECT overrides FROM gt_factory_thread_overrides WHERE channel_id = ? AND root_msg_id = ?", [roomId, rootId]).catch(() => []);
+  let prev: Record<string, unknown> = {};
+  try {
+    prev = rows[0] ? JSON.parse(String(rows[0].overrides)) : {};
+  } catch {}
+  if (prev.repo === repo) return;
+  await dbq(
+    `INSERT INTO gt_factory_thread_overrides (channel_id, root_msg_id, overrides) VALUES (?, ?, ?)
+     ON CONFLICT(channel_id, root_msg_id) DO UPDATE SET overrides = excluded.overrides, updated_at = unixepoch()`,
+    [roomId, rootId, JSON.stringify({ ...prev, repo })],
+  ).catch(() => {});
+}
+
 /** El hilo de `threadKey` en el room: el que ya existe, o uno nuevo con `title` como raíz. */
 async function threadRoot(roomId: number, repo: string, threadKey: string, title: string, who: Who, ns: string): Promise<number> {
   const db = await import("../../db.server");
   const [row] = await dbq("SELECT root_msg_id FROM gt_automation_threads WHERE room_id = ? AND thread_key = ?", [roomId, threadKey]);
-  if (row && (await db.getMessage(Number(row.root_msg_id)).catch(() => null))) return Number(row.root_msg_id);
+  if (row && (await db.getMessage(Number(row.root_msg_id)).catch(() => null))) {
+    // Los hilos de antes de esto no traen su repo: se les pone al reusarlos.
+    await pinThreadRepo(roomId, Number(row.root_msg_id), repo);
+    return Number(row.root_msg_id);
+  }
   const { id } = await db.postAgent(roomId, null, title, "msg", who.handle, who.name, "general", who.avatar);
   await dbq("INSERT OR REPLACE INTO gt_automation_threads (room_id, thread_key, root_msg_id) VALUES (?, ?, ?)", [roomId, threadKey, id]);
-  // El repo del hilo: en un room con varios repos `factoryTurnFor` lo lee de aquí para traer
-  // `.ghosty/factory.md` (el turno no trae mensajes de quién lo invocó).
-  await dbq(
-    `INSERT INTO gt_factory_thread_overrides (channel_id, root_msg_id, overrides) VALUES (?, ?, ?)
-     ON CONFLICT(channel_id, root_msg_id) DO UPDATE SET overrides = excluded.overrides, updated_at = unixepoch()`,
-    [roomId, id, JSON.stringify({ repo })],
-  ).catch(() => {});
+  await pinThreadRepo(roomId, id, repo);
   await publishNew(ns, roomId, id);
   return id;
 }
@@ -111,6 +129,8 @@ export function automationCtx(p: { ns: string; roomId: number; repo: string; ori
       const parent = opts.threadKey ? await threadRoot(p.roomId, p.repo, opts.threadKey, opts.title?.trim() || defaultTitle(opts.threadKey), who, p.ns) : null;
       // `postAgent` no despierta a nadie (mentions_ghosty = 0): es un aviso, no un turno.
       const { id } = await db.postAgent(p.roomId, parent, text, "msg", who.handle, who.name, "general", who.avatar);
+      // Un aviso suelto es raíz de un hilo posible: si alguien le contesta con @build, el rol sabe el repo.
+      if (parent == null) await pinThreadRepo(p.roomId, id, p.repo);
       await publishNew(p.ns, p.roomId, id);
     },
     claim: (kind, key, ttlMs) => claimKey(kind, key, ttlMs),

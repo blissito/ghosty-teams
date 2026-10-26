@@ -1,7 +1,7 @@
 // «Safe-outputs» de las automatizaciones (idea de gh-aw): en un turno que abrió una
 // automatización el agente no escribe donde quiera, sólo en las salidas que el tipo declara.
 //
-// Hoy sólo `maintenance` las usa: issues nuevos con prefijo `[ghosty]` y etiqueta
+// `maintenance` las usa así (abajo, las tareas programadas de la fábrica tienen las suyas): issues nuevos con prefijo `[ghosty]` y etiqueta
 // `ghosty-maintenance`, o un PR en BORRADOR desde una rama `ghosty/maint-…`. Nunca mergea,
 // nunca cierra, nunca toca ramas de personas.
 //
@@ -116,4 +116,47 @@ export function maintenanceSafeOutputs(name: string, args: Record<string, unknow
         return { ok: false, error: `Sólo escribes en ramas ${MAINT_BRANCH_PREFIX}<receta>-<fecha>; «${String(args.branch ?? "")}» no lo es.` };
       return { ok: true, args };
   }
+}
+
+// ── Tareas programadas de la Software Factory (`apps/factory-schedules.server.ts`) ─────────────
+//
+// La revisión nocturna y la de dependencias despiertan a @plan con `dest.factorySched`. Su
+// salida es UNA: proponer un plan con `factory_plan_submit`, que queda esperando firma humana.
+// Lee GitHub para revisar, pero no escribe en el repo (ni issues ni ramas): lo que haya que
+// cambiar lo construye @build después de la firma, como cualquier pedido.
+
+export type FactorySchedTask = "nightly" | "deps";
+
+/** Lo de la fábrica que cada tarea puede usar: el contexto, la nota y proponer el plan. */
+const FACTORY_SCHED_ALLOWED: Record<FactorySchedTask, Set<string>> = {
+  nightly: new Set([...FACTORY_ALLOWED, "factory_plan_submit", "alert_webhook_list", "uptime_list"]),
+  deps: new Set([...FACTORY_ALLOWED, "factory_plan_submit"]),
+};
+
+const SCHED_NOT_HERE =
+  "En una revisión programada de la fábrica sólo lees y, si hay algo accionable, propones UN plan con " +
+  "factory_plan_submit (queda esperando firma). No escribes en el repo ni cambias la configuración del room.";
+
+/** ¿Se anuncia esta tool en una tarea programada de la fábrica? */
+export function factorySchedAllows(task: FactorySchedTask, name: string): boolean {
+  if (name.startsWith("github_")) return GITHUB_READ.has(name);
+  if (name.startsWith("factory_") || name.startsWith("alert_webhook_") || name.startsWith("uptime_"))
+    return FACTORY_SCHED_ALLOWED[task]?.has(name) ?? false;
+  return true;
+}
+
+/** El candado de verdad. El plan sale del repo de la tarea: si no lo pasa se le pone, si pasa otro se niega. */
+export function factorySchedSafeOutputs(
+  task: FactorySchedTask,
+  repo: string | undefined,
+  name: string,
+  args: Record<string, unknown>,
+): SafeOutputsVerdict {
+  if (!factorySchedAllows(task, name)) return { ok: false, error: `${name} no está permitida aquí. ${SCHED_NOT_HERE}` };
+  if (name !== "factory_plan_submit" || !repo) return { ok: true, args };
+  const asked = String(args.repo ?? "").trim();
+  if (!asked) return { ok: true, args: { ...args, repo } };
+  if (asked.toLowerCase() !== repo.toLowerCase())
+    return { ok: false, error: `Esta revisión es SÓLO del repo ${repo}; el plan va sobre ése, no sobre ${asked}.` };
+  return { ok: true, args };
 }

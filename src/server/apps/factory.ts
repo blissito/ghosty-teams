@@ -502,6 +502,51 @@ export const setFactoryScheduleFn = createServerFn({ method: "POST" })
     return { ok: true as const, nextAt };
   });
 
+/**
+ * Las tareas programadas vistas desde UN repo del room: el horario del espacio y, si lo tiene,
+ * el suyo. `installed: false` = sin fábrica (la pantalla no pinta la sección).
+ */
+export const factoryRepoSchedulesFn = createServerFn({ method: "POST" })
+  .validator((d: { channelId: number; repo: string }) => d)
+  .handler(async ({ data }) => {
+    await requireOwner();
+    const { isInstalled } = await import("./installed.server");
+    if (!(await isInstalled("factory").catch(() => false))) return { installed: false as const, rows: [] };
+    const S = await import("./factory-schedules.server");
+    const [space, own] = await Promise.all([S.listSchedules(), S.listRepoSchedules()]);
+    const repo = String(data.repo).toLowerCase();
+    return {
+      installed: true as const,
+      rows: space.map((sp) => {
+        const o = own.find((r) => r.roomId === Number(data.channelId) && r.repo.toLowerCase() === repo && r.kind === sp.kind);
+        return { kind: sp.kind, space: { enabled: sp.enabled, hour: sp.hour }, own: o ? { enabled: o.enabled, cron: o.cron } : null };
+      }),
+    };
+  });
+
+/** Horario de una tarea para UN repo del room: `hour` (CDMX) o `cron`; `reset` lo regresa al del espacio. */
+export const setFactoryRepoScheduleFn = createServerFn({ method: "POST" })
+  .validator((d: { roomId: number; repo: string; kind: "nightly" | "deps"; enabled?: boolean; hour?: number; cron?: string; reset?: boolean }) => d)
+  .handler(async ({ data }) => {
+    const user = await requireOwner();
+    if (data.kind !== "nightly" && data.kind !== "deps") throw new Error("tarea desconocida");
+    const db = await import("../../db.server");
+    const link = (await db.listRoomRepos(Number(data.roomId)).catch(() => [])).find((r) => r.repo.toLowerCase() === String(data.repo).toLowerCase());
+    if (!link) throw new Error("ese repo no está conectado a ese room");
+    const { saveRepoSchedule } = await import("./factory-schedules.server");
+    const { reqOrigin } = await import("../../origin.server");
+    const origin = await reqOrigin().catch(() => "");
+    const saved = await saveRepoSchedule(
+      Number(data.roomId),
+      link.repo,
+      data.kind,
+      data.reset ? null : { enabled: !!data.enabled, hour: data.hour, cron: data.cron },
+      user.sub,
+      origin,
+    );
+    return { ok: true as const, schedule: saved ? { roomId: saved.roomId, repo: saved.repo, kind: saved.kind, enabled: saved.enabled, cron: saved.cron } : null };
+  });
+
 // ── El pedido que abrió un mensaje («Pedir»), para seguirlo desde otro hilo ────
 
 /** Como `factoryRunOfThreadFn` pero con el slug del room (lo que tiene «Pedir»); runId null = Arqui

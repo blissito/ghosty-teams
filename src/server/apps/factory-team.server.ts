@@ -131,7 +131,10 @@ export async function factoryTurnFor(handle: string, dest: ToolDest | null | und
   const ov = root ? await captureOverrides(dest, root, roomRepos.map((r) => r.repo)) : {};
   const R = await import("./factory-runs.server");
   const run = root ? await R.runOfThread(dest.channelId, root).catch(() => null) : null;
-  const repo = run?.repo ?? ov.repo ?? (roomRepos.length === 1 ? roomRepos[0].repo : null);
+  // Un turno top-level de una automatización o tarea programada no tiene hilo todavía: su repo
+  // viene en el destino firmado (`automationRepo`).
+  const destRepo = dest.automationRepo ? (roomRepos.find((r) => r.repo.toLowerCase() === dest.automationRepo!.toLowerCase())?.repo ?? null) : null;
+  const repo = run?.repo ?? ov.repo ?? destRepo ?? (roomRepos.length === 1 ? roomRepos[0].repo : null);
   const connectedBy = roomRepos.find((r) => r.repo === repo)?.connectedBy;
   const file = repo && connectedBy ? await repoTeamFile(repo, connectedBy).catch(() => null) : null;
   // Un agente fijado en el hilo (un eval) le gana al del archivo del repo.

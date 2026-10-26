@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // `wake`: hilo propio del room (reusado por threadKey) y despertador `auto:` a nombre de quien
 // prendió la automatización.
 const threads = new Map<string, number>();
+const overrides = new Map<string, string>();
 const posted: { channelId: number; parentId: number | null; body: string }[] = [];
 const enqueueWakeup = vi.fn(async (_w: unknown) => true);
 const mintWakeRef = vi.fn((_r: unknown) => "ref");
@@ -17,6 +18,11 @@ vi.mock("../../dbq.server", () => ({
     }
     if (sql.startsWith("INSERT OR REPLACE INTO gt_automation_threads")) threads.set(`${args[0]}:${args[1]}`, Number(args[2]));
     if (sql.includes("FROM gc_users")) return [{ sub: "u_owner" }];
+    if (sql.startsWith("SELECT overrides FROM gt_factory_thread_overrides")) {
+      const o = overrides.get(`${args[0]}:${args[1]}`);
+      return o ? [{ overrides: o }] : [];
+    }
+    if (sql.includes("INSERT INTO gt_factory_thread_overrides")) overrides.set(`${args[0]}:${args[1]}`, String(args[2]));
     return [];
   },
 }));
@@ -50,6 +56,7 @@ const { automationCtx } = await import("./ctx.server");
 
 beforeEach(() => {
   threads.clear();
+  overrides.clear();
   posted.length = 0;
   vi.clearAllMocks();
   owner = "u_quien_prendio";
@@ -123,5 +130,29 @@ describe("ctx.wake con retraso y marca de automatización", () => {
     const w = enqueueWakeup.mock.calls[0][0] as { dueAt: number };
     expect(w.dueAt).toBeGreaterThanOrEqual(before + 600);
     expect((mintWakeRef.mock.calls[0][0] as { dest: object }).dest).toMatchObject({ automation: "security_fix", automationRepo: "acme/app" });
+  });
+});
+
+describe("el hilo de la automatización sabe su repo", () => {
+  it("wake deja el repo en los overrides del hilo (room con varios repos)", async () => {
+    const ctx = automationCtx({ ns: "ns", roomId: 7, repo: "acme/api", origin: "https://x", kind: "ci_fix" });
+    await ctx.wake({ handle: "build", text: "x", threadKey: "k" });
+    expect(JSON.parse(overrides.get("7:101")!)).toEqual({ repo: "acme/api" });
+  });
+
+  it("combina con lo que el hilo ya traía y lo pone al reusar un hilo viejo", async () => {
+    threads.set("7:k", 55);
+    overrides.set("7:55", JSON.stringify({ models: { build: "opus" } }));
+    const ctx = automationCtx({ ns: "ns", roomId: 7, repo: "acme/api", origin: "https://x", kind: "ci_fix" });
+    await ctx.wake({ handle: "build", text: "x", threadKey: "k" });
+    expect(JSON.parse(overrides.get("7:55")!)).toEqual({ models: { build: "opus" }, repo: "acme/api" });
+  });
+
+  it("un aviso suelto también lo deja (raíz de un hilo posible); uno en hilo, sólo en la raíz", async () => {
+    const ctx = automationCtx({ ns: "ns", roomId: 7, repo: "acme/web", kind: "security_fix" });
+    await ctx.post("aviso");
+    await ctx.post("en hilo", { threadKey: "k2" });
+    expect([...overrides.keys()].sort()).toEqual(["7:101", "7:102"]);
+    expect(JSON.parse(overrides.get("7:101")!)).toEqual({ repo: "acme/web" });
   });
 });

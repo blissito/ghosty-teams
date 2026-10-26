@@ -94,6 +94,7 @@ import {
 import { roomSalesBoardFn, salesBoardsFn, setRoomSalesBoardFn, clearRoomSalesBoardFn } from "../server/room-sales-board";
 import ConfirmModal from "../components/ConfirmModal";
 import { RepoAutomations } from "../components/RepoAutomations";
+import { RepoSchedules } from "../components/RepoSchedules";
 import { createFileRoute, notFound, Link, useRouter } from "@tanstack/react-router";
 import type { Channel, Message, DmConversation, RoomHit, ViewHit, CustomEmoji } from "../db.server";
 import { listEmojisFn } from "../server/emojis";
@@ -6603,6 +6604,8 @@ function RepoPanel({
               <RepoAutomations channelId={channelId} repo={focus} />
             </section>
           )}
+          {/* Tareas programadas de la fábrica con horario por repo (se oculta sola sin fábrica o sin permiso). */}
+          {focus && ya.has(focus.toLowerCase()) && <RepoSchedules channelId={channelId} repo={focus} />}
 
           <section className="py-1">
             <p className="px-3 py-1 text-[11px] uppercase tracking-wide text-muted">
