@@ -296,14 +296,17 @@ async function permissionsReviewUrl(repoPath: string): Promise<string> {
   const id = typeof r?.id === "number" ? r.id : null;
   if (!id) return "https://github.com/settings/installations";
   const org = String(r?.account?.type ?? "") === "Organization" ? String(r?.account?.login ?? "") : "";
-  return org ? `https://github.com/organizations/${org}/settings/installations/${id}` : `https://github.com/settings/installations/${id}`;
+  // `/permissions/update` cae directo en «Accept new permissions» (sin buscar el botón).
+  return org
+    ? `https://github.com/organizations/${org}/settings/installations/${id}/permissions/update`
+    : `https://github.com/settings/installations/${id}/permissions/update`;
 }
 
 /** Error de permiso faltante con la liga para aceptarlo (el agente la pasa tal cual). */
 async function missingPermission(repoPath: string, permission: string): Promise<{ error: string }> {
   const url = await permissionsReviewUrl(repoPath);
   return {
-    error: `A la GitHub App de Ghosty le falta el permiso «${permission}» en este repo. El dueño lo acepta aquí (botón «Review request» → Accept): ${url} — pásale la liga tal cual.`,
+    error: `A la GitHub App de Ghosty le falta el permiso «${permission}» en este repo. El dueño lo acepta aquí (botón «Accept new permissions»): ${url} — pásale la liga tal cual.`,
   };
 }
 
@@ -895,7 +898,7 @@ const trimLabel = (l: any) => ({ name: l?.name, color: l?.color, description: l?
 /** Gists son permiso de CUENTA, no de repo: no hay instalación de repo a la cual mandar. */
 const gistError = (r: any) =>
   /Sin permiso/.test(String(r?.error ?? ""))
-    ? { error: `A la GitHub App de Ghosty le falta el permiso de cuenta «Gists». La persona lo acepta en ${MANAGE_URL} (Review request → Accept) cuando lo agreguemos a la App.` }
+    ? { error: `A la GitHub App de Ghosty le falta el permiso de cuenta «Gists». La persona lo acepta en ${MANAGE_URL} (abre la instalación de Ghosty → «Accept new permissions»).` }
     : r;
 
 const ALL_TOOLS: ConnectorTool[] = [
