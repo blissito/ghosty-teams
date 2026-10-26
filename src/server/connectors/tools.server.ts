@@ -208,6 +208,13 @@ export async function runTool(
         `"${[...scope].join(", ")}". Díselo a la persona en vez de buscar otra vía.`,
     };
   }
+  // Nombre de GitHub inventado (medido: ~50 distintos en 30 días): «¿quisiste decir…?» antes que
+  // el candado de repos, que respondería sobre el repo de una tool que ni existe.
+  if (toolName.startsWith("github_")) {
+    const { suggestGithubTool } = await import("./github.server");
+    const hint = suggestGithubTool(toolName);
+    if (hint) return { ok: false, error: hint };
+  }
   const denial = await repoScopeDenial(toolName, args ?? {}, dest);
   if (denial) return { ok: false, error: denial };
   // Las de Tasks antes que nada: su nombre está reservado y no dependen de ningún conector.
