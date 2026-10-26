@@ -1915,7 +1915,7 @@ const ALL_TOOLS: ConnectorTool[] = [
   {
     name: "github_push_files",
     description:
-      "Varios archivos (crear, reemplazar o BORRAR) en UN solo commit sobre una rama de trabajo (nunca la principal). Prefiérela a github_write_file cuando el cambio toca más de un archivo: un commit por archivo deja la rama rota a medias. " +
+      "Varios archivos (crear, reemplazar o BORRAR) en UN solo commit. Rama principal SÓLO en el repo de una app que publicaste tú (site_status lo lista con `repo`): ahí el push ES el despliegue (1-3 min; revisa con site_status, no republiques). En cualquier otro repo: rama de trabajo → PR. Prefiérela a github_write_file cuando el cambio toca más de un archivo: un commit por archivo deja la rama rota a medias. " +
       "Con `mergeFrom` (p. ej. \"main\") el commit es un MERGE de esa rama en la tuya: así se resuelve un PR con conflictos. Lo que cambió allá y tú no tocaste entra solo; en `files` va el contenido FINAL de los archivos que chocan (si falta uno, te dice cuáles).",
     inputSchema: {
       type: "object",
@@ -2441,7 +2441,7 @@ const ALL_TOOLS: ConnectorTool[] = [
   {
     name: "github_write_file",
     description:
-      "Crea o reemplaza un archivo en una rama, con su commit. Texto en `content`; un BINARIO (imagen, PDF) con `fromUrl` o `contentBase64`, nunca en `content` (llegaría corrupto). Para SOBRESCRIBIR uno que ya existe hay que pasar su `sha` (lo devuelve github_read_file) — sin él GitHub rechaza el cambio para no pisar trabajo ajeno. Escribe en una rama de trabajo, nunca en la principal.",
+      "Crea o reemplaza un archivo en una rama, con su commit. Texto en `content`; un BINARIO (imagen, PDF) con `fromUrl` o `contentBase64`, nunca en `content` (llegaría corrupto). Para SOBRESCRIBIR uno que ya existe hay que pasar su `sha` (lo devuelve github_read_file) — sin él GitHub rechaza el cambio para no pisar trabajo ajeno. Rama principal SÓLO en el repo de una app que publicaste tú (site_status lo lista con `repo`): ahí el push ES el despliegue (1-3 min; revisa con site_status, no republiques). En cualquier otro repo: rama de trabajo → PR.",
     inputSchema: {
       type: "object",
       properties: {
