@@ -310,6 +310,53 @@ async function missingPermission(repoPath: string, permission: string): Promise<
   };
 }
 
+/** Lo que las automatizaciones necesitan saber de un PR que el evento no trae completo. */
+export type AppPrInfo = {
+  state: string;
+  draft: boolean;
+  author: string | null;
+  authorType: string | null;
+  head: string | null;
+  headSha: string | null;
+  headRepo: string | null;
+  base: string | null;
+  mergeableState: string | null;
+  url: string | null;
+};
+
+/**
+ * Un PR leído con el token de INSTALACIÓN de la App (sin persona detrás): lo usan las
+ * automatizaciones de `automations/`, que corren por un webhook. `null` si la App no está
+ * en el repo o GitHub falla. Nunca lanza.
+ */
+export async function appPullRequest(repo: string, number: number): Promise<AppPrInfo | null> {
+  try {
+    const instId = await installationIdFor(repo);
+    const token = instId ? await installationToken(instId) : null;
+    if (!token) return null;
+    const res = await fetch(`${API}/repos/${repo}/pulls/${Number(number)}`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return null;
+    const p: any = await res.json();
+    return {
+      state: String(p?.state ?? ""),
+      draft: !!p?.draft,
+      author: p?.user?.login ?? null,
+      authorType: p?.user?.type ?? null,
+      head: p?.head?.ref ?? null,
+      headSha: p?.head?.sha ?? null,
+      headRepo: p?.head?.repo?.full_name ?? null,
+      base: p?.base?.ref ?? null,
+      mergeableState: p?.mergeable_state ?? null,
+      url: p?.html_url ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** GET a la API con el JWT de la App (sin instalación). Devuelve `null` si falla. */
 async function appFetch(path: string): Promise<any> {
   const jwt = appJwtOrNull();
@@ -687,7 +734,11 @@ const trimPr = (p: any) => ({
   // El SHA de la cabeza: la Software Factory lo compara antes y después de que @check revise
   // para saber que no empujó nada (`apps/factory-runs.server.ts`).
   headSha: p?.head?.sha,
+  // De dónde sale la rama: si no es el mismo repo es un fork y la App no le puede empujar.
+  headRepo: p?.head?.repo?.full_name ?? null,
   base: p?.base?.ref,
+  // "clean" | "dirty" (conflictos) | "behind" | "blocked" | "unstable" | "unknown" (GitHub lo calcula tarde).
+  mergeableState: p?.mergeable_state,
   changedFiles: p?.changed_files,
   additions: p?.additions,
   deletions: p?.deletions,

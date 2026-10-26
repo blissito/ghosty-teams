@@ -23,6 +23,7 @@ import {
 } from "./factory-flow";
 import { classifyPrRisk, type PrFile } from "./factory-risk";
 import { briefMessage, parseBrief, shouldPostBrief, wantsBrief, type EscalationBrief } from "./factory-brief";
+import { ciRedNote, DEP_RED_FROM_MAIN_HINT, MERGE_FROM_HINT } from "./factory-fix-hints";
 
 export type Run = {
   id: number;
@@ -1805,15 +1806,8 @@ export function mergedMessage(run: Run): string {
   return "```gt-fx\n" + JSON.stringify({ fx: "confetti" }) + "\n```\n" + `🎉 **Pedido terminado:** PR merged. ${run.prUrl ?? ""}`;
 }
 
-/**
- * Cómo se resuelve un PR con conflictos. Va en todo encargo a @build que lo necesite: el de
- * `onPrConflict` y el regreso de @check. Sin él, @build copiaba los archivos de la principal
- * encima SIN commit de merge y GitHub seguía marcando choques (PR #8 de palmera-legal, 3-oct).
- */
-export const MERGE_FROM_HINT =
-  "Fusiona la rama principal en la tuya con github_push_files y `mergeFrom` = la rama principal: es un commit de MERGE de verdad (dos padres). " +
-  "Lo que cambió allá y tú no tocaste entra solo, y en `files` va el contenido final de los archivos que chocan (resuélvelos SIN cambiar el alcance del plan). " +
-  "Copiar los archivos de la principal sin `mergeFrom` NO quita los conflictos: GitHub mira la historia, no el contenido.";
+// Cómo se resuelve un PR con conflictos: vive con los demás textos de arreglo de PR.
+export { MERGE_FROM_HINT } from "./factory-fix-hints";
 
 /** ¿GitHub marca el PR con choques contra su base? `null` si no se sabe (aún lo calcula). */
 export async function prConflicted(sub: string, url: string): Promise<boolean | null> {
@@ -2043,7 +2037,7 @@ export async function onPrCiRed(run: Run, headSha: string | null, failed: string
     const ya = await dbq("SELECT 1 FROM gt_factory_events WHERE run_id = ? AND type = 'ci_red_help' AND json_extract(data_json, '$.sha') IS ?", [run.id, headSha]).catch(() => []);
     if (ya.length) return;
     await logEvent(run.id, "ci_red_help", null, { sha: headSha, por: "dependabot" });
-    await postInThread(run, "check", `⚠️ El CI de este PR de Dependabot salió en rojo (${what}), así que no entra solo. Mira si el mismo check truena en main (entonces no es la subida); si es la subida, «Pedir arreglo a @build» lo corrige en esta rama. ${run.prUrl ?? ""}`);
+    await postInThread(run, "check", `⚠️ El CI de este PR de Dependabot salió en rojo (${what}), así que no entra solo. ${DEP_RED_FROM_MAIN_HINT}; si es la subida, «Pedir arreglo a @build» lo corrige en esta rama. ${run.prUrl ?? ""}`);
     void refreshRoom(run.channelId);
     return;
   }
@@ -2051,7 +2045,7 @@ export async function onPrCiRed(run: Run, headSha: string | null, failed: string
   const origin = String(w?.origin ?? "");
   if (!origin) return pideAyuda("no pude mandarle el encargo a @build");
   await logEvent(run.id, "ci_red", null, { sha: headSha, failed });
-  await addNote(run.id, "plataforma", `El CI del PR falló (${what}). Lee el log con github_workflow_run_logs, corrígelo en la misma rama y no cierres hasta verlo en verde.`);
+  await addNote(run.id, "plataforma", ciRedNote(what));
   await postInThread(run, "plan", `🔧 El CI del PR falló (${what}): se lo regresé a @build.`);
   await reopenWithNotes(run, "plataforma", "", origin, { ci: failed });
 }
