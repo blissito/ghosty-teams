@@ -72,6 +72,11 @@ export async function ensureSchema(): Promise<void> {
           const { armPrWatches } = await import("./pr-watches.server");
           armPrWatches(ns);
         } catch { /* best-effort */ }
+        try {
+          // Mantenimiento programado por repo (automatizaciones de GitHub).
+          const { armMaintenance } = await import("./automations/maintenance.server");
+          armMaintenance(ns);
+        } catch { /* best-effort */ }
         // La guía de uso como nota de la memoria del workspace: visible para el equipo en
         // Memoria y legible por el agente con memory_read. Se siembra aquí porque este es el
         // "arranque" de cada tenant en este proceso; se actualiza sola cuando cambia el texto.
