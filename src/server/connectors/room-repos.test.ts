@@ -71,6 +71,20 @@ describe("alcance de repos por room", () => {
     expect((r as { error: string }).error).toContain("conector no conectado");
   });
 
+  // Sin repo pero con datos privados (repos privados en la búsqueda, gists secretos): en un room
+  // los leería con el token de quien escribió y los verían todos.
+  it("las personales (búsqueda de repos, gists) no corren en un room aunque tenga repos", async () => {
+    for (const t of ["github_search_repos", "github_list_gists", "github_create_gist"]) {
+      const r = await runTool("ana", t, {}, ROOM);
+      expect((r as { error: string }).error, t).toContain("mensaje directo");
+    }
+  });
+
+  it("en DM 1:1 las personales sí pasan", async () => {
+    const r = await runTool("ana", "github_list_gists", {}, DM);
+    expect((r as { error: string }).error).toContain("conector no conectado");
+  });
+
   it("pero en un room sin repos tampoco pasan", async () => {
     listRoomRepos.mockResolvedValue([]);
     const r = await runTool("ana", "github_install_link", {}, ROOM);

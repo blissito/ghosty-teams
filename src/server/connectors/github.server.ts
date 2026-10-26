@@ -636,7 +636,24 @@ export async function allowedRepos(dest: ToolDest | null): Promise<string[] | nu
  * rechazadas para siempre.
  */
 // `github_create_repo`: crear no lee nada de nadie; el repo nuevo es de quien lo pide.
-export const REPOLESS_TOOLS = new Set(["github_list_repos", "github_install_link", "github_create_repo"]);
+export const REPOLESS_TOOLS = new Set([
+  "github_list_repos",
+  "github_install_link",
+  "github_create_repo",
+  "github_get_me",
+  "github_search_users",
+  "github_search_repos",
+  "github_list_gists",
+  "github_get_gist",
+  "github_create_gist",
+]);
+
+/**
+ * Sin repo y con datos privados de la persona (repos privados en una búsqueda, gists secretos):
+ * en un room los leería con SU token y los verían todos. Sólo donde no hay frontera de repos
+ * (DM 1:1); en un room ni se ofrecen ni corren.
+ */
+export const PERSONAL_ONLY_TOOLS = new Set(["github_search_repos", "github_list_gists", "github_get_gist", "github_create_gist"]);
 
 // ── Poda ─────────────────────────────────────────────────────────────────────
 // Un issue o un PR de la API traen ~80 campos, casi todos URLs de la propia API
@@ -721,6 +738,10 @@ export async function ambientContext(
     `github_checkout, github_workflow_runs, github_workflow_run_logs, github_pr_checks. Escritura: github_create_review, github_merge_pr, github_comment, github_update_issue, github_create_issue, ` +
     `github_create_branch, github_write_file, github_push_files, github_delete_file, github_create_pr, github_update_pr, github_mark_ready, github_enable_auto_merge, ` +
     `github_update_branch, github_update_pr_base, github_watch_pr. ` +
+    `También: ramas, colaboradores, releases y tags (github_create_release), etiquetas del repo, ` +
+    `workflows de Actions (github_run_workflow, github_cancel_workflow_run), avisos de code scanning y ` +
+    `secret scanning, rulesets, sub-issues, discussions, fork y borrar repo (github_delete_repo: SIEMPRE ` +
+    `confirma nombrando el repo). ` +
     notaNombres(opts?.toolChannel) +
     `Si te piden "conecta mi repo" o "agrega este repo", contesta con github_install_link. ` +
     `Para CUALQUIER pregunta sobre repos, issues, pull requests o CI de ${sender}, USA estas tools — ` +
@@ -852,6 +873,30 @@ const binaryProps = {
   contentBase64: str("Para binarios chicos: el archivo en base64. En lugar de `content`."),
 };
 const repoProp = { repo: str('Repositorio como "dueño/repo".') };
+
+/** El 403 de `apiWith` viene crudo («GitHub respondió 403»), no traducido como el de `api`. */
+const denied = (r: any) => /\b403\b|Sin permiso|Resource not accessible/i.test(String(r?.error ?? ""));
+
+const trimRelease = (r: any) => ({
+  id: r?.id,
+  tag: r?.tag_name,
+  name: r?.name,
+  draft: !!r?.draft,
+  prerelease: !!r?.prerelease,
+  author: r?.author?.login ?? null,
+  publishedAt: r?.published_at,
+  url: r?.html_url,
+  body: typeof r?.body === "string" ? r.body.slice(0, 4000) : null,
+  assets: (r?.assets ?? []).map((x: any) => ({ name: x?.name, size: x?.size, downloads: x?.download_count, url: x?.browser_download_url })),
+});
+
+const trimLabel = (l: any) => ({ name: l?.name, color: l?.color, description: l?.description ?? null });
+
+/** Gists son permiso de CUENTA, no de repo: no hay instalación de repo a la cual mandar. */
+const gistError = (r: any) =>
+  /Sin permiso/.test(String(r?.error ?? ""))
+    ? { error: `A la GitHub App de Ghosty le falta el permiso de cuenta «Gists». La persona lo acepta en ${MANAGE_URL} (Review request → Accept) cuando lo agreguemos a la App.` }
+    : r;
 
 const ALL_TOOLS: ConnectorTool[] = [
   {
@@ -2260,6 +2305,667 @@ const ALL_TOOLS: ConnectorTool[] = [
               : "El PR salió a nombre del usuario: GitHub NO le va a dejar aprobar su propio PR. Que lo apruebe otra persona.",
           };
     },
+  },  // ── Segundo lote de paridad con el MCP oficial (25-oct): repos, releases, etiquetas,
+  // Actions, seguridad, búsqueda, sub-issues, discussions, gists y rulesets. El contraste
+  // vive en ghosty-studio/docs/claude/github-tools-vs-oficial.md.
+  {
+    name: "github_delete_repo",
+    description:
+      "BORRA un repositorio para siempre (código, issues, PRs, releases). Sólo repos de la persona o de una organización donde es admin. " +
+      "Antes de llamarla confirma con la persona NOMBRANDO el repo («¿borro dueño/repo? no se puede deshacer») y pasa `confirmado: true` sólo si dijo que sí.",
+    inputSchema: {
+      type: "object",
+      properties: { ...repoProp, confirmado: { type: "boolean", description: "Obligatorio en true: la persona confirmó el borrado nombrando el repo." } },
+      required: ["repo", "confirmado"],
+    },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const full = decodeURIComponent(p);
+      if (a.confirmado !== true) {
+        return { error: `Borrar ${full} no se puede deshacer. Pregúntale a la persona «¿borro ${full}?» y vuelve a llamar con confirmado: true sólo si dice que sí.` };
+      }
+      const login = (await readMeta(sub))?.login ?? "";
+      const repo = await api(sub, `/repos/${p}`);
+      if (repo?.error) return repo;
+      const owner = String(repo?.owner?.login ?? "");
+      let suyo = !!login && owner.toLowerCase() === login.toLowerCase();
+      if (!suyo && repo?.owner?.type === "Organization") {
+        const m = await api(sub, `/user/memberships/orgs/${encodeURIComponent(owner)}`);
+        suyo = m?.state === "active" && m?.role === "admin";
+      }
+      if (!suyo) {
+        return { error: `Sólo borro repos de @${login || "la persona"} o de una organización donde es admin. ${full} es de ${owner}: que lo borre su dueño.` };
+      }
+      const r = await api(sub, `/repos/${p}`, { method: "DELETE" });
+      if (r?.error && /Sin permiso/.test(String(r.error))) return missingPermission(p, "Administration: write");
+      return r?.error ? r : { ok: true, deleted: repo?.full_name ?? full };
+    },
+  },
+  {
+    name: "github_fork_repo",
+    description: "Hace un fork de un repo a la cuenta de la persona (o a una de sus organizaciones con `org`). GitHub lo crea en segundo plano: puede tardar unos segundos en tener contenido.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...repoProp,
+        org: str("Opcional: organización destino. Sin ella, la cuenta personal."),
+        name: str("Opcional: nombre del fork (default el mismo)."),
+        defaultBranchOnly: { type: "boolean", description: "Sólo la rama principal (default false)." },
+      },
+      required: ["repo"],
+    },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const body: Record<string, unknown> = {};
+      if (a.org) body.organization = String(a.org).trim();
+      if (a.name) body.name = String(a.name).trim();
+      if (a.defaultBranchOnly === true) body.default_branch_only = true;
+      const r = await api(sub, `/repos/${p}/forks`, { method: "POST", body: JSON.stringify(body) });
+      if (r?.error) return r;
+      return {
+        repo: r?.full_name,
+        url: r?.html_url,
+        defaultBranch: r?.default_branch,
+        private: r?.private,
+        nota: `Si la app de Ghosty está con «Only select repositories», el fork no entra solo: que lo marque en ${MANAGE_URL} para que las demás tools lo alcancen.`,
+      };
+    },
+  },
+  {
+    name: "github_list_branches",
+    description: "Las ramas de un repo (hasta 100), con su último commit y si están protegidas.",
+    inputSchema: { type: "object", properties: { ...repoProp, protected: { type: "boolean", description: "Sólo las protegidas." } }, required: ["repo"] },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const r = await api(sub, `/repos/${p}/branches?per_page=100${a.protected === true ? "&protected=true" : ""}`);
+      if (r?.error) return r;
+      return (Array.isArray(r) ? r : []).map((b: any) => ({ name: b?.name, sha: String(b?.commit?.sha ?? "").slice(0, 12), protected: !!b?.protected }));
+    },
+  },
+  {
+    name: "github_list_collaborators",
+    description: "Quién tiene acceso al repo y con qué rol (read, triage, write, maintain, admin). Requiere que la persona tenga push en el repo.",
+    inputSchema: { type: "object", properties: { ...repoProp, affiliation: str("outside | direct | all. Default all.") }, required: ["repo"] },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const r = await api(sub, `/repos/${p}/collaborators` + qs({ affiliation: a.affiliation, per_page: 100 }, ["affiliation", "per_page"]));
+      if (r?.error) return r;
+      return (Array.isArray(r) ? r : []).map((c: any) => ({ login: c?.login, role: c?.role_name ?? null, admin: !!c?.permissions?.admin }));
+    },
+  },
+  {
+    name: "github_list_releases",
+    description: "Releases del repo, de la más reciente hacia atrás (incluye borradores si la persona puede verlos).",
+    inputSchema: { type: "object", properties: { ...repoProp, limit: { type: "number", description: "1-100, default 10." } }, required: ["repo"] },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const r = await api(sub, `/repos/${p}/releases?per_page=${Math.min(Math.max(Number(a.limit) || 10, 1), 100)}`);
+      if (r?.error) return r;
+      return (Array.isArray(r) ? r : []).map((x: any) => ({ ...trimRelease(x), body: undefined }));
+    },
+  },
+  {
+    name: "github_get_release",
+    description: "Una release con sus notas y archivos adjuntos: la última publicada (sin `tag`) o la de un tag concreto.",
+    inputSchema: { type: "object", properties: { ...repoProp, tag: str("Tag de la release (p. ej. v1.2.0). Sin él, la última publicada.") }, required: ["repo"] },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const tag = String(a.tag ?? "").trim();
+      const r = await api(sub, tag ? `/repos/${p}/releases/tags/${encodeURIComponent(tag)}` : `/repos/${p}/releases/latest`);
+      return r?.error ? r : trimRelease(r);
+    },
+  },
+  {
+    name: "github_create_release",
+    description:
+      "Publica una release sobre un tag (si el tag no existe, GitHub lo crea en `target`). Con `generateNotes` GitHub escribe las notas a partir de los PRs. " +
+      "Una release publicada avisa a quien sigue el repo: confírmalo con la persona antes, o créala como borrador (`draft: true`).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...repoProp,
+        tag: str("Tag, p. ej. v1.2.0."),
+        name: str("Título (default el tag)."),
+        body: str("Notas en Markdown."),
+        target: str("Rama o SHA donde crear el tag si no existe. Default: la principal."),
+        draft: { type: "boolean", description: "Borrador (no se publica ni avisa)." },
+        prerelease: { type: "boolean", description: "Marcar como pre-release." },
+        generateNotes: { type: "boolean", description: "Que GitHub genere las notas." },
+      },
+      required: ["repo", "tag"],
+    },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const tag = String(a.tag ?? "").trim();
+      if (!tag) return { error: "Falta `tag`." };
+      const body: Record<string, unknown> = { tag_name: tag, draft: a.draft === true, prerelease: a.prerelease === true, generate_release_notes: a.generateNotes === true };
+      if (a.name) body.name = String(a.name);
+      if (typeof a.body === "string") body.body = a.body;
+      if (a.target) body.target_commitish = String(a.target);
+      const w = await writeToken(sub, p);
+      if ("error" in w) return w;
+      const r = await apiWith(w.token, `/repos/${p}/releases`, { method: "POST", body: JSON.stringify(body) });
+      if (denied(r)) return missingPermission(p, "Contents: write");
+      return r?.error ? r : { ok: true, ...trimRelease(r), body: undefined, asBot: w.bot };
+    },
+  },
+  {
+    name: "github_list_tags",
+    description: "Tags del repo (hasta 100), del más reciente hacia atrás, con el commit al que apuntan.",
+    inputSchema: { type: "object", properties: { ...repoProp }, required: ["repo"] },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const r = await api(sub, `/repos/${p}/tags?per_page=100`);
+      if (r?.error) return r;
+      return (Array.isArray(r) ? r : []).map((t: any) => ({ tag: t?.name, sha: String(t?.commit?.sha ?? "").slice(0, 12) }));
+    },
+  },
+  {
+    name: "github_get_tag",
+    description: "Detalle de un tag: a qué commit apunta y, si es anotado, su mensaje y quién lo creó.",
+    inputSchema: { type: "object", properties: { ...repoProp, tag: str("Nombre del tag.") }, required: ["repo", "tag"] },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const tag = String(a.tag ?? "").trim();
+      const ref = await api(sub, `/repos/${p}/git/ref/tags/${encodeURIComponent(tag)}`);
+      if (ref?.error) return ref;
+      if (ref?.object?.type !== "tag") return { tag, annotated: false, commit: ref?.object?.sha };
+      const t = await api(sub, `/repos/${p}/git/tags/${ref.object.sha}`);
+      if (t?.error) return t;
+      return { tag, annotated: true, commit: t?.object?.sha, message: t?.message, tagger: t?.tagger?.name, date: t?.tagger?.date };
+    },
+  },
+  {
+    name: "github_list_labels",
+    description: "Las etiquetas del repo (nombre, color, descripción). Úsala antes de etiquetar para no inventar una que no existe.",
+    inputSchema: { type: "object", properties: { ...repoProp }, required: ["repo"] },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const r = await api(sub, `/repos/${p}/labels?per_page=100`);
+      if (r?.error) return r;
+      return (Array.isArray(r) ? r : []).map(trimLabel);
+    },
+  },
+  {
+    name: "github_get_label",
+    description: "Una etiqueta del repo por nombre.",
+    inputSchema: { type: "object", properties: { ...repoProp, name: str("Nombre de la etiqueta.") }, required: ["repo", "name"] },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const r = await api(sub, `/repos/${p}/labels/${encodeURIComponent(String(a.name ?? ""))}`);
+      return r?.error ? r : trimLabel(r);
+    },
+  },
+  {
+    name: "github_label_write",
+    description:
+      "Crea, edita o borra una etiqueta del REPO (no de un issue: para etiquetar un issue usa github_update_issue). " +
+      "Borrarla la quita de todos los issues y PRs que la tengan: confírmalo con la persona antes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...repoProp,
+        action: str("create | update | delete."),
+        name: str("Nombre de la etiqueta (la actual, al editar o borrar)."),
+        newName: str("Al editar: nombre nuevo."),
+        color: str("Hex sin # (p. ej. d73a4a)."),
+        description: str("Descripción corta."),
+      },
+      required: ["repo", "action", "name"],
+    },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const name = String(a.name ?? "").trim();
+      if (!name) return { error: "Falta `name`." };
+      const color = typeof a.color === "string" ? a.color.replace(/^#/, "").trim() : undefined;
+      if (color && !/^[0-9a-f]{6}$/i.test(color)) return { error: "`color` va en hex de 6 dígitos, sin #." };
+      const w = await writeToken(sub, p);
+      if ("error" in w) return w;
+      let r: any;
+      if (a.action === "create") {
+        r = await apiWith(w.token, `/repos/${p}/labels`, { method: "POST", body: JSON.stringify({ name, color: color ?? "ededed", description: a.description }) });
+      } else if (a.action === "update") {
+        const patch: Record<string, unknown> = {};
+        if (a.newName) patch.new_name = String(a.newName).trim();
+        if (color) patch.color = color;
+        if (typeof a.description === "string") patch.description = a.description;
+        if (!Object.keys(patch).length) return { error: "Pasa newName, color o description." };
+        r = await apiWith(w.token, `/repos/${p}/labels/${encodeURIComponent(name)}`, { method: "PATCH", body: JSON.stringify(patch) });
+      } else if (a.action === "delete") {
+        r = await apiWith(w.token, `/repos/${p}/labels/${encodeURIComponent(name)}`, { method: "DELETE" });
+        return denied(r) ? missingPermission(p, "Issues: write") : r?.error ? r : { ok: true, deleted: name };
+      } else {
+        return { error: "`action` va como create, update o delete." };
+      }
+      if (denied(r)) return missingPermission(p, "Issues: write");
+      return r?.error ? r : { ok: true, ...trimLabel(r) };
+    },
+  },
+  {
+    name: "github_list_workflows",
+    description: "Los workflows de GitHub Actions del repo (id, nombre, archivo, si están activos). El id o el archivo es lo que pide github_run_workflow.",
+    inputSchema: { type: "object", properties: { ...repoProp }, required: ["repo"] },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const r = await api(sub, `/repos/${p}/actions/workflows?per_page=100`);
+      if (r?.error) return r;
+      return (r?.workflows ?? []).map((x: any) => ({ id: x?.id, name: x?.name, file: String(x?.path ?? "").split("/").pop(), state: x?.state }));
+    },
+  },
+  {
+    name: "github_get_workflow_run",
+    description: "Un run de Actions con sus jobs: estado, conclusión y el paso que falló en cada uno. Para el log completo usa github_workflow_run_logs.",
+    inputSchema: { type: "object", properties: { ...repoProp, run_id: { type: "number", description: "id del workflow run." } }, required: ["repo", "run_id"] },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const id = Number(a.run_id);
+      const [run, jobs] = await Promise.all([api(sub, `/repos/${p}/actions/runs/${id}`), api(sub, `/repos/${p}/actions/runs/${id}/jobs?per_page=50`)]);
+      if (run?.error) return run;
+      return {
+        id: run?.id,
+        name: run?.name,
+        branch: run?.head_branch,
+        sha: String(run?.head_sha ?? "").slice(0, 12),
+        event: run?.event,
+        status: run?.status,
+        conclusion: run?.conclusion,
+        attempt: run?.run_attempt,
+        at: run?.created_at,
+        url: run?.html_url,
+        jobs: (jobs?.jobs ?? []).map((j: any) => ({
+          name: j?.name,
+          status: j?.status,
+          conclusion: j?.conclusion,
+          failedStep: (j?.steps ?? []).find((s: any) => s?.conclusion === "failure")?.name ?? null,
+        })),
+      };
+    },
+  },
+  {
+    name: "github_run_workflow",
+    description:
+      "Lanza a mano un workflow de Actions que acepte `workflow_dispatch` (deploys, tareas programadas, scripts). `workflow` es el id o el nombre del archivo (deploy.yml) de github_list_workflows. " +
+      "Un workflow puede desplegar o tocar producción: confírmalo con la persona antes. GitHub no devuelve el run: búscalo después con github_workflow_runs.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...repoProp,
+        workflow: str("id o archivo del workflow (p. ej. deploy.yml)."),
+        ref: str("Rama o tag donde correrlo. Default: la principal."),
+        inputs: { type: "object", description: "Inputs del workflow como { nombre: valor } (texto)." },
+      },
+      required: ["repo", "workflow"],
+    },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const wf = String(a.workflow ?? "").trim().split("/").pop() ?? "";
+      if (!wf) return { error: "Falta `workflow`: el id o el archivo (deploy.yml)." };
+      let ref = String(a.ref ?? "").trim();
+      if (!ref) {
+        const repo = await api(sub, `/repos/${p}`);
+        if (repo?.error) return repo;
+        ref = repo?.default_branch;
+      }
+      const inputs: Record<string, string> = {};
+      if (a.inputs && typeof a.inputs === "object") for (const [k, v] of Object.entries(a.inputs)) inputs[k] = typeof v === "string" ? v : JSON.stringify(v);
+      const w = await writeToken(sub, p);
+      if ("error" in w) return w;
+      const r = await apiWith(w.token, `/repos/${p}/actions/workflows/${encodeURIComponent(wf)}/dispatches`, { method: "POST", body: JSON.stringify({ ref, inputs }) });
+      if (denied(r)) return missingPermission(p, "Actions: write");
+      if (r?.error && /\b422\b/.test(String(r.error))) return { error: `${r.error} Lo usual: el workflow no tiene \`on: workflow_dispatch\` en esa rama, o le falta un input obligatorio.` };
+      return r?.error ? r : { ok: true, workflow: wf, ref, nota: "Lanzado. Búscalo en unos segundos con github_workflow_runs." };
+    },
+  },
+  {
+    name: "github_cancel_workflow_run",
+    description: "Cancela un run de Actions que sigue en cola o corriendo. El id sale de github_workflow_runs.",
+    inputSchema: { type: "object", properties: { ...repoProp, run_id: { type: "number", description: "id del workflow run." } }, required: ["repo", "run_id"] },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const w = await writeToken(sub, p);
+      if ("error" in w) return w;
+      const r = await apiWith(w.token, `/repos/${p}/actions/runs/${Number(a.run_id)}/cancel`, { method: "POST" });
+      if (denied(r)) return missingPermission(p, "Actions: write");
+      if (r?.error && /\b409\b/.test(String(r.error))) return { error: "Ese run ya terminó: no hay nada que cancelar." };
+      return r?.error ? r : { ok: true };
+    },
+  },
+  {
+    name: "github_code_scanning_alerts",
+    description: "Avisos de code scanning (CodeQL u otra herramienta) del repo: regla, severidad, archivo y línea. Sin `number`, la lista de abiertos; con `number`, el detalle de uno.",
+    inputSchema: {
+      type: "object",
+      properties: { ...repoProp, number: { type: "number", description: "Opcional: un aviso concreto." }, severity: str("critical | high | medium | low | warning | note | error (opcional).") },
+      required: ["repo"],
+    },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const one = Number(a.number) > 0;
+      const r = await api(
+        sub,
+        one ? `/repos/${p}/code-scanning/alerts/${Number(a.number)}` : `/repos/${p}/code-scanning/alerts` + qs({ state: "open", severity: a.severity, per_page: 50 }, ["state", "severity", "per_page"]),
+      );
+      if (r?.error && /Sin permiso/.test(String(r.error))) return missingPermission(p, "Code scanning alerts: read");
+      if (r?.error) return r;
+      const trim = (x: any) => ({
+        number: x?.number,
+        state: x?.state,
+        rule: x?.rule?.id,
+        summary: x?.rule?.description,
+        severity: x?.rule?.security_severity_level ?? x?.rule?.severity,
+        tool: x?.tool?.name,
+        path: x?.most_recent_instance?.location?.path,
+        line: x?.most_recent_instance?.location?.start_line,
+        url: x?.html_url,
+      });
+      if (one) return { ...trim(r), message: r?.most_recent_instance?.message?.text, help: typeof r?.rule?.help === "string" ? r.rule.help.slice(0, 3000) : null };
+      return (Array.isArray(r) ? r : []).map(trim);
+    },
+  },
+  {
+    name: "github_secret_scanning_alerts",
+    description:
+      "Avisos de secret scanning del repo: qué tipo de secreto se filtró, dónde y si sigue vigente. NUNCA devuelve el secreto en sí. " +
+      "Sin `number`, la lista de abiertos; con `number`, el detalle con archivo y línea.",
+    inputSchema: { type: "object", properties: { ...repoProp, number: { type: "number", description: "Opcional: un aviso concreto." } }, required: ["repo"] },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const one = Number(a.number) > 0;
+      // `hide_secret` además de no copiar el campo: el valor filtrado no entra ni al proceso.
+      const r = await api(sub, one ? `/repos/${p}/secret-scanning/alerts/${Number(a.number)}?hide_secret=true` : `/repos/${p}/secret-scanning/alerts?state=open&per_page=50&hide_secret=true`);
+      if (r?.error && /Sin permiso/.test(String(r.error))) return missingPermission(p, "Secret scanning alerts: read");
+      if (r?.error) return r;
+      const trim = (x: any) => ({
+        number: x?.number,
+        state: x?.state,
+        secretType: x?.secret_type_display_name ?? x?.secret_type,
+        validity: x?.validity ?? null,
+        publiclyLeaked: x?.publicly_leaked ?? null,
+        createdAt: x?.created_at,
+        url: x?.html_url,
+      });
+      if (!one) return (Array.isArray(r) ? r : []).map(trim);
+      const loc = await api(sub, `/repos/${p}/secret-scanning/alerts/${Number(a.number)}/locations?per_page=20`);
+      return {
+        ...trim(r),
+        locations: (Array.isArray(loc) ? loc : []).map((l: any) => ({ type: l?.type, path: l?.details?.path ?? null, line: l?.details?.start_line ?? null, commit: String(l?.details?.commit_sha ?? "").slice(0, 12) || null })),
+      };
+    },
+  },
+  {
+    name: "github_get_me",
+    description: "Quién es la persona en GitHub: su login, nombre y en qué cuentas está instalada la app de Ghosty.",
+    inputSchema: { type: "object", properties: {} },
+    handler: async (sub) => {
+      const [me, inst] = await Promise.all([api(sub, "/user"), api(sub, "/user/installations")]);
+      if (me?.error) return me;
+      return {
+        login: me?.login,
+        name: me?.name,
+        company: me?.company,
+        bio: me?.bio,
+        publicRepos: me?.public_repos,
+        url: me?.html_url,
+        installedOn: ((inst?.installations ?? []) as any[]).map((i) => ({ account: i?.account?.login, allRepos: i?.repository_selection === "all" })),
+      };
+    },
+  },
+  {
+    name: "github_search_repos",
+    description:
+      "Busca repositorios en GitHub con la sintaxis de búsqueda (p. ej. «react router language:typescript stars:>100», «user:blissito»). Sólo en un chat directo con la persona: en un room los resultados (incluidos privados) los verían otros.",
+    inputSchema: { type: "object", properties: { query: str("Qué buscar."), limit: { type: "number", description: "1-50, default 20." } }, required: ["query"] },
+    handler: async (sub, a) => {
+      const q = String(a.query ?? "").trim();
+      if (!q) return { error: "Falta `query`." };
+      const r = await api(sub, `/search/repositories?q=${encodeURIComponent(q)}&per_page=${Math.min(Math.max(Number(a.limit) || 20, 1), 50)}`);
+      if (r?.error) return r;
+      return {
+        total: r?.total_count,
+        repos: (r?.items ?? []).map((x: any) => ({ repo: x?.full_name, description: x?.description, private: x?.private, stars: x?.stargazers_count, language: x?.language, pushedAt: x?.pushed_at, url: x?.html_url })),
+      };
+    },
+  },
+  {
+    name: "github_search_users",
+    description: "Busca personas u organizaciones en GitHub (p. ej. «tom location:mexico», «type:org fixter»).",
+    inputSchema: { type: "object", properties: { query: str("Qué buscar."), limit: { type: "number", description: "1-50, default 20." } }, required: ["query"] },
+    handler: async (sub, a) => {
+      const q = String(a.query ?? "").trim();
+      if (!q) return { error: "Falta `query`." };
+      const r = await api(sub, `/search/users?q=${encodeURIComponent(q)}&per_page=${Math.min(Math.max(Number(a.limit) || 20, 1), 50)}`);
+      if (r?.error) return r;
+      return { total: r?.total_count, users: (r?.items ?? []).map((u: any) => ({ login: u?.login, type: u?.type, url: u?.html_url })) };
+    },
+  },
+  {
+    name: "github_list_sub_issues",
+    description: "Los sub-issues de un issue (la lista de tareas hijas que GitHub muestra debajo).",
+    inputSchema: { type: "object", properties: { ...repoProp, number: { type: "number", description: "Número del issue padre." } }, required: ["repo", "number"] },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const r = await api(sub, `/repos/${p}/issues/${Number(a.number)}/sub_issues?per_page=100`);
+      if (r?.error) return r;
+      return (Array.isArray(r) ? r : []).map((i: any) => ({ number: i?.number, title: i?.title, state: i?.state, assignees: (i?.assignees ?? []).map((x: any) => x?.login), url: i?.html_url }));
+    },
+  },
+  {
+    name: "github_sub_issue_write",
+    description:
+      "Arma la jerarquía de issues: `add` cuelga un issue como sub-issue de otro, `remove` lo desprende (no lo cierra) y `reprioritize` lo mueve de lugar en la lista (con `after` o `before`). Ambos issues del mismo repo.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...repoProp,
+        number: { type: "number", description: "Número del issue padre." },
+        action: str("add | remove | reprioritize."),
+        sub: { type: "number", description: "Número del issue hijo." },
+        after: { type: "number", description: "reprioritize: dejarlo después de este sub-issue (número)." },
+        before: { type: "number", description: "reprioritize: dejarlo antes de este sub-issue (número)." },
+        replaceParent: { type: "boolean", description: "add: si ya tiene otro padre, cambiarlo a este." },
+      },
+      required: ["repo", "number", "action", "sub"],
+    },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      // La API pide el ID interno del issue, no su número: se resuelve aquí para que el modelo
+      // sólo maneje los números que ve.
+      const idOf = async (n: unknown): Promise<number | { error: string }> => {
+        const i = await api(sub, `/repos/${p}/issues/${Number(n)}`);
+        return typeof i?.id === "number" ? i.id : { error: i?.error ?? `No encontré el issue #${n}.` };
+      };
+      const child = await idOf(a.sub);
+      if (typeof child !== "number") return child;
+      const base = `/repos/${p}/issues/${Number(a.number)}`;
+      let path: string;
+      let method: string;
+      const body: Record<string, unknown> = { sub_issue_id: child };
+      if (a.action === "add") {
+        [path, method] = [`${base}/sub_issues`, "POST"];
+        if (a.replaceParent === true) body.replace_parent = true;
+      } else if (a.action === "remove") {
+        [path, method] = [`${base}/sub_issue`, "DELETE"];
+      } else if (a.action === "reprioritize") {
+        [path, method] = [`${base}/sub_issues/priority`, "PATCH"];
+        const anchor = a.after ?? a.before;
+        if (anchor === undefined) return { error: "Pasa `after` o `before`." };
+        const id = await idOf(anchor);
+        if (typeof id !== "number") return id;
+        body[a.after !== undefined ? "after_id" : "before_id"] = id;
+      } else {
+        return { error: "`action` va como add, remove o reprioritize." };
+      }
+      const w = await writeToken(sub, p);
+      if ("error" in w) return w;
+      const r = await apiWith(w.token, path, { method, body: JSON.stringify(body) });
+      if (denied(r)) return missingPermission(p, "Issues: write");
+      return r?.error ? r : { ok: true, parent: Number(a.number), sub: Number(a.sub), action: a.action };
+    },
+  },
+  {
+    name: "github_list_issue_types",
+    description: "Los tipos de issue (Bug, Feature, Task…) que define la organización dueña del repo. Sólo existen en organizaciones, no en cuentas personales.",
+    inputSchema: { type: "object", properties: { ...repoProp }, required: ["repo"] },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const owner = p.split("/")[0];
+      const r = await api(sub, `/orgs/${owner}/issue-types`);
+      if (r?.error && /Sin permiso/.test(String(r.error))) return missingPermission(p, "Issue types: read (organización)");
+      if (r?.error) return { error: `${r.error} Ojo: los tipos de issue sólo existen en organizaciones; si ${decodeURIComponent(owner)} es una cuenta personal, no hay.` };
+      return (Array.isArray(r) ? r : []).map((t: any) => ({ id: t?.id, name: t?.name, description: t?.description, color: t?.color }));
+    },
+  },
+  {
+    name: "github_list_discussions",
+    description: "Las discussions del repo (foro de GitHub), de la más reciente hacia atrás: título, categoría, autor, respuestas y si ya tiene respuesta elegida.",
+    inputSchema: { type: "object", properties: { ...repoProp, limit: { type: "number", description: "1-50, default 20." } }, required: ["repo"] },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const [owner, name] = decodeURIComponent(p).split("/");
+      const d = await graphql(
+        sub,
+        `query($owner:String!,$name:String!,$n:Int!){repository(owner:$owner,name:$name){discussions(first:$n,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{number title author{login} category{name} createdAt updatedAt url isAnswered comments{totalCount}}}}}`,
+        { owner, name, n: Math.min(Math.max(Number(a.limit) || 20, 1), 50) },
+      );
+      if (d?.error) return /not accessible/i.test(String(d.error)) ? missingPermission(p, "Discussions: read") : d;
+      return (d?.repository?.discussions?.nodes ?? []).map((x: any) => ({
+        number: x?.number, title: x?.title, category: x?.category?.name, author: x?.author?.login ?? null,
+        comments: x?.comments?.totalCount, answered: !!x?.isAnswered, updatedAt: x?.updatedAt, url: x?.url,
+      }));
+    },
+  },
+  {
+    name: "github_get_discussion",
+    description: "Una discussion con su texto y sus comentarios (hasta 50), marcando cuál es la respuesta elegida.",
+    inputSchema: { type: "object", properties: { ...repoProp, number: { type: "number", description: "Número de la discussion." } }, required: ["repo", "number"] },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const [owner, name] = decodeURIComponent(p).split("/");
+      const d = await graphql(
+        sub,
+        `query($owner:String!,$name:String!,$num:Int!){repository(owner:$owner,name:$name){discussion(number:$num){number title body author{login} category{name} createdAt url comments(first:50){nodes{author{login} body createdAt isAnswer}}}}}`,
+        { owner, name, num: Number(a.number) },
+      );
+      if (d?.error) return /not accessible/i.test(String(d.error)) ? missingPermission(p, "Discussions: read") : d;
+      const x = d?.repository?.discussion;
+      if (!x) return { error: `No encontré la discussion #${a.number}.` };
+      return {
+        number: x.number, title: x.title, category: x.category?.name, author: x.author?.login ?? null, createdAt: x.createdAt, url: x.url,
+        body: String(x.body ?? "").slice(0, 6000),
+        comments: (x.comments?.nodes ?? []).map((c: any) => ({ author: c?.author?.login ?? null, at: c?.createdAt, answer: !!c?.isAnswer, body: String(c?.body ?? "").slice(0, 2000) })),
+      };
+    },
+  },
+  {
+    name: "github_list_gists",
+    description: "Los gists de la persona (públicos y secretos), del más reciente hacia atrás. Sólo en un chat directo con ella.",
+    inputSchema: { type: "object", properties: { limit: { type: "number", description: "1-100, default 30." } } },
+    handler: async (sub, a) => {
+      const r = await api(sub, `/gists?per_page=${Math.min(Math.max(Number(a.limit) || 30, 1), 100)}`);
+      if (r?.error) return gistError(r);
+      return (Array.isArray(r) ? r : []).map((g: any) => ({ id: g?.id, description: g?.description, public: g?.public, files: Object.keys(g?.files ?? {}), updatedAt: g?.updated_at, url: g?.html_url }));
+    },
+  },
+  {
+    name: "github_get_gist",
+    description: "Un gist con el contenido de sus archivos. Sólo en un chat directo con la persona.",
+    inputSchema: { type: "object", properties: { id: str("id del gist (o su URL).") }, required: ["id"] },
+    handler: async (sub, a) => {
+      const id = String(a.id ?? "").trim().split("/").pop() ?? "";
+      if (!/^[0-9a-f]{5,}$/i.test(id)) return { error: "`id` no parece un id de gist." };
+      const r = await api(sub, `/gists/${id}`);
+      if (r?.error) return gistError(r);
+      return {
+        id: r?.id, description: r?.description, public: r?.public, owner: r?.owner?.login, url: r?.html_url,
+        files: Object.values(r?.files ?? {}).map((f: any) => ({ name: f?.filename, language: f?.language, truncated: !!f?.truncated || String(f?.content ?? "").length > 20000, content: String(f?.content ?? "").slice(0, 20000) })),
+      };
+    },
+  },
+  {
+    name: "github_create_gist",
+    description: "Crea un gist con uno o más archivos. Nace SECRETO (sólo con la liga) salvo `public: true`; uno público lo ve cualquiera, confírmalo con la persona. Sólo en un chat directo con ella.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        description: str("Descripción corta."),
+        public: { type: "boolean", description: "Público (default false)." },
+        files: { type: "array", items: { type: "object", properties: { name: str("Nombre del archivo."), content: str("Contenido.") }, required: ["name", "content"] } },
+      },
+      required: ["files"],
+    },
+    handler: async (sub, a) => {
+      const list = Array.isArray(a.files) ? (a.files as any[]) : [];
+      const files: Record<string, { content: string }> = {};
+      for (const f of list) {
+        const name = String(f?.name ?? "").trim();
+        if (!name || typeof f?.content !== "string" || !f.content) return { error: "Cada archivo lleva `name` y `content` (no vacío)." };
+        files[name] = { content: f.content };
+      }
+      if (!Object.keys(files).length) return { error: "Pasa al menos un archivo en `files`." };
+      const r = await api(sub, "/gists", { method: "POST", body: JSON.stringify({ description: a.description, public: a.public === true, files }) });
+      if (r?.error) return gistError(r);
+      return { ok: true, id: r?.id, public: r?.public, url: r?.html_url };
+    },
+  },
+  {
+    name: "github_list_rulesets",
+    description: "Los rulesets del repo (y los heredados de la organización): reglas que protegen ramas y tags. Con `branch`, en cambio, las reglas que se le aplican HOY a esa rama.",
+    inputSchema: { type: "object", properties: { ...repoProp, branch: str("Opcional: rama concreta.") }, required: ["repo"] },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const branch = String(a.branch ?? "").trim();
+      if (branch) {
+        const r = await api(sub, `/repos/${p}/rules/branches/${encodeURIComponent(branch)}?per_page=100`);
+        if (r?.error) return r;
+        return { branch, rules: (Array.isArray(r) ? r : []).map((x: any) => ({ type: x?.type, rulesetId: x?.ruleset_id, parameters: x?.parameters ?? null })) };
+      }
+      const r = await api(sub, `/repos/${p}/rulesets?includes_parents=true&per_page=100`);
+      if (r?.error && /Sin permiso/.test(String(r.error))) return missingPermission(p, "Administration: read");
+      if (r?.error) return r;
+      return (Array.isArray(r) ? r : []).map((x: any) => ({ id: x?.id, name: x?.name, target: x?.target, enforcement: x?.enforcement, source: x?.source }));
+    },
+  },
+  {
+    name: "github_get_ruleset",
+    description: "Un ruleset completo: a qué ramas o tags aplica, sus reglas y quién puede saltárselas. El id sale de github_list_rulesets.",
+    inputSchema: { type: "object", properties: { ...repoProp, id: { type: "number", description: "id del ruleset." } }, required: ["repo", "id"] },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const r = await api(sub, `/repos/${p}/rulesets/${Number(a.id)}`);
+      if (r?.error && /Sin permiso/.test(String(r.error))) return missingPermission(p, "Administration: read");
+      if (r?.error) return r;
+      return {
+        id: r?.id, name: r?.name, target: r?.target, enforcement: r?.enforcement, source: r?.source,
+        conditions: r?.conditions ?? null,
+        rules: (r?.rules ?? []).map((x: any) => ({ type: x?.type, parameters: x?.parameters ?? null })),
+        bypass: (r?.bypass_actors ?? []).map((b: any) => ({ type: b?.actor_type, id: b?.actor_id, mode: b?.bypass_mode })),
+      };
+    },
   },
 ];
 
@@ -2291,7 +2997,8 @@ export function allTools(): ConnectorTool[] {
 export async function tools(_sub: string, dest: ToolDest | null): Promise<ConnectorTool[]> {
   const allowed = await allowedRepos(dest);
   if (allowed && !allowed.length) return [];
-  return [...ALL_TOOLS, watchTool(dest)];
+  const base = allowed ? ALL_TOOLS.filter((t) => !PERSONAL_ONLY_TOOLS.has(t.name)) : ALL_TOOLS;
+  return [...base, watchTool(dest)];
 }
 
 /**
