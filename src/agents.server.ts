@@ -7,6 +7,7 @@ import { hasIds, nodeIndex } from "./lib/artifact-ids";
 import { extractTodos, renderTodosBlock, stripStepsBlock, stripToolBlock, type TodoItem } from "./lib/ebdoc";
 import { attachTurnFrame, isPlumbing, lastIntent, MAX_STEPS, normalizeStepResult, stepKind, upsertStep, type AgentStep, type BrowserFrame, type StepResult } from "@ghostystudio/computer";
 import { ARTIFACT_DESIGN_GUIDE } from "./server/prompts/artifact-design";
+import { rewriteOwnPresigned } from "./lib/own-storage-url";
 import { parseScope, type ToolScope } from "./server/connectors/tool-token.server";
 
 export type ResolvedAgent = {
@@ -1573,6 +1574,15 @@ async function clockHint(invokerSub?: string): Promise<string> {
 // Las etiquetas viven en `lib/tool-label.ts` y NO aquí: el drawer de Prospección las
 // necesita en el cliente, y este archivo es `.server`.
 import { toolLabel } from "./lib/tool-label";
+
+/**
+ * ¿Este segmento de narración es CONTENIDO y no un paso? Un bloque cercado o una imagen
+ * metidos en la lista de pasos se esconden en el recuadro plegado: el banner de la tanda
+ * (descti, 30-sep) quedó ahí porque el agente lo mostró ANTES de entregar el archivo.
+ */
+export function isContentSegment(x: string): boolean {
+  return x.includes("```") || /!\[[^\]]*\]\([^)\s]+/.test(x);
+}
 
 // `todos` = el plan completo del agente (TodoWrite) cuando la tool es ésa. Ver `gt-todos`.
 /** Progreso completo de un subagente (gs ≥ 2026-10-01). Ver `SubagentState` en lib/ebdoc.ts. */
@@ -3424,8 +3434,8 @@ async function runAgentTurnInner(opts: {
     // como prosa: metida en la lista, la respuesta final quedaría disfrazada de
     // paso — que es como se veía antes, media respuesta con viñeta y media sin.
     const pasos = segs.map((x) => x.trim()).filter(Boolean);
-    // Un paso con bloque cercado no es un paso, es contenido: se deja en prosa.
-    if (!pasos.length || pasos.some((x) => x.includes("```"))) return acc;
+    // Un paso con bloque cercado o con imagen no es un paso, es contenido: se deja en prosa.
+    if (!pasos.length || pasos.some(isContentSegment)) return acc;
     return "```gt-steps\n" + JSON.stringify({ steps: pasos }) + "\n```\n\n" + ultimo.trim();
   };
   const renderBody = (allDone: boolean): string => renderTodos() + renderToolBlock(allDone) + narration();
@@ -3762,7 +3772,7 @@ async function runAgentTurnInner(opts: {
     // `narration()` ya decidió si hay pasos limpios: si los hay, la respuesta es el último
     // segmento; si no (un paso con bloque cercado, o uno solo), la respuesta es todo.
     const pasos = segs.map((x) => x.trim()).filter(Boolean);
-    const conPasos = pasos.length > 0 && !pasos.some((x) => x.includes("```"));
+    const conPasos = pasos.length > 0 && !pasos.some(isContentSegment);
     const respuesta = conPasos ? acc.slice(segStart).trim() : finalText;
     if (respuesta) {
       const shellId = await ensure();
@@ -3773,7 +3783,7 @@ async function runAgentTurnInner(opts: {
       await saveTurnModel(newId);
       // `plan` = la burbuja del turno ya cerrada: el caller la persiste AUTORITATIVA
       // (`setMessageBody`, streaming = 0), o al recargar se vería como turno a medias.
-      return { id: newId, reply: respuesta + attachmentsFooter(), failure: null, toolsCorridas: [...toolsCrudas], plan: { id: shellId, body: planBody } };
+      return { id: newId, reply: rewriteOwnPresigned(respuesta) + attachmentsFooter(), failure: null, toolsCorridas: [...toolsCrudas], plan: { id: shellId, body: planBody } };
     }
   }
   // Body final autoritativo: bloque gt-tools TODO ✅ + texto separado. El caller lo persiste.
@@ -3781,7 +3791,8 @@ async function runAgentTurnInner(opts: {
   await saveTurnModel(finalId);
   return {
     id: finalId,
-    reply: renderToolBlock(true) + finalText + avisoCorte + attachmentsFooter(),
+    // La presignada que pega el agente caduca a 7 días: se guarda ya la ruta que re-firma.
+    reply: renderToolBlock(true) + rewriteOwnPresigned(finalText) + avisoCorte + attachmentsFooter(),
     failure: fallo.message,
     // Sólo importan si murió; el llamador las persiste en ese caso.
     toolsCorridas: [...toolsCrudas],

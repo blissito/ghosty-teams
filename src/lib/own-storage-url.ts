@@ -15,3 +15,14 @@ export function ownStoragePath(url: string | undefined | null): string | null {
     return null;
   }
 }
+
+const MD_LINK = /(!?\[[^\]]*\]\()([^)\s]+)/g;
+
+/** Reescribe en un markdown cada imagen o liga a una presignada propia por su ruta permanente. */
+export function rewriteOwnPresigned(md: string): string {
+  if (!md.includes("X-Amz-")) return md;
+  return md.replace(MD_LINK, (todo, abre: string, url: string) => {
+    const propia = ownStoragePath(url);
+    return propia ? abre + propia : todo;
+  });
+}
