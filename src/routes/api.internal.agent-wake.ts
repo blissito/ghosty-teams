@@ -9,27 +9,12 @@ import { createFileRoute } from "@tanstack/react-router";
 // Firma de partner sobre el CUERPO en crudo (`ts.<rawBody>`), como `api/internal/alert`.
 // El namespace lo resuelve el HOST, como todo lo demás.
 
-async function verify(ts: string, sig: string, rawBody: string): Promise<boolean> {
-  const crypto = await import("node:crypto");
-  const secret = process.env.GHOSTY_PARTNER_SECRET;
-  if (!secret) return false;
-  const expected = crypto.createHmac("sha256", secret).update(`${ts}.${rawBody}`).digest("hex");
-  const a = Buffer.from(sig);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return false;
-  return Math.abs(Math.floor(Date.now() / 1000) - Number(ts)) <= 300;
-}
-
 export const Route = createFileRoute("/api/internal/agent-wake")({
   server: {
     handlers: {
       POST: async ({ request }) => {
         const raw = await request.text();
-        const ok = await verify(
-          request.headers.get("x-ghosty-ts") ?? "",
-          request.headers.get("x-ghosty-sig") ?? "",
-          raw,
-        );
+        const ok = (await import("../server/partner-sig.server")).partnerRequestOk(request, raw);
         if (!ok) return new Response("firma inválida", { status: 403 });
 
         let body: { ref?: string; key?: string; cause?: string; text?: string };

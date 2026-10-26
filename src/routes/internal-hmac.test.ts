@@ -10,9 +10,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 // nadie. Aquí se prueban todas a la vez desde fuera: sin firma, con firma de otro secreto, con
 // firma buena pero vieja (> 300 s) y sin secreto configurado, ninguna contesta 2xx.
 //
-// Dos esquemas de firma conviven: el cuerpo crudo en headers (`${ts}.${rawBody}`) y un literal
-// por recurso en la query (`${ts}.members-admin`). Se mandan los dos en cada petición para que
-// la prueba no dependa de saber cuál usa cada ruta.
+// Todas firman el cuerpo crudo en headers (`${ts}.${rawBody}`, un GET firma `GET <ruta>`), con
+// UNA función compartida (`server/partner-sig.server`). ⚠️ Transición (26-oct): members,
+// announcements y prospeccion-run aceptan aún el literal viejo en la query; se mandan los dos
+// formatos en cada petición para que la prueba no dependa de cuál usa cada ruta.
 
 const here = dirname(fileURLToPath(import.meta.url));
 const routes = readdirSync(here)
@@ -38,10 +39,13 @@ async function handlersOf(file: string): Promise<[string, Handler][]> {
 function request(file: string, method: string, opts: { ts: number; key: string | null }) {
   const raw = JSON.stringify({ ns: "otro-tenant", sub: "u1", channelId: 1, text: "hola", repo: "o/r", delivery: "d1" });
   const ts = String(opts.ts);
-  const bodySig = opts.key !== null ? hmac(opts.key, `${ts}.${raw}`) : "";
+  const path = `/${file.replace(/\.ts$/, "").replace(/\./g, "/")}`;
+  // Un GET firma `GET <ruta>` (no tiene cuerpo).
+  const signedText = method === "GET" ? `GET ${path}` : raw;
+  const bodySig = opts.key !== null ? hmac(opts.key, `${ts}.${signedText}`) : "";
   const lit = LITERAL[file];
   const qsSig = opts.key !== null && lit ? hmac(opts.key, `${ts}.${lit}`) : "";
-  const url = `http://x/${file.replace(/\.ts$/, "").replace(/\./g, "/")}?ts=${ts}&sig=${qsSig}`;
+  const url = `http://x${path}?ts=${ts}&sig=${qsSig}`;
   return new Request(url, {
     method,
     headers: { "x-ghosty-ts": ts, "x-ghosty-sig": bodySig, "content-type": "application/json" },
@@ -81,10 +85,59 @@ describe("firma de partner en api/internal/*", () => {
       it("sin GHOSTY_PARTNER_SECRET en el entorno nada pasa (ni firmando con cadena vacía)", async () => {
         for (const [method, h] of await handlersOf(file)) {
           const res = await h({ request: request(file, method, { ts: now(), key: "" }), params: {} });
-          // prospeccion-run contesta 500 «no secret»; las demás, 403.
-          expect([403, 500], `${method} ${file}`).toContain(res.status);
+          expect(res.status, `${method} ${file}`).toBe(403);
         }
       });
     });
   }
+});
+
+// Las tres rutas que firmaban un literal: el formato nuevo pasa y la misma firma con otro cuerpo no.
+vi.mock("../server/schema.server", () => ({ ensureSchema: async () => {} }));
+vi.mock("../users.server", () => ({
+  listAllMembers: async () => [],
+  preapprovedEmails: async () => [],
+  restoreMember: async () => {},
+}));
+const published: unknown[] = [];
+vi.mock("../server/bus.server", () => ({ publish: (_c: unknown, e: unknown) => void published.push(e), ch: { user: () => "u" } }));
+
+describe("members y prospeccion-run firman el cuerpo", () => {
+  const ts = () => String(Math.floor(Date.now() / 1000));
+  const post = (path: string, raw: string, signedRaw = raw) => {
+    const t = ts();
+    return new Request(`http://x${path}`, { method: "POST", headers: { "x-ghosty-ts": t, "x-ghosty-sig": hmac(SECRET, `${t}.${signedRaw}`) }, body: raw });
+  };
+
+  it("members: GET firmado con su ruta pasa; POST con su cuerpo pasa, con otro cuerpo no", async () => {
+    process.env.GHOSTY_PARTNER_SECRET = SECRET;
+    const h = Object.fromEntries(await handlersOf("api.internal.members.ts"));
+    const t = ts();
+    const get = new Request("http://x/api/internal/members", { headers: { "x-ghosty-ts": t, "x-ghosty-sig": hmac(SECRET, `${t}.GET /api/internal/members`) } });
+    expect((await h.GET({ request: get })).status).toBe(200);
+    const ok = '{"action":"restore","sub":"u1"}';
+    expect((await h.POST({ request: post("/api/internal/members", ok) })).status).toBe(200);
+    expect((await h.POST({ request: post("/api/internal/members", '{"action":"restore","sub":"u2"}', ok) })).status).toBe(403);
+  });
+
+  it("prospeccion-run: la firma cubre el ns del cuerpo", async () => {
+    process.env.GHOSTY_PARTNER_SECRET = SECRET;
+    const h = Object.fromEntries(await handlersOf("api.internal.prospeccion-run.ts"));
+    const ok = '{"ns":"acme","sub":"u1","listId":3,"key":"msg"}';
+    expect((await h.POST({ request: post("/api/internal/prospeccion-run", ok) })).status).toBe(200);
+    expect((await h.POST({ request: post("/api/internal/prospeccion-run", ok.replace("acme", "otro"), ok) })).status).toBe(403);
+    expect(published).toHaveLength(1);
+  });
+});
+
+// ⚠️ Transición (26-oct): mientras gs firma el literal viejo, members sigue aceptándolo. Se borra
+// con `legacyLiteralOk`.
+describe("transición: formato viejo todavía aceptado", () => {
+  it("members GET con ?ts&sig sobre ts.members-admin", async () => {
+    process.env.GHOSTY_PARTNER_SECRET = SECRET;
+    const h = Object.fromEntries(await handlersOf("api.internal.members.ts"));
+    const t = String(Math.floor(Date.now() / 1000));
+    const res = await h.GET({ request: new Request(`http://x/api/internal/members?ts=${t}&sig=${hmac(SECRET, `${t}.members-admin`)}`) });
+    expect(res.status).toBe(200);
+  });
 });

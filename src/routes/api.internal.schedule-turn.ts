@@ -21,17 +21,6 @@ import { createFileRoute } from "@tanstack/react-router";
 
 const PREFIX = "sched:turn:";
 
-async function verify(ts: string, sig: string, rawBody: string): Promise<boolean> {
-  const crypto = await import("node:crypto");
-  const secret = process.env.GHOSTY_PARTNER_SECRET;
-  if (!secret) return false;
-  const expected = crypto.createHmac("sha256", secret).update(`${ts}.${rawBody}`).digest("hex");
-  const a = Buffer.from(sig);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return false;
-  return Math.abs(Math.floor(Date.now() / 1000) - Number(ts)) <= 300;
-}
-
 const bad = (error: string, status = 400) => Response.json({ error }, { status });
 
 type Body = { action?: string; handle?: string; channel?: string | number; parentId?: number | null; text?: string; dueAt?: number; sub?: string; by?: string; id?: string };
@@ -41,7 +30,7 @@ export const Route = createFileRoute("/api/internal/schedule-turn")({
     handlers: {
       POST: async ({ request }) => {
         const raw = await request.text();
-        if (!(await verify(request.headers.get("x-ghosty-ts") ?? "", request.headers.get("x-ghosty-sig") ?? "", raw))) {
+        if (!((await import("../server/partner-sig.server")).partnerRequestOk(request, raw))) {
           return new Response("firma inválida", { status: 403 });
         }
         let body: Body;

@@ -18,17 +18,6 @@ import { createFileRoute } from "@tanstack/react-router";
 // las automatizaciones que cada room prendió para ese repo, SIN esperar: la respuesta a gs no
 // depende de lo que tarde un agente.
 
-async function verify(ts: string, sig: string, rawBody: string): Promise<boolean> {
-  const crypto = await import("node:crypto");
-  const secret = process.env.GHOSTY_PARTNER_SECRET;
-  if (!secret) return false;
-  const expected = crypto.createHmac("sha256", secret).update(`${ts}.${rawBody}`).digest("hex");
-  const a = Buffer.from(sig);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return false;
-  return Math.abs(Math.floor(Date.now() / 1000) - Number(ts)) <= 300;
-}
-
 /** Lo que manda gs (`PrEvent` en app-hook.server.ts). */
 type PrEvent = {
   delivery: string;
@@ -144,7 +133,7 @@ export const Route = createFileRoute("/api/internal/github-event")({
     handlers: {
       POST: async ({ request }) => {
         const raw = await request.text();
-        const ok = await verify(request.headers.get("x-ghosty-ts") ?? "", request.headers.get("x-ghosty-sig") ?? "", raw);
+        const ok = (await import("../server/partner-sig.server")).partnerRequestOk(request, raw);
         if (!ok) return new Response("firma inválida", { status: 403 });
 
         let ev: PrEvent;

@@ -12,20 +12,19 @@ import { createFileRoute } from "@tanstack/react-router";
 // resuelve sola por el host. Por eso la firma NO lleva el slug: el host ya lo dice, y
 // meterlo en el canonical invitaría a creerle al parámetro en vez de al enrutamiento.
 //
-//   GET  /api/internal/members?ts&sig       → { members:[...], preapproved:[email] }
-//   POST /api/internal/members?ts&sig
+// Firma de partner en headers (`x-ghosty-ts`/`x-ghosty-sig`) sobre el cuerpo; el GET firma
+// `GET /api/internal/members`.
+//   GET  /api/internal/members              → { members:[...], preapproved:[email] }
+//   POST /api/internal/members
 //        body {action:"expel"|"restore", sub}     → { ok }
 //        body {action:"allow"|"disallow", email}  → { ok, preapproved }
 
-async function verify(ts: string, sig: string): Promise<boolean> {
-  const crypto = await import("node:crypto");
-  const secret = process.env.GHOSTY_PARTNER_SECRET;
-  if (!secret) return false;
-  const expected = crypto.createHmac("sha256", secret).update(`${ts}.members-admin`).digest("hex");
-  const a = Buffer.from(sig);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return false;
-  return Math.abs(Math.floor(Date.now() / 1000) - Number(ts)) <= 300;
+/** Firma de partner sobre el cuerpo (un GET firma `GET <ruta>`), ver `partner-sig.server`.
+ *  ⚠️ Transición: el formato viejo `ts.members-admin` en la query sólo mientras gs migra. */
+async function signed(request: Request, raw: string | null): Promise<boolean> {
+  const S = await import("../server/partner-sig.server");
+  const msg = raw ?? S.canonicalGet(new URL(request.url).pathname);
+  return S.partnerRequestOk(request, msg) || S.legacyLiteralOk(request, "members-admin");
 }
 
 function unauthorized() {
@@ -36,9 +35,7 @@ export const Route = createFileRoute("/api/internal/members")({
   server: {
     handlers: {
       GET: async ({ request }) => {
-        const url = new URL(request.url);
-        if (!(await verify(url.searchParams.get("ts") ?? "", url.searchParams.get("sig") ?? "")))
-          return unauthorized();
+        if (!(await signed(request, null))) return unauthorized();
 
         // `ensureSchema` antes de leer: la columna `banned` la añade una migración, y en un
         // workspace que nunca la corrió el SELECT reventaría con "no such column".
@@ -61,11 +58,10 @@ export const Route = createFileRoute("/api/internal/members")({
       },
 
       POST: async ({ request }) => {
-        const url = new URL(request.url);
-        if (!(await verify(url.searchParams.get("ts") ?? "", url.searchParams.get("sig") ?? "")))
-          return unauthorized();
+        const raw = await request.text();
+        if (!(await signed(request, raw))) return unauthorized();
 
-        const body = (await request.json().catch(() => ({}))) as {
+        const body = (() => { try { return JSON.parse(raw || "{}"); } catch { return {}; } })() as {
           action?: string;
           sub?: string;
           email?: string;

@@ -17,31 +17,12 @@ import { createFileRoute } from "@tanstack/react-router";
  *  siembra `createWorkspace` junto con general y random. */
 const ROOM = "soporte";
 
-async function verify(ts: string, sig: string, rawBody: string): Promise<boolean> {
-  const crypto = await import("node:crypto");
-  const secret = process.env.GHOSTY_PARTNER_SECRET;
-  if (!secret) return false;
-  // Se firma el CUERPO en crudo, no un literal: un aviso es contenido que se
-  // publica en un room, así que la firma tiene que cubrir lo que se va a
-  // publicar. Con `ts.<recurso>` bastaría capturar UNA firma válida para poder
-  // publicar cualquier texto durante cinco minutos.
-  const expected = crypto.createHmac("sha256", secret).update(`${ts}.${rawBody}`).digest("hex");
-  const a = Buffer.from(sig);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return false;
-  return Math.abs(Math.floor(Date.now() / 1000) - Number(ts)) <= 300;
-}
-
 export const Route = createFileRoute("/api/internal/alert")({
   server: {
     handlers: {
       POST: async ({ request }) => {
         const raw = await request.text();
-        const ok = await verify(
-          request.headers.get("x-ghosty-ts") ?? "",
-          request.headers.get("x-ghosty-sig") ?? "",
-          raw,
-        );
+        const ok = (await import("../server/partner-sig.server")).partnerRequestOk(request, raw);
         if (!ok) return new Response("firma inválida", { status: 403 });
 
         const { title, detail } = JSON.parse(raw) as { title?: string; detail?: string };

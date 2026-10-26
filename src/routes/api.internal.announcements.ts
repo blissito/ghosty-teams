@@ -4,22 +4,19 @@ import { tokenPara } from "../dbq.server";
 // ── Endpoint interno: analytics de novedades (para el admin de gs) ──────────
 // El estado "visto" vive en Teams per-tenant (gt_announcement_seen). Este endpoint
 // AGREGA across namespaces para que gs muestre "quién la vio, en qué workspace" y
-// permita resetear. Firmado con GHOSTY_PARTNER_SECRET (sig=HMAC(ts.announcement-admin)).
+// permita resetear. Firma de partner en headers sobre el cuerpo (el GET firma su ruta).
 // La lista de namespaces viene de ANNOUNCEMENT_NAMESPACES (comma). TODO: descubrirlos
 // dinámicamente en vez de env (ver todo_platform_admin_screens).
 //
-//   GET  /api/internal/announcements?ts&sig            → { reads: [...] }
-//   POST /api/internal/announcements?ts&sig  body {announcementId?, userSub?} → { ok, deleted }
+//   GET  /api/internal/announcements            → { reads: [...] }
+//   POST /api/internal/announcements  body {announcementId?, userSub?} → { ok, deleted }
 
-async function verify(ts: string, sig: string): Promise<boolean> {
-  const crypto = await import("node:crypto");
-  const secret = process.env.GHOSTY_PARTNER_SECRET;
-  if (!secret) return false;
-  const expected = crypto.createHmac("sha256", secret).update(`${ts}.announcement-admin`).digest("hex");
-  const a = Buffer.from(sig);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return false;
-  return Math.abs(Math.floor(Date.now() / 1000) - Number(ts)) <= 300;
+/** Firma de partner sobre el cuerpo (un GET firma `GET <ruta>`), ver `partner-sig.server`.
+ *  ⚠️ Transición: el formato viejo `ts.announcement-admin` en la query sólo mientras gs migra. */
+async function signed(request: Request, raw: string | null): Promise<boolean> {
+  const S = await import("../server/partner-sig.server");
+  const msg = raw ?? S.canonicalGet(new URL(request.url).pathname);
+  return S.partnerRequestOk(request, msg) || S.legacyLiteralOk(request, "announcement-admin");
 }
 
 function namespaces(): string[] {
@@ -68,9 +65,7 @@ export const Route = createFileRoute("/api/internal/announcements")({
   server: {
     handlers: {
       GET: async ({ request }) => {
-        const u = new URL(request.url);
-        if (!(await verify(u.searchParams.get("ts") ?? "", u.searchParams.get("sig") ?? "")))
-          return new Response("firma inválida", { status: 403 });
+        if (!(await signed(request, null))) return new Response("firma inválida", { status: 403 });
         const reads: Array<{ announcementId: string; sub: string; name: string | null; email: string | null; ns: string; seenAt: number }> = [];
         for (const ns of namespaces()) {
           try {
@@ -100,10 +95,9 @@ export const Route = createFileRoute("/api/internal/announcements")({
         return Response.json({ reads });
       },
       POST: async ({ request }) => {
-        const u = new URL(request.url);
-        if (!(await verify(u.searchParams.get("ts") ?? "", u.searchParams.get("sig") ?? "")))
-          return new Response("firma inválida", { status: 403 });
-        const body = (await request.json().catch(() => ({}))) as { announcementId?: string; userSub?: string };
+        const raw = await request.text();
+        if (!(await signed(request, raw))) return new Response("firma inválida", { status: 403 });
+        const body = (() => { try { return JSON.parse(raw || "{}"); } catch { return {}; } })() as { announcementId?: string; userSub?: string };
         let deleted = 0;
         for (const ns of namespaces()) {
           const conds: string[] = [];
