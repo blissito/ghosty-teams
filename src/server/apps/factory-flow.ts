@@ -221,7 +221,7 @@ export type RunView = {
 };
 
 export function viewState(
-  run: { status: RunStatus; requestedBy: string; approvedBy?: string | null; boxWaiting?: boolean },
+  run: { status: RunStatus; requestedBy: string; approvedBy?: string | null; boxWaiting?: boolean; dueAt?: number | null },
   opts: {
     lastActivityAt: number;
     now: number;
@@ -250,6 +250,8 @@ export function viewState(
     case "planning":
       return { column: stale ? "waiting" : "planning", label: stale ? "Sin avanzar" : "Planeando", stale, whoseTurn: stale ? owner : { kind: "agent", handle: "plan" }, primary: stale ? "resume" : "stop" };
     case "plan_review":
+      // Adoptado con hora (lote de alertas): arranca solo, nadie tiene que firmar (se puede antes).
+      if (run.dueAt) return { column: "waiting", label: "Arranca solo", stale: false, whoseTurn: null, primary: "sign" };
       return { column: "waiting", label: "Espera tu firma", stale: false, whoseTurn: owner, primary: "sign" };
     case "building":
       return { column: stale ? "waiting" : "building", label: stale ? "Sin avanzar" : "Construyendo", stale, whoseTurn: stale ? owner : { kind: "agent", handle: "build" }, primary: stale ? "resume" : "stop" };

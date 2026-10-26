@@ -4,6 +4,7 @@
 // (o una persona firma el plan), aquí se cambia el estado y se despierta al rol siguiente
 // con `enqueueWakeup` en el hilo del pedido. Ningún agente decide a quién le toca: así el
 // plan no se construye sin firma y @check no se salta.
+import { parseKindMeta } from "../../lib/factory-kinds";
 import { GITHUB_REPLY_FORMAT } from "./factory-roles";
 import { dbq } from "../../dbq.server";
 import {
@@ -51,7 +52,12 @@ export type Run = {
   boxWaiting?: boolean;
   /** `sprint`, `dependabot`… (NULL en los pedidos sueltos). */
   kind?: string | null;
+  /** Adoptado que arranca solo (unix s): espera en `plan_review` hasta entonces. */
+  dueAt?: number | null;
+  /** Datos del tipo (`kind_meta`): p. ej. las alertas de un pedido de seguridad. */
+  kindMeta?: Record<string, unknown> | null;
 };
+
 
 const toRun = (r: Record<string, any>): Run => ({
   id: Number(r.id),
@@ -73,6 +79,8 @@ const toRun = (r: Record<string, any>): Run => ({
   checkedSha: r.checked_sha ?? null,
   checkScope: r.check_scope ?? null,
   kind: r.kind ?? null,
+  dueAt: r.due_at != null ? Number(r.due_at) : null,
+  kindMeta: parseKindMeta(r.kind_meta),
 });
 
 export async function getRun(id: number): Promise<Run | null> {

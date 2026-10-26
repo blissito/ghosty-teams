@@ -2546,4 +2546,16 @@ export const en: Record<string, string> = {
   "Usar horario del espacio": "Use the space's schedule",
   "Sigue el horario del espacio.": "Follows the space's schedule.",
   "A esa hora @plan revisa este repo y, si encuentra algo, propone un plan que espera firma.": "At that time @plan reviews this repo and, if it finds something, proposes a plan that waits for sign-off.",
+  // Pedidos adoptados por tipo (lib/factory-kinds.ts) y los que arrancan a su hora.
+  "Seguridad: 1 alerta": "Security: 1 alert",
+  "Seguridad: {n} alertas": "Security: {n} alerts",
+  "Seguridad: lote de alertas": "Security: batch of alerts",
+  "Arreglo de CI de #{n}": "CI fix for #{n}",
+  "Arreglo de CI": "CI fix",
+  "Arreglo de dependencia de #{n}": "Dependency fix for #{n}",
+  "Arreglo de dependencia": "Dependency fix",
+  "{n} ya las cubre Dependabot": "{n} already covered by Dependabot",
+  "Arranca solo a las {hora}": "Starts on its own at {hora}",
+  "Arrancar ya": "Start now",
+  "Arranca solo": "Starts on its own",
 };

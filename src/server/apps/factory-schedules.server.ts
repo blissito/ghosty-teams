@@ -203,6 +203,12 @@ export async function sweepTenant(ns: string): Promise<void> {
   await recheckRateLimited().catch(() => {});
   const { adoptOpenDependabotPrs } = await import("./dependabot.server");
   await adoptOpenDependabotPrs(ns);
+  // Adoptados que arrancan a su hora (el lote de alertas de seguridad) y, después, el barrido de
+  // alertas abiertas que nadie cubre (repos con «Arreglar alertas» prendido).
+  const { startDueAdoptedRuns } = await import("./factory-adopt.server");
+  await startDueAdoptedRuns().catch((e) => console.error("[factory] arranques a su hora", e));
+  const { sweepSecurityAlerts } = await import("../automations/security-fix.server");
+  await sweepSecurityAlerts(ns).catch((e) => console.error("[security_fix] barrido", e));
   const rows = await dbq(
     `SELECT * FROM gt_factory_schedules WHERE enabled = 1 AND next_at IS NOT NULL AND next_at <= unixepoch()`,
     [],
