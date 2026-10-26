@@ -12,6 +12,8 @@
 // (`dm.ts`). Estaba duplicado para audio; al sumar los archivos habrían sido
 // cuatro copias del mismo bloque.
 
+import { ownStoragePath } from "../lib/own-storage-url";
+
 export type PublishedAttachment = {
   /** De dónde bajarlo. Opcional: ver `bytes`. */
   url?: string;
@@ -50,6 +52,17 @@ export async function attachPublished(messageId: number, a: PublishedAttachment)
       const r = await fetch(a.url!);
       if (!r.ok) throw new Error(`fetch ${r.status}`);
       bytes = Buffer.from(await r.arrayBuffer());
+    }
+    // El agente suele entregar sin `mime` y con un nombre sin extensión («Banner · hoy toca
+    // tanda»): el adjunto quedaba `application/octet-stream` y la tarjeta salía con el ícono
+    // de documento en vez de la imagen. Lo que manda son los bytes.
+    const sniffed = /^(application\/octet-stream)?$/i.test(a.mime) ? sniffMime(bytes) : null;
+    if (sniffed) {
+      a = {
+        ...a,
+        mime: sniffed.mime,
+        fileName: /\.[a-z0-9]{2,5}$/i.test(a.fileName) ? a.fileName : `${a.fileName}.${sniffed.ext}`,
+      };
     }
     const up = await uploadToEasyBits({
       // `new Uint8Array(bytes)` y no el Buffer pelado: el `ArrayBufferLike` de Node no encaja
@@ -122,6 +135,18 @@ export async function attachPublished(messageId: number, a: PublishedAttachment)
   }
 }
 
+/** Tipo por firma de los primeros bytes; null si no es uno que sepamos pintar. */
+export function sniffMime(b: Buffer): { mime: string; ext: string } | null {
+  const hex = b.subarray(0, 12).toString("hex");
+  if (hex.startsWith("ffd8ff")) return { mime: "image/jpeg", ext: "jpg" };
+  if (hex.startsWith("89504e47")) return { mime: "image/png", ext: "png" };
+  if (hex.startsWith("47494638")) return { mime: "image/gif", ext: "gif" };
+  if (hex.startsWith("52494646") && hex.slice(16, 24) === "57454250") return { mime: "image/webp", ext: "webp" };
+  if (hex.startsWith("25504446")) return { mime: "application/pdf", ext: "pdf" };
+  if (hex.slice(8, 16) === "66747970") return { mime: "video/mp4", ext: "mp4" };
+  return null;
+}
+
 /** Nombre de archivo seguro para el storage, conservando la extensión si trae. */
 export function safeFileName(name: string | undefined, fallback: string): string {
   const base = (name ?? "").trim().replace(/[/\\?%*:|"<>]/g, "-").slice(0, 80);
@@ -190,6 +215,12 @@ export async function rehostMarkdownImages(md: string): Promise<{ md: string; fa
     // Ya es nuestra (o es un data: URI): nada que hacer.
     if (nuevo.has(url) || url.startsWith("/api/attachment/") || url.startsWith("data:")) continue;
     if (failed.includes(url)) continue;
+    // Presignada de nuestro propio bucket: el objeto ya es nuestro, sólo cambia la url.
+    const propia = ownStoragePath(url);
+    if (propia) {
+      nuevo.set(url, propia);
+      continue;
+    }
     try {
       const r = await fetch(url, { signal: AbortSignal.timeout(20_000) });
       if (!r.ok) throw new Error(`fetch ${r.status}`);

@@ -1,6 +1,7 @@
 import { Children, cloneElement, createElement, isValidElement, memo, useRef } from "react";
 import { Streamdown, type StreamdownProps } from "streamdown";
 import * as nodeEmoji from "node-emoji";
+import { ownStoragePath } from "../lib/own-storage-url";
 
 // Streamdown (Vercel) es stream-aware: completa markdown incompleto EN VIVO (tablas/code
 // fences a medio cerrar) mientras entran tokens → sin el parpadeo de react-markdown que la
@@ -258,7 +259,9 @@ export const Markdown = memo(function Markdown(props: MarkdownProps) {
     // ancho de la columna, sin recorte (object-contain). Clic → abre en el PANEL lateral
     // (onImage), no en pestaña nueva; fallback al link si no hay handler. Sin esto una
     // imagen markdown crecía a lo alto de todo el mensaje.
-    img: ({ node, src, alt, ...props }: { node?: unknown; src?: string; alt?: string }) => {
+    img: ({ node, src: rawSrc, alt, ...props }: { node?: unknown; src?: string; alt?: string }) => {
+      // Presignada propia (caduca a 7 días) → ruta que re-firma: los mensajes viejos vuelven a verse.
+      const src = ownStoragePath(rawSrc) ?? rawSrc;
       const cls = "max-h-80 w-auto max-w-full rounded-lg border border-border object-contain";
       const im = (
         <img src={src} alt={alt ?? ""} loading="lazy" decoding="async" className={cls} {...props} />
