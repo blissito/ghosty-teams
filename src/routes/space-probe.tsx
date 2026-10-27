@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, notFound } from "@tanstack/react-router";
 import { ModuleChips, PayButton, SpaceCard, SpaceClosedScreen, TrialStripView, type SpaceStatus } from "../components/SpacePlan";
 
 // Banco de la pantalla «Space cerrado» y de la franja de días — SÓLO en desarrollo (el
@@ -9,6 +9,12 @@ import { ModuleChips, PayButton, SpaceCard, SpaceClosedScreen, TrialStripView, t
 // ?view=owner|born|member|strip|plan · &offer=1 · ?theme=light|dark
 
 export const Route = createFileRoute("/space-probe")({
+  // En producción sólo staff (para revisar el diseño sin un espacio vencido); el resto, 404.
+  beforeLoad: ({ context }) => {
+    if (import.meta.env.DEV) return;
+    const user = (context as { user?: { isStaff?: boolean } | null }).user;
+    if (!user?.isStaff) throw notFound();
+  },
   component: SpaceProbe,
 });
 
