@@ -2565,7 +2565,7 @@ export const en: Record<string, string> = {
   "Tus agentes trabajando con el equipo": "Your agents working alongside the team",
   "Saldo aparte o con tu propia llave": "Credit on top, or bring your own key",
   "Agrégalo luego": "Add it later",
-  "Da agentes a tus clientes con tu marca · precio en una llamada": "Give agents to your clients under your brand · pricing on a call",
+  "Vende agentes de IA con tu marca a tus propios clientes. El precio lo armamos contigo en una llamada.": "Sell AI agents under your brand to your own clients. We set the price with you on a call.",
   "Agendar": "Book a call",
   "Reactivar por {price}/mes": "Reactivate for {price}/mo",
   "Tu prueba terminó, elige tu plan": "Your trial ended, choose your plan",
