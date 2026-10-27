@@ -209,7 +209,7 @@ export function ModuleChips({ modules }: { modules?: SpaceModule[] }) {
             <p className="text-sm font-medium text-ink">{m.name}</p>
             <p className="text-xs text-muted">
               {m.fromMxn == null
-                ? t("A tu medida · empieza con una llamada")
+                ? t("Da agentes a tus clientes con tu marca · precio en una llamada")
                 : `${t("desde {price}/mes", { price: fmt(m.fromMxn) })} · ${t("IVA incluido")}`}
             </p>
           </div>
