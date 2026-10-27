@@ -61,7 +61,7 @@ function SpaceProbe() {
           <div className="mx-auto max-w-md">
             <SpaceCard offer={status.offer} cta={<PayButton status={status} label="Elegir plan" />} />
           </div>
-          <ModuleChips />
+          <ModuleChips modules={status.modules} />
         </div>
       </div>
     );

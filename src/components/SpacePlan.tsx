@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useRouterState } from "@tanstack/react-router";
-import { ArrowRight, Check, Factory, Lock, ShoppingBag, Sparkles, X } from "lucide-react";
+import { ArrowRight, ArrowUpRight, Check, Factory, Handshake, Lock, ShoppingBag, Sparkles, X } from "lucide-react";
 import { useT } from "../i18n";
 import { spaceStatusFn } from "../server/workspaces";
 import { cachedMe } from "../server/auth";
@@ -27,6 +27,28 @@ export type SpaceStatus = {
   payUrl: string;
   checkoutUrl: string;
   studioUrl: string;
+  /** Módulos debajo del Space, armados por gs con su cotizador (MXN al mes, IVA incluido). */
+  modules?: SpaceModule[];
+};
+
+export type SpaceModule = { key: string; name: string; fromMxn: number | null; href: string };
+
+/** Respaldo si gs todavía no manda `modules`: los mismos números que cotiza gs hoy (F1 $1,897
+ *  dentro de `quote()`, Ventas $890 + IVA = $1,032) y la liga de llamada de Partner de /planes. */
+const FALLBACK_MODULES: SpaceModule[] = [
+  { key: "factory", name: "Factory", fromMxn: 1897, href: "https://www.ghosty.studio/planes?factory=F1" },
+  { key: "sales", name: "Sales", fromMxn: 1032, href: "https://www.ghosty.studio/planes?p=sales#planes" },
+  {
+    key: "partner",
+    name: "Partner",
+    fromMxn: null,
+    href: "https://wa.me/527717759013?text=%C2%A1Hola!%20Quiero%20agendar%20una%20llamada%20para%20ser%20Partner%20de%20Ghosty.",
+  },
+];
+const MODULE_ICON: Record<string, React.ReactNode> = {
+  factory: <Factory size={16} />,
+  sales: <ShoppingBag size={16} />,
+  partner: <Handshake size={16} />,
 };
 
 /** Precio del Space en MXN al mes. Es el MISMO número que cobra gs (`quote()`); si allá
@@ -165,25 +187,37 @@ export function SpaceCard({ cta, offer }: { cta?: React.ReactNode; offer?: Space
   );
 }
 
-/** Factory y Sales: una fila discreta. Todavía no se contratan desde aquí; se enseñan
- *  para que el dueño sepa que existen y desde cuánto. */
-export function ModuleChips() {
+/** Factory, Sales y Partner: una fila discreta por módulo, debajo del Space (= Teams). Los
+ *  precios los manda gs (`modules`, de su cotizador, IVA incluido); cada fila lleva a su liga. */
+export function ModuleChips({ modules }: { modules?: SpaceModule[] }) {
   const t = useT();
-  const items = [
-    { icon: <Factory size={16} />, name: "Factory", from: 1897 },
-    { icon: <ShoppingBag size={16} />, name: "Sales", from: 890 },
-  ];
+  const items = modules?.length ? modules : FALLBACK_MODULES;
   return (
     <div className="space-y-2">
       {items.map((m) => (
-        <div key={m.name} className="flex items-center gap-3 rounded-2xl border border-border px-4 py-3">
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-surface-3 text-muted">{m.icon}</span>
+        <a
+          key={m.key}
+          href={m.href}
+          target={m.href.startsWith("https://wa.me/") ? "_blank" : undefined}
+          rel="noreferrer"
+          className="group flex items-center gap-3 rounded-2xl border border-border px-4 py-3 transition hover:border-ink/30"
+        >
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-surface-3 text-muted">
+            {MODULE_ICON[m.key] ?? <Sparkles size={16} />}
+          </span>
           <div className="min-w-0 flex-1">
             <p className="text-sm font-medium text-ink">{m.name}</p>
-            <p className="text-xs text-muted">{t("desde {price}/mes", { price: fmt(m.from) })}</p>
+            <p className="text-xs text-muted">
+              {m.fromMxn == null
+                ? t("A tu medida · empieza con una llamada")
+                : `${t("desde {price}/mes", { price: fmt(m.fromMxn) })} · ${t("IVA incluido")}`}
+            </p>
           </div>
-          <span className="shrink-0 text-[11px] text-faint">{t("Agrégalo luego")}</span>
-        </div>
+          <span className="flex shrink-0 items-center gap-1 text-[11px] text-faint group-hover:text-ink">
+            {m.fromMxn == null ? t("Agendar") : t("Agrégalo luego")}
+            <ArrowUpRight size={12} />
+          </span>
+        </a>
       ))}
     </div>
   );
@@ -248,7 +282,7 @@ export function SpaceClosedScreen({ status, isOwner }: { status: SpaceStatus; is
               <SpaceCard offer={status.offer} cta={<PayButton status={status} />} />
             </section>
             <section className="mt-8">
-              <ModuleChips />
+              <ModuleChips modules={status.modules} />
             </section>
           </>
         ) : null}

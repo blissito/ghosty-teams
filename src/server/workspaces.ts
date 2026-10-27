@@ -243,6 +243,8 @@ export const spaceStatusFn = createServerFn({ method: "GET" }).handler(async () 
       /** Plan del espacio en gs (configurador) y Checkout directo de Stripe, ambos con `return`. */
       payUrl?: string;
       checkoutUrl?: string;
+      /** Módulos que se suman al Space (Factory, Sales, Partner), con precio del cotizador de gs. */
+      modules?: { key: string; name: string; fromMxn: number | null; href: string }[];
     };
     const returnUrl = `https://${slug}.${ROOT}/`;
     // Respaldo por si gs todavía no manda las ligas: mismo destino, armado aquí.
@@ -258,6 +260,7 @@ export const spaceStatusFn = createServerFn({ method: "GET" }).handler(async () 
       daysLeft: typeof j.daysLeft === "number" ? j.daysLeft : null,
       payUrl: j.payUrl ?? planUrl,
       checkoutUrl: j.checkoutUrl ?? `${planUrl}&checkout=1`,
+      modules: Array.isArray(j.modules) ? j.modules : undefined,
       studioUrl: IDP,
     };
   } catch {
