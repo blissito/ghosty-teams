@@ -136,20 +136,20 @@ export function SpaceCard({ cta, offer }: { cta?: React.ReactNode; offer?: Space
           <p className="mt-4 flex flex-wrap items-baseline gap-x-2 gap-y-1">
             <span className="text-lg font-medium text-muted line-through decoration-1">{fmt(SPACE_PRICE)}</span>
             <span className="text-5xl font-bold tracking-tight text-ink">{fmt(o.firstMonth)}</span>
-            <span className="text-sm text-muted">+ IVA {t("tu primer mes")}</span>
+            <span className="text-sm text-muted">{t("tu primer mes")}</span>
           </p>
           <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
             <span className="inline-flex items-center gap-1.5 rounded-full bg-[#9A99EA]/15 px-2.5 py-1 text-xs font-medium text-ink">
               <Sparkles size={12} className={ACCENT} />
               {t("Oferta hasta el {date}", { date: offerDate(o.until) })}
             </span>
-            <span className="text-xs text-muted">{t("luego {price} + IVA al mes", { price: fmt(SPACE_PRICE) })}</span>
+            <span className="text-xs text-muted">{t("luego {price} al mes", { price: fmt(SPACE_PRICE) })} · {t("IVA incluido")}</span>
           </div>
         </>
       ) : (
         <p className="mt-4 flex items-baseline gap-1.5">
           <span className="text-5xl font-bold tracking-tight text-ink">{fmt(SPACE_PRICE)}</span>
-          <span className="text-sm text-muted">MXN + IVA {t("al mes")}</span>
+          <span className="text-sm text-muted">MXN {t("al mes")} · {t("IVA incluido")}</span>
         </p>
       )}
       <ul className="mt-6 space-y-3">
