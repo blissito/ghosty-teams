@@ -239,6 +239,8 @@ export const spaceStatusFn = createServerFn({ method: "GET" }).handler(async () 
       offer?: { percent: number; firstMonth: number; until: string } | null;
       /** Nació cerrado: el dueño ya había usado su prueba en otro Space. */
       bornClosed?: boolean;
+      /** Referencia en USD de los precios del Space (el cobro sigue en MXN). */
+      usdRef?: { planPrice: number; firstMonth: number | null } | null;
       daysLeft?: number | null;
       /** Plan del espacio en gs (configurador) y Checkout directo de Stripe, ambos con `return`. */
       payUrl?: string;
@@ -257,6 +259,7 @@ export const spaceStatusFn = createServerFn({ method: "GET" }).handler(async () 
       trialExpired: !!j.trialExpired,
       bornClosed: !!j.bornClosed,
       offer: j.offer ?? null,
+      usdRef: j.usdRef ?? null,
       daysLeft: typeof j.daysLeft === "number" ? j.daysLeft : null,
       payUrl: j.payUrl ?? planUrl,
       checkoutUrl: j.checkoutUrl ?? `${planUrl}&checkout=1`,

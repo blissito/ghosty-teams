@@ -43,7 +43,9 @@ function SpaceProbe() {
     const theme = q.get("theme");
     if (theme) document.documentElement.setAttribute("data-theme", theme);
   }, []);
-  const status: SpaceStatus = offer ? { ...DEMO, offer: OFFER } : DEMO;
+  const status: SpaceStatus = offer
+    ? { ...DEMO, offer: OFFER, usdRef: { planPrice: 40, firstMonth: 20 } }
+    : { ...DEMO, usdRef: { planPrice: 40, firstMonth: null } };
   if (view === "born") return <SpaceClosedScreen status={{ ...status, bornClosed: true }} isOwner />;
   if (view === "member") return <SpaceClosedScreen status={status} isOwner={false} />;
   if (view === "strip")

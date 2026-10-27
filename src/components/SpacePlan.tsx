@@ -27,6 +27,9 @@ export type SpaceStatus = {
   payUrl: string;
   checkoutUrl: string;
   studioUrl: string;
+  /** Referencia en dólares (de `usdFromMxn` de gs, la de /planes); el cobro sigue en MXN.
+   *  Ausente = no se pinta nada. */
+  usdRef?: { planPrice: number; firstMonth: number | null } | null;
   /** Módulos debajo del Space, armados por gs con su cotizador (MXN al mes, IVA incluido). */
   modules?: SpaceModule[];
 };
@@ -139,9 +142,20 @@ const CTA = "bg-[#9A99EA] text-[#191A20] hover:bg-[#8483E0]";
 const ACCENT = "text-[#8483E0]";
 
 /** Card protagonista: el Space. Es lo único que se cobra hoy. */
-export function SpaceCard({ cta, offer }: { cta?: React.ReactNode; offer?: SpaceOffer | null }) {
+export function SpaceCard({
+  cta,
+  offer,
+  usdRef,
+}: {
+  cta?: React.ReactNode;
+  offer?: SpaceOffer | null;
+  usdRef?: SpaceStatus["usdRef"];
+}) {
   const t = useT();
   const o = activeOffer(offer);
+  // «(≈ US$40)» chico y gris; sin dato de gs no se inventa la conversión.
+  const usd = (n: number | null | undefined) =>
+    n && n > 0 ? <span className="text-faint"> (≈ US${n.toLocaleString("en-US")})</span> : null;
   const perks = [
     t("Rooms, hilos y documentos de todo tu equipo"),
     t("Tus agentes trabajando con el equipo"),
@@ -158,20 +172,29 @@ export function SpaceCard({ cta, offer }: { cta?: React.ReactNode; offer?: Space
           <p className="mt-4 flex flex-wrap items-baseline gap-x-2 gap-y-1">
             <span className="text-lg font-medium text-muted line-through decoration-1">{fmt(SPACE_PRICE)}</span>
             <span className="text-5xl font-bold tracking-tight text-ink">{fmt(o.firstMonth)}</span>
-            <span className="text-sm text-muted">{t("tu primer mes")}</span>
+            <span className="text-sm text-muted">
+              MXN {t("tu primer mes")}
+              {usd(usdRef?.firstMonth)}
+            </span>
           </p>
           <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
             <span className="inline-flex items-center gap-1.5 rounded-full bg-[#9A99EA]/15 px-2.5 py-1 text-xs font-medium text-ink">
               <Sparkles size={12} className={ACCENT} />
               {t("Oferta hasta el {date}", { date: offerDate(o.until) })}
             </span>
-            <span className="text-xs text-muted">{t("luego {price} al mes", { price: fmt(SPACE_PRICE) })} · {t("IVA incluido")}</span>
+            <span className="text-xs text-muted">
+              {t("luego {price} al mes", { price: `${fmt(SPACE_PRICE)} MXN` })}
+              {usdRef?.planPrice ? ` (≈ US$${usdRef.planPrice.toLocaleString("en-US")})` : ""} · {t("IVA incluido")}
+            </span>
           </div>
         </>
       ) : (
-        <p className="mt-4 flex items-baseline gap-1.5">
+        <p className="mt-4 flex flex-wrap items-baseline gap-x-1.5 gap-y-1">
           <span className="text-5xl font-bold tracking-tight text-ink">{fmt(SPACE_PRICE)}</span>
-          <span className="text-sm text-muted">MXN {t("al mes")} · {t("IVA incluido")}</span>
+          <span className="text-sm text-muted">
+            MXN {t("al mes")}
+            {usd(usdRef?.planPrice)} · {t("IVA incluido")}
+          </span>
         </p>
       )}
       <ul className="mt-6 space-y-3">
@@ -279,7 +302,7 @@ export function SpaceClosedScreen({ status, isOwner }: { status: SpaceStatus; is
         {isOwner ? (
           <>
             <section className="mt-10">
-              <SpaceCard offer={status.offer} cta={<PayButton status={status} />} />
+              <SpaceCard offer={status.offer} usdRef={status.usdRef} cta={<PayButton status={status} />} />
             </section>
             <section className="mt-8">
               <ModuleChips modules={status.modules} />
