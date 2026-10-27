@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as SpaceProbeRouteImport } from './routes/space-probe'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as MemoryRouteImport } from './routes/memory'
 import { Route as LoginRouteImport } from './routes/login'
@@ -95,6 +96,11 @@ import { Route as ApiCollabDocIdStateRouteImport } from './routes/api.collab.$do
 import { Route as ApiCollabDocIdSessionEndRouteImport } from './routes/api.collab.$docId.session-end'
 import { Route as ApiHooksWhatsappTokenMessageRouteImport } from './routes/api.hooks.whatsapp.$token.message'
 
+const SpaceProbeRoute = SpaceProbeRouteImport.update({
+  id: '/space-probe',
+  path: '/space-probe',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SetupRoute = SetupRouteImport.update({
   id: '/setup',
   path: '/setup',
@@ -545,6 +551,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/memory': typeof MemoryRoute
   '/setup': typeof SetupRouteWithChildren
+  '/space-probe': typeof SpaceProbeRoute
   '/api/agent-asset': typeof ApiAgentAssetRoute
   '/api/brand-css': typeof ApiBrandCssRoute
   '/api/brand-logo': typeof ApiBrandLogoRoute
@@ -631,6 +638,7 @@ export interface FileRoutesByTo {
   '/forms': typeof FormsRoute
   '/login': typeof LoginRoute
   '/memory': typeof MemoryRoute
+  '/space-probe': typeof SpaceProbeRoute
   '/api/agent-asset': typeof ApiAgentAssetRoute
   '/api/brand-css': typeof ApiBrandCssRoute
   '/api/brand-logo': typeof ApiBrandLogoRoute
@@ -719,6 +727,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/memory': typeof MemoryRoute
   '/setup': typeof SetupRouteWithChildren
+  '/space-probe': typeof SpaceProbeRoute
   '/api/agent-asset': typeof ApiAgentAssetRoute
   '/api/brand-css': typeof ApiBrandCssRoute
   '/api/brand-logo': typeof ApiBrandLogoRoute
@@ -808,6 +817,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/memory'
     | '/setup'
+    | '/space-probe'
     | '/api/agent-asset'
     | '/api/brand-css'
     | '/api/brand-logo'
@@ -894,6 +904,7 @@ export interface FileRouteTypes {
     | '/forms'
     | '/login'
     | '/memory'
+    | '/space-probe'
     | '/api/agent-asset'
     | '/api/brand-css'
     | '/api/brand-logo'
@@ -981,6 +992,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/memory'
     | '/setup'
+    | '/space-probe'
     | '/api/agent-asset'
     | '/api/brand-css'
     | '/api/brand-logo'
@@ -1069,6 +1081,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   MemoryRoute: typeof MemoryRoute
   SetupRoute: typeof SetupRouteWithChildren
+  SpaceProbeRoute: typeof SpaceProbeRoute
   ApiAgentAssetRoute: typeof ApiAgentAssetRoute
   ApiBrandCssRoute: typeof ApiBrandCssRoute
   ApiBrandLogoRoute: typeof ApiBrandLogoRoute
@@ -1139,6 +1152,13 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/space-probe': {
+      id: '/space-probe'
+      path: '/space-probe'
+      fullPath: '/space-probe'
+      preLoaderRoute: typeof SpaceProbeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/setup': {
       id: '/setup'
       path: '/setup'
@@ -1781,6 +1801,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   MemoryRoute: MemoryRoute,
   SetupRoute: SetupRouteWithChildren,
+  SpaceProbeRoute: SpaceProbeRoute,
   ApiAgentAssetRoute: ApiAgentAssetRoute,
   ApiBrandCssRoute: ApiBrandCssRoute,
   ApiBrandLogoRoute: ApiBrandLogoRoute,

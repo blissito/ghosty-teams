@@ -16,6 +16,7 @@
 import type { MediaPart, SubEvent, ToolEvent, TruncatedEvent } from "../agents.server";
 import type { TodoItem } from "../lib/ebdoc";
 import { cleanStepResult, type StepResult } from "@ghostystudio/computer";
+import { denialText } from "./ghosty-runtime.server";
 
 /** El `content` de un TOOL_CALL_RESULT: gs manda ahí el `result` del worker en JSON (vacío si no hay). */
 function resultOf(content: unknown): StepResult | undefined {
@@ -125,9 +126,11 @@ export async function httpErrorOf(res: Response): Promise<AguiHttpError> {
   let code = "http";
   let message = raw.slice(0, 300);
   try {
-    const j = JSON.parse(raw) as { error?: string; message?: string };
+    const j = JSON.parse(raw) as { error?: string; message?: string; setupUrl?: string; payUrl?: string };
     code = j.error || code;
     message = j.message || j.error || message;
+    // 402: es lo que el agente dice en el chat (guía con saltos y su liga).
+    if (res.status === 402 && j.message) message = denialText(j);
   } catch { /* cuerpo no-JSON */ }
   const ra = Number(res.headers.get("retry-after"));
   return new AguiHttpError(res.status, code, message, ra > 0 ? ra * 1000 : undefined);

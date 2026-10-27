@@ -205,3 +205,62 @@ export const workspaceUsageFn = createServerFn({ method: "GET" }).handler(async 
     return null;
   }
 });
+
+// Estado de la prueba del espacio, para la pantalla «Space cerrado» y la franja de días.
+// Misma fuente que el tab de Uso (`internal/workspace-usage`), pero sin plegar agentes:
+// aquí sólo importa si la prueba sigue viva. La decisión (`trialExpired`) viene RESUELTA
+// de gs, igual que el candado del turno, para que las dos no puedan contradecirse.
+//
+// Si gs no contesta, devuelve null y NO se cierra nada: un hipo de red no puede tapar
+// el espacio de un cliente que pagó.
+export const spaceStatusFn = createServerFn({ method: "GET" }).handler(async () => {
+  const IDP = process.env.GHOSTY_IDENTITY_URL ?? "https://www.ghosty.studio";
+  const ROOT = process.env.TEAMS_ROOT_DOMAIN ?? "teams.ghosty.studio";
+  const { currentSlug } = await import("./tenant.server");
+  const slug = await currentSlug();
+  if (!slug) return null;
+  try {
+    const crypto = await import("node:crypto");
+    const ts = Math.floor(Date.now() / 1000);
+    const sig = crypto
+      .createHmac("sha256", process.env.GHOSTY_PARTNER_SECRET!)
+      .update(`${ts}.${slug}`)
+      .digest("hex");
+    const res = await fetch(`${IDP}/internal/workspace-usage/${encodeURIComponent(slug)}?ts=${ts}&sig=${sig}`, {
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return null;
+    const j = (await res.json()) as {
+      plan?: string;
+      isTrial?: boolean;
+      trialEndsAt?: string | null;
+      trialExpired?: boolean;
+      /** Oferta del primer mes: `firstMonth` en MXN, `until` ISO. */
+      offer?: { percent: number; firstMonth: number; until: string } | null;
+      /** Nació cerrado: el dueño ya había usado su prueba en otro Space. */
+      bornClosed?: boolean;
+      daysLeft?: number | null;
+      /** Plan del espacio en gs (configurador) y Checkout directo de Stripe, ambos con `return`. */
+      payUrl?: string;
+      checkoutUrl?: string;
+    };
+    const returnUrl = `https://${slug}.${ROOT}/`;
+    // Respaldo por si gs todavía no manda las ligas: mismo destino, armado aquí.
+    const planUrl = `${IDP}/app/workspaces/${encodeURIComponent(slug)}/plan?return=${encodeURIComponent(returnUrl)}`;
+    return {
+      slug,
+      plan: j.plan ?? "",
+      isTrial: !!j.isTrial,
+      trialEndsAt: j.trialEndsAt ?? null,
+      trialExpired: !!j.trialExpired,
+      bornClosed: !!j.bornClosed,
+      offer: j.offer ?? null,
+      daysLeft: typeof j.daysLeft === "number" ? j.daysLeft : null,
+      payUrl: j.payUrl ?? planUrl,
+      checkoutUrl: j.checkoutUrl ?? `${planUrl}&checkout=1`,
+      studioUrl: IDP,
+    };
+  } catch {
+    return null;
+  }
+});

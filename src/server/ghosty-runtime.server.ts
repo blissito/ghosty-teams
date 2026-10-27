@@ -88,7 +88,25 @@ export type TurnDenial = {
   included?: number;
   resetsAt?: string;
   paidUntil?: string;
+  /** `trial_expired`: a dónde va el dueño a pagar. `own_key_required`: dónde pega su llave. */
+  payUrl?: string;
+  setupUrl?: string;
 };
+
+/**
+ * El texto de un 402 tal como lo dice el agente en el chat. gs ya lo manda en español;
+ * aquí sólo se cuida que se LEA: los saltos sencillos de gs se vuelven saltos duros de
+ * markdown (si no, la guía de varios pasos sale en un solo renglón) y, si el texto no trae
+ * la liga que viene aparte, se agrega al final para que siempre haya a dónde ir.
+ */
+export function denialText(d: { message?: string | null; setupUrl?: string; payUrl?: string } | null | undefined): string {
+  let text = (d?.message || "").trim() || "Este agente se quedó sin saldo.";
+  text = text.replace(/([^\n])\n(?!\n)/g, "$1  \n");
+  for (const url of [d?.setupUrl, d?.payUrl]) {
+    if (url && !text.includes(url)) text += `\n\n${url}`;
+  }
+  return text;
+}
 
 /**
  * ¿Puede correr este turno? Sólo hace falta preguntarlo para los agentes **ACP**.

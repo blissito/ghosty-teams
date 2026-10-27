@@ -258,6 +258,7 @@ import {
   useAgentMeta,
 } from "../components/chat/message";
 import { AgentBot, type AgentBotStatus } from "../components/AgentBot";
+import { TrialStrip } from "../components/SpacePlan";
 import { localTurnStart } from "../components/chat/message";
 import type {
   Attach,
@@ -7797,6 +7798,7 @@ function Flow({
         </div>
       </header>
       <CallBanner h={call} />
+      <TrialStrip isOwner={!!me?.isOwner} />
       {pins.length > 0 && <PinnedBar pins={pins} onJump={jumpTo} />}
       {/* overflow-anchor:none → desactiva el scroll-anchoring nativo del navegador. Al cargar
           una imagen ARRIBA del viewport el browser movía scrollTop para conservar la vista, lo
@@ -8179,6 +8181,7 @@ function DmView({
         <DocsButton channelId={0} channelSlug="" dmId={dmId} />
       </header>
       {!isAgentDm && <CallBanner h={call} />}
+      <TrialStrip isOwner={!!me?.isOwner} />
       {/* overflow-anchor:none → desactiva el scroll-anchoring nativo del navegador. Al cargar
           una imagen ARRIBA del viewport el browser movía scrollTop para conservar la vista, lo
           que disparaba onScroll → apagaba `stick` a media carga y el ResizeObserver dejaba de

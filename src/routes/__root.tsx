@@ -8,6 +8,7 @@ import { cachedMe } from '../server/auth'
 import { registerSW } from '../utils/pwa-install'
 import { InstallAppBanner } from '../components/InstallAppBanner'
 import { CallLayer } from '../components/CallLayer'
+import { SpaceGate } from '../components/SpacePlan'
 import { LocaleProvider, DEFAULT_LOCALE } from '../i18n'
 import { THEME_BOOT, watchSystemScheme, loadBrandPalette } from '../utils/theme'
 
@@ -47,7 +48,9 @@ export const Route = createRootRoute({
       // Banco del panel de Marca, misma razón y mismo candado (sólo DEV): el editor vive
       // dentro del modal de Ajustes y ajustarle el layout a base de deploys es justo lo
       // que no queremos volver a hacer.
-      (import.meta.env.DEV && location.pathname.startsWith('/brand-probe'))
+      (import.meta.env.DEV && location.pathname.startsWith('/brand-probe')) ||
+      // Banco de la pantalla «Space cerrado» (SpacePlan.tsx), mismo candado.
+      (import.meta.env.DEV && location.pathname.startsWith('/space-probe'))
     // Guard de tenant (solo SSR → barato, sin round-trips en cada nav de cliente):
     // si caes en el subdominio de un workspace que ya no existe (borrado) o del que
     // el resolver no sabe, te mandamos al PORTAL en vez de un shell roto / label
@@ -188,6 +191,9 @@ function RootDocument({ children }: { children: React.ReactNode }) {
           {/* Llamada + avisos de entrante, GLOBALES: RootDocument no se desmonta al
               navegar, así que ir a /forms o a un documento ya no cuelga la llamada. */}
           <CallLayer />
+          {/* Prueba vencida → «Space cerrado» encima de todo. No borra ni desmonta nada:
+              tapa y manda al dueño a pagar. */}
+          <SpaceGate />
         </LocaleProvider>
         <Scripts />
       </body>

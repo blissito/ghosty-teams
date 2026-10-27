@@ -1833,11 +1833,12 @@ export async function callAgentBackendStream(
     // Se DICE, no se lanza: quedarse sin saldo es una respuesta legítima del turno. Como
     // excepción salía la burbuja roja de "falló el agente", que manda a diagnosticar un
     // servicio que está perfectamente bien.
-    const { turnDenial } = await import("./server/ghosty-runtime.server");
+    const { turnDenial, denialText } = await import("./server/ghosty-runtime.server");
     const negado = agent.backend.id ? await turnDenial(agent.backend.id) : null;
     if (negado) {
-      await onChunk(negado.message);
-      return negado.message;
+      const texto = denialText(negado);
+      await onChunk(texto);
+      return texto;
     }
     // La persona ya NO se antepone al texto: viaja en su propio bloque (ver más abajo). Iba
     // pegada al mensaje entre corchetes, que es exactamente la forma que el modelo confunde
@@ -2571,11 +2572,8 @@ export async function callAgentBackendStream(
     // nadie leía. El texto ya viene en español desde Studio, armado por `turnGate`, que es
     // quien sabe si la bolsa es propia o compartida y con cuántos.
     if (res.status === 402) {
-      const aviso = await res
-        .json()
-        .then((j: { message?: string }) => j?.message)
-        .catch(() => null);
-      const texto = aviso || "Este agente se quedó sin saldo.";
+      const { denialText } = await import("./server/ghosty-runtime.server");
+      const texto = denialText(await res.json().catch(() => null));
       await onChunk(texto);
       return texto;
     }
@@ -3845,9 +3843,9 @@ export async function callAgentBackend(
     // El mismo gate que el camino de streaming, y por la misma razón: un turno ACP no pasa
     // por Studio. Los dos caminos o ninguno — dejarlo sólo en uno es un bypass con la
     // puerta de al lado abierta.
-    const { turnDenial } = await import("./server/ghosty-runtime.server");
+    const { turnDenial, denialText } = await import("./server/ghosty-runtime.server");
     const negado = agent.backend.id ? await turnDenial(agent.backend.id) : null;
-    if (negado) return negado.message;
+    if (negado) return denialText(negado);
     try {
       const backend = agent.backend;
       const r = await runAcpTurn({
