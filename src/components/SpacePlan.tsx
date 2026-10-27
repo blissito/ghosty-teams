@@ -200,7 +200,7 @@ export function ModuleChips({ modules }: { modules?: SpaceModule[] }) {
           href={m.href}
           target={m.href.startsWith("https://wa.me/") ? "_blank" : undefined}
           rel="noreferrer"
-          className="group flex items-center gap-3 rounded-2xl border border-border px-4 py-3 transition hover:border-ink/30"
+          className="group flex items-center gap-3 rounded-2xl border border-border bg-card px-4 py-3 transition hover:border-ink/30"
         >
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-surface-3 text-muted">
             {MODULE_ICON[m.key] ?? <Sparkles size={16} />}
