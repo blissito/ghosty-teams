@@ -15,6 +15,7 @@ import { useLocale, useT } from "../i18n";
 import { intlLocale } from "../i18n.core";
 import { me } from "../server/auth";
 import {
+  factoryMergeFn,
   factoryOverviewFn,
   factoryProposeSprintFn,
   factoryStartEvalFn,
@@ -187,6 +188,42 @@ const HINT: Record<string, string> = {
 };
 
 /** «¿Qué quieres lograr?» → @plan propone el sprint como borrador en el room de la fábrica. */
+/**
+ * «Mezclar» en la fila: lo listo para merge se decide desde la bandeja, sin abrir el hilo (como
+ * Devin Review o la lista de PRs de GitHub). Si el CI sigue corriendo queda en cola; si algo lo
+ * impide (preview pendiente, conflicto) el motivo sale en la fila y la decisión se toma en el hilo.
+ */
+function MergeButton({ runId, onDone }: { runId: number; onDone: () => void }) {
+  const t = useT();
+  const [state, setState] = useState<"idle" | "busy" | "queued" | "done">("idle");
+  const [error, setError] = useState<string | null>(null);
+  const merge = async () => {
+    setState("busy");
+    setError(null);
+    try {
+      const r = await factoryMergeFn({ data: { runId } });
+      setState(r.queued ? "queued" : "done");
+      onDone();
+    } catch (e) {
+      setState("idle");
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+  if (state === "queued") return <span className="relative z-10 shrink-0 text-xs text-muted">{t("En cola")}</span>;
+  if (state === "done") return <span className="relative z-10 shrink-0 text-xs text-violet-700 dark:text-violet-300">{t("Mezclado")}</span>;
+  return (
+    <button
+      type="button"
+      onClick={merge}
+      disabled={state === "busy"}
+      title={error ?? undefined}
+      className={`relative z-10 shrink-0 rounded-md px-2 py-0.5 text-xs font-semibold ${error ? "bg-red-500/12 text-red-600 dark:text-red-400" : "bg-violet-600/15 text-violet-700 hover:bg-violet-600/25 dark:text-violet-300"} disabled:opacity-60`}
+    >
+      {state === "busy" ? t("Mezclando…") : error ? t("No entró") : t("Mezclar")}
+    </button>
+  );
+}
+
 function NewSprint({ roomId, roomSlug, repos }: { roomId: number | null; roomSlug: string | null; repos: string[] }) {
   const t = useT();
   const [goal, setGoal] = useState("");
@@ -678,6 +715,7 @@ function FactoryPage() {
                       PR ↗
                     </a>
                   )}
+                  {r.status === "pr_review" && r.prUrl && r.label !== "Se mergea solo" && r.label !== "Merge en cola" && <MergeButton runId={r.id} onDone={() => void load()} />}
                   {owner && r.status === "done" && r.prUrl && <EvalButton runId={r.id} agents={owner.candidates} roleAgentIds={Object.fromEntries(owner.roles.map((x) => [x.handle, x.agentId]))} onStarted={() => void load()} />}
                   <span className="shrink-0 text-xs font-semibold text-brand group-hover:underline">{t("Hilo")} →</span>
                 </li>

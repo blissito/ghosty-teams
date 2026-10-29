@@ -197,7 +197,9 @@ async function sweepStale(ns: string): Promise<void> {
     `SELECT key FROM gt_agent_wakeups WHERE fired_at IS NULL AND due_at <= unixepoch() + ?`,
     [WAKEUP_SOON_S],
   ).catch(() => []);
-  const { sweepStaleRuns } = await import("./apps/factory-runs.server");
+  const { sweepStaleRuns, parkStaleDependabotRuns } = await import("./apps/factory-runs.server");
+  const busyNow = (run: Parameters<typeof staleRunBusy>[0]) => staleRunBusy(run, live, pending.map((w) => ({ key: String(w.key) }))).busy;
+  await parkStaleDependabotRuns(busyNow).catch((e) => console.error("[factory] estacionar dependabot", e));
   await sweepStaleRuns((run) => {
     const b = staleRunBusy(run, live, pending.map((w) => ({ key: String(w.key) })));
     // Un zombi (en el mapa, horas sin decir nada) se suelta: si no, el relevo que encola el

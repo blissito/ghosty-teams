@@ -401,14 +401,14 @@ export async function logEvent(runId: number, type: string, actor: string | null
  * Pedido cancelado: en qué etapa iba (el `from` del evento `cancel`) y por qué. La tarjeta lo usa
  * para dejar con ✓ lo que sí se hizo, como una corrida cancelada de GitHub Actions.
  */
-export async function cancelInfo(runId: number): Promise<{ from: string | null; reason: "pr_closed" | "closed_by_person" | "manual"; actor: string | null } | null> {
+export async function cancelInfo(runId: number): Promise<{ from: string | null; reason: "pr_closed" | "closed_by_person" | "parked" | "manual"; actor: string | null } | null> {
   const [row] = await dbq("SELECT actor, data_json FROM gt_factory_events WHERE run_id = ? AND type = 'cancel' ORDER BY id DESC LIMIT 1", [runId]).catch(() => []);
   if (!row) return null;
   let data: { from?: string; reason?: string } = {};
   try {
     data = row.data_json ? JSON.parse(String(row.data_json)) : {};
   } catch {}
-  const reason = data.reason === "pr_closed" || data.reason === "closed_by_person" ? data.reason : "manual";
+  const reason = data.reason === "pr_closed" || data.reason === "closed_by_person" || data.reason === "parked" ? data.reason : "manual";
   return { from: data.from ?? null, reason, actor: row.actor ? String(row.actor) : null };
 }
 
@@ -771,6 +771,42 @@ export async function sweepStaleRuns(isBusy: (run: Run) => boolean): Promise<voi
     if (!marked.length) continue;
     await logEvent(run.id, "stale", null, { status: run.status });
     await notifyRun(run, [run.requestedBy], "Lleva 30 min sin avanzar. Ábrelo para retomarlo o detenerlo.", `factory:${run.id}:stale`);
+    void refreshRoom(run.channelId);
+  }
+}
+
+/** Un pedido de Dependabot sin decisión de una persona en este lapso sale del tablero. */
+export const DEPENDABOT_PARK_SECONDS = 72 * 3600;
+
+/**
+ * Barrido: pedidos de Dependabot que nadie decidió en `DEPENDABOT_PARK_SECONDS` (majors que esperan
+ * merge, escalados sin respuesta, roles colgados). Se cancelan con motivo `parked` y el PR se queda
+ * abierto en GitHub. Antes vivían días como tarjetas amarillas y ocupaban los lugares de
+ * `DEPENDABOT_LIVE_CAP`, así que el repo dejaba de recibir bumps nuevos (business, 29-oct: 11
+ * abiertos de 2 a 9 días, todos de Dependabot). No reinicia el reloj: los eventos de la plataforma
+ * (smoke_fail, auto_resumed); sí lo reinicia: un mensaje de una persona en el hilo o un merge en cola.
+ */
+export async function parkStaleDependabotRuns(isBusy: (run: Run) => boolean): Promise<void> {
+  const now = Math.floor(Date.now() / 1000);
+  const rows = await dbq(
+    `SELECT r.*, MAX(r.updated_at, COALESCE((SELECT MAX(created_at) FROM gc_messages m
+              WHERE m.parent_id = r.root_msg_id AND m.channel_id = r.channel_id
+                AND m.agent_handle IS NULL AND m.sender_sub IS NOT NULL), 0)) AS last_person_at
+       FROM gt_factory_runs r
+      WHERE r.kind = 'dependabot' AND r.status NOT IN ('done','cancelled') AND r.merge_queued_by IS NULL`,
+  ).catch(() => []);
+  for (const r of rows) {
+    if (now - Number(r.last_person_at ?? now) < DEPENDABOT_PARK_SECONDS) continue;
+    const run = toRun(r);
+    if (isBusy(run)) continue;
+    const days = Math.round((now - Number(r.last_person_at)) / 86400);
+    const next = await applyEvent(run, "cancel", {}, { data: { reason: "parked" } }).catch(() => null);
+    if (!next) continue;
+    await postInThread(
+      next,
+      "check",
+      `📦 Lo saqué del tablero: lleva ${days} días esperando una decisión. El PR sigue abierto en GitHub; mézclalo o ciérralo ahí cuando quieras. ${run.prUrl ?? ""}`.trim(),
+    ).catch(() => {});
     void refreshRoom(run.channelId);
   }
 }

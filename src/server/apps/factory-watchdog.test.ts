@@ -69,6 +69,8 @@ vi.stubGlobal("fetch", fetchMock);
 
 import {
   sweepStaleRuns,
+  parkStaleDependabotRuns,
+  DEPENDABOT_PARK_SECONDS,
   applyEvent,
   retryWaitingRunBoxes,
   verifyRunBox,
@@ -226,5 +228,42 @@ describe("cajas", () => {
     wakeOrigins = [{ origin: "https://business.teams.ghosty.studio" }];
     await handoff(run(), "plan", "bliss", "recheck", "x", "");
     expect(wakes[0].origin).toBe("https://business.teams.ghosty.studio");
+  });
+});
+
+// business, 29-oct: 11 pedidos de Dependabot abiertos de 2 a 9 días (majors esperando merge,
+// escalados sin respuesta, roles colgados) ocupaban los lugares del repo y la fábrica se veía trabada.
+describe("parkStaleDependabotRuns", () => {
+  const dep = (o: Row = {}) =>
+    runRow({ id: 142, kind: "dependabot", status: "pr_review", task_ref: "dependabot:major", pr_url: "https://github.com/blissito/mailmask/pull/119", ...o });
+
+  it("sin una persona en 72 h → se cancela con motivo parked y avisa en el hilo que el PR sigue abierto", async () => {
+    runs = [dep({ last_person_at: NOW - DEPENDABOT_PARK_SECONDS - 3600 })];
+    await parkStaleDependabotRuns(() => false);
+    const ev = sqls.find((q) => q.sql.startsWith("INSERT INTO gt_factory_events"));
+    expect(ev?.args[2]).toBe("cancel");
+    expect(String(ev?.args[3])).toContain('"reason":"parked"');
+    expect(posts.at(-1)).toMatch(/sigue abierto en GitHub/);
+    expect(posts.at(-1)).toContain("pull/119");
+  });
+
+  it("una persona escribió hace poco → se queda", async () => {
+    runs = [dep({ last_person_at: NOW - 3600 })];
+    await parkStaleDependabotRuns(() => false);
+    expect(events).toHaveLength(0);
+    expect(posts).toHaveLength(0);
+  });
+
+  it("con un rol trabajando → se queda", async () => {
+    runs = [dep({ last_person_at: NOW - DEPENDABOT_PARK_SECONDS - 3600 })];
+    await parkStaleDependabotRuns(() => true);
+    expect(events).toHaveLength(0);
+  });
+
+  it("sólo mira pedidos de Dependabot sin merge en cola", async () => {
+    await parkStaleDependabotRuns(() => false);
+    const q = sqls.find((x) => x.sql.includes("FROM gt_factory_runs r"));
+    expect(q?.sql).toContain("r.kind = 'dependabot'");
+    expect(q?.sql).toContain("r.merge_queued_by IS NULL");
   });
 });
