@@ -782,7 +782,8 @@ export async function runLive(run: import("./factory-runs.server").Run) {
   const [mq] = run.status === "pr_review" ? await dbq("SELECT merge_queued_by, merge_queued_auto FROM gt_factory_runs WHERE id = ?", [run.id]).catch(() => []) : [];
   const { mergeMode } = await import("./factory-flow");
   const { blocksAutoMerge } = await import("./dependabot.server");
-  const roomAuto = !blocksAutoMerge(run.taskRef) && ((await (await import("../../db.server")).getRoomAutoMerge(run.channelId).catch(() => null))?.on ?? false);
+  const majorAuto = await (await import("./factory-runs.server")).repoMajorAuto(run.repo);
+  const roomAuto = !blocksAutoMerge(run.taskRef, majorAuto) && ((await (await import("../../db.server")).getRoomAutoMerge(run.channelId).catch(() => null))?.on ?? false);
   const merge = mq ? mergeMode(mq.merge_queued_by, mq.merge_queued_auto, roomAuto) : null;
   const escalationKind = run.status === "escalated" ? ((await (await import("./factory-runs.server")).escalationOf(run))?.kind ?? null) : null;
   const view = viewState(run, { lastActivityAt, now, busy: !!live, waitingOn, merge, escalationKind });
@@ -1070,6 +1071,7 @@ export const factoryOverviewFn = createServerFn({ method: "GET" })
   const live = turns.allLiveTurnStates(await currentNamespace());
   const roomAuto = room ? ((await db.getRoomAutoMerge(room.id).catch(() => null))?.on ?? false) : false;
   const { blocksAutoMerge } = await import("./dependabot.server");
+  const majorAuto = await (await import("./factory-runs.server")).majorAutoRepos();
   const now = Math.floor(Date.now() / 1000);
   // Mergeado pero todavía desplegando (o el deploy falló en las últimas 24 h): sigue ABIERTO en el
   // tablero. Antes pasaba directo a «cerrados» y nadie veía que prod no había llegado.
@@ -1101,7 +1103,7 @@ export const factoryOverviewFn = createServerFn({ method: "GET" })
         lastActivityAt: Number(r.last_at ?? now),
         now,
         busy: live.some((t) => t.channelId === Number(r.channel_id) && t.parentId === Number(r.root_msg_id)),
-        merge: r.status === "pr_review" ? mergeMode(r.merge_queued_by, r.merge_queued_auto, roomAuto && !blocksAutoMerge(r.task_ref)) : null,
+        merge: r.status === "pr_review" ? mergeMode(r.merge_queued_by, r.merge_queued_auto, roomAuto && !blocksAutoMerge(r.task_ref, majorAuto.has(String(r.repo ?? "").toLowerCase()))) : null,
         escalationKind: (escKinds.get(Number(r.id)) as import("./factory-flow").EscalationKind | undefined) ?? null,
       },
     );
@@ -1802,7 +1804,8 @@ async function mergeStateOf(run: import("./factory-runs.server").Run): Promise<{
   const [r] = await dbq("SELECT merge_queued_by, merge_queued_auto, task_ref FROM gt_factory_runs WHERE id = ?", [run.id]).catch(() => []);
   const { mergeMode } = await import("./factory-flow");
   const { blocksAutoMerge } = await import("./dependabot.server");
-  const roomAuto = !blocksAutoMerge(r?.task_ref) && ((await (await import("../../db.server")).getRoomAutoMerge(run.channelId).catch(() => null))?.on ?? false);
+  const majorAuto = await (await import("./factory-runs.server")).repoMajorAuto(run.repo);
+  const roomAuto = !blocksAutoMerge(r?.task_ref, majorAuto) && ((await (await import("../../db.server")).getRoomAutoMerge(run.channelId).catch(() => null))?.on ?? false);
   const mode = r ? mergeMode(r.merge_queued_by, r.merge_queued_auto, roomAuto) : null;
   return { mergeQueued: mode !== null, mergeAuto: mode === "auto" };
 }

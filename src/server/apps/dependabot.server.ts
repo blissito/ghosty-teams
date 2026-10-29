@@ -16,10 +16,15 @@ export function dependabotLevelOf(taskRef: string | null | undefined): BumpLevel
   return m ? (m[1] as BumpLevel) : null;
 }
 
-/** El automerge del room no toca un PR de Dependabot que puede romper. */
-export function blocksAutoMerge(taskRef: string | null | undefined): boolean {
+/**
+ * El automerge del room no toca un PR de Dependabot que puede romper. `majorAuto` = el repo
+ * prendió «versiones mayores entran solas» (`gt_factory_repo_prefs.major_auto`): un major
+ * aprobado por @check entra como un minor. Un salto desconocido sigue esperando a una persona.
+ */
+export function blocksAutoMerge(taskRef: string | null | undefined, majorAuto = false): boolean {
   const level = dependabotLevelOf(taskRef);
-  return level !== null && !autoMergeable(level);
+  if (level === null || autoMergeable(level)) return false;
+  return !(majorAuto && level === "major");
 }
 
 const LEVEL_TEXT: Record<BumpLevel, string> = {

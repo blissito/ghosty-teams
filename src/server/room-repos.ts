@@ -171,6 +171,16 @@ async function repoOfRoom(channelId: number, repo: string) {
   return { ...ctx, repo: fila.repo };
 }
 
+/** «Versiones mayores de Dependabot entran solas» del repo (apagado por default). */
+export const repoMajorAutoFn = createServerFn({ method: "POST" })
+  .validator((d: { channelId: number; repo: string; on?: boolean }) => d)
+  .handler(async ({ data }) => {
+    const { me, repo } = await repoOfRoom(Number(data.channelId), data.repo);
+    const R = await import("./apps/factory-runs.server");
+    if (typeof data.on === "boolean") await R.setRepoMajorAuto(repo, data.on, me.sub);
+    return { on: await R.repoMajorAuto(repo) };
+  });
+
 export const roomRepoAutomationsFn = createServerFn({ method: "POST" })
   .validator((d: { channelId: number; repo: string }) => d)
   .handler(async ({ data }) => {

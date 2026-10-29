@@ -26,6 +26,7 @@ import {
   type FactoryStatus,
 } from "../server/apps/factory";
 import { MODEL_ALIASES } from "../server/apps/factory-team";
+import { repoMajorAutoFn } from "../server/room-repos";
 import { formatUsd } from "../server/apps/factory-evals";
 import { RepoReadiness } from "../components/RepoReadiness";
 import { RepoTeam } from "../components/RepoTeam";
@@ -305,7 +306,34 @@ function RepoRow({ repo, channelId, initiallyOpen, focus }: { repo: string; chan
         <RepoReadiness channelId={channelId} repo={repo} autoOpenEnv={focus} onLevel={setLevel} />
         {/* El equipo se pide al abrir: lee un archivo de GitHub y no hace falta contraído. */}
         {open && <RepoTeam channelId={channelId} repo={repo} />}
+        {open && <MajorAutoSwitch channelId={channelId} repo={repo} />}
       </div>
+    </div>
+  );
+}
+
+/** Majors de Dependabot: por default esperan a una persona; con esto entran solos si @check aprueba. */
+function MajorAutoSwitch({ channelId, repo }: { channelId: number; repo: string }) {
+  const t = useT();
+  const [on, setOn] = useState<boolean | null>(null);
+  useEffect(() => {
+    repoMajorAutoFn({ data: { channelId, repo } }).then((r) => setOn(r.on)).catch(() => setOn(null));
+  }, [channelId, repo]);
+  if (on === null) return null;
+  return (
+    <div className="mt-3 flex items-start gap-3 border-t border-border pt-3">
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-medium text-ink">{t("Versiones mayores de Dependabot entran solas")}</p>
+        <p className="text-[11px] text-muted">{t("Si @check aprueba y el CI pasa. Si el plan pide la preview, la espera igual.")}</p>
+      </div>
+      <Toggle
+        on={on}
+        label={t("Versiones mayores de Dependabot entran solas")}
+        onChange={(v) => {
+          setOn(v);
+          repoMajorAutoFn({ data: { channelId, repo, on: v } }).then((r) => setOn(r.on)).catch(() => setOn(!v));
+        }}
+      />
     </div>
   );
 }
@@ -519,6 +547,7 @@ function FactoryPage() {
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<"open" | "closed">("open");
   const [onlyMine, setOnlyMine] = useState(false);
+  const [onlyBumps, setOnlyBumps] = useState(false);
 
   const load = () =>
     factoryOverviewFn({ data: roomParam ? { roomId: roomParam } : {} })
@@ -539,9 +568,28 @@ function FactoryPage() {
     () =>
       (data?.runs ?? [])
         .filter((r) => isClosed(r) === (filter === "closed"))
-        .filter((r) => filter === "closed" || !onlyMine || r.turnSub === data?.meSub),
-    [data, filter, onlyMine],
+        .filter((r) => filter === "closed" || !onlyMine || r.turnSub === data?.meSub)
+        .filter((r) => !onlyBumps || r.kind === "dependabot"),
+    [data, filter, onlyMine, onlyBumps],
   );
+  // Bandeja «Te toca» (Linear Inbox, Devin Review): sólo lo que decide una persona. Los bumps de
+  // Dependabot no entran salvo escalados; van resumidos en un renglón.
+  const inbox = useMemo(
+    () =>
+      (data?.runs ?? [])
+        .filter((r) => !isClosed(r) && (r.column === "waiting" || r.column === "ready"))
+        .filter((r) => r.kind !== "dependabot" || r.status === "escalated")
+        .sort((a, b) => a.createdAt - b.createdAt),
+    [data],
+  );
+  const bumps = useMemo(() => {
+    const week = Math.floor(Date.now() / 1000) - 7 * 86400;
+    const dep = (data?.runs ?? []).filter((r) => r.kind === "dependabot");
+    return {
+      merged: dep.filter((r) => r.status === "done" && (r.mergedAt ?? 0) >= week).length,
+      open: dep.filter((r) => !isClosed(r)).length,
+    };
+  }, [data]);
   const fmt = (ts: number) => new Date(ts * 1000).toLocaleDateString(intlLocale(locale), { day: "numeric", month: "short" });
 
   return (
@@ -605,6 +653,50 @@ function FactoryPage() {
               </ul>
             </section>
           )}
+
+          {/* Te toca: la pantalla de entrada. Lo que espera tu decisión, lo más viejo primero. */}
+          <section className="mt-6">
+            <h2 className="text-sm font-semibold text-ink">{t("Te toca")}</h2>
+            <div className="mt-2 overflow-hidden rounded-xl border border-border">
+              {inbox.length === 0 ? (
+                <p className="px-3 py-3 text-sm text-muted">{t("Nada te espera.")}</p>
+              ) : (
+                <ul className="divide-y divide-border">
+                  {inbox.map((r) => (
+                    <li key={r.id} className="group relative flex items-center gap-3 px-3 py-2.5 hover:bg-surface-2">
+                      <span className="w-10 shrink-0 font-mono text-xs text-muted">#{r.id}</span>
+                      <div className="min-w-0 flex-1">
+                        <a href={r.threadUrl ?? "#"} className="block truncate text-sm font-medium text-ink after:absolute after:inset-0 after:content-['']">
+                          {r.title}
+                        </a>
+                        <p className="truncate text-[11px] text-muted">
+                          {r.repo ?? "—"} · {fmt(r.createdAt)} · {t(r.label ?? STAGE[r.status] ?? r.status)}
+                        </p>
+                      </div>
+                      {r.status === "pr_review" && r.prUrl && r.label !== "Se mergea solo" && r.label !== "Merge en cola" && <MergeButton runId={r.id} onDone={() => void load()} />}
+                      <span className="shrink-0 text-xs font-semibold text-brand group-hover:underline">{t("Hilo")} →</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {(bumps.merged > 0 || bumps.open > 0) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOnlyBumps((v) => !v);
+                    setFilter("open");
+                  }}
+                  className="flex w-full items-center gap-2 border-t border-border bg-surface-2/60 px-3 py-2 text-left text-xs text-muted hover:text-ink"
+                >
+                  <span>📦</span>
+                  <span className="flex-1">
+                    {t("Dependabot: {a} mezcladas esta semana · {b} abiertas").replace("{a}", String(bumps.merged)).replace("{b}", String(bumps.open))}
+                  </span>
+                  <span className="font-semibold text-brand">{onlyBumps ? t("Ver todos") : t("Ver")}</span>
+                </button>
+              )}
+            </div>
+          </section>
 
           {/* Pedidos: números y lista. */}
           <section className="mt-6">

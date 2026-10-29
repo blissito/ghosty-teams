@@ -1146,6 +1146,9 @@ async function migrate(): Promise<void> {
   )`);
   // Una falla de la plataforma (la preview no arrancó) se avisa UNA vez por repo, no una por pedido.
   await addColumn("gt_factory_repo_prefs", "platform_notice_at", "INTEGER");
+  // Versiones mayores de Dependabot que entran solas si @check aprueba (29-oct). Apagado por
+  // default: un major puede romper prod (#96). Sigue pasando por la puerta de la preview.
+  await addColumn("gt_factory_repo_prefs", "major_auto", "INTEGER NOT NULL DEFAULT 0");
   // Automerge del room (10-oct): ENCENDIDO por default en todo room; la fila sólo existe cuando
   // alguien lo tocó desde el encabezado. Lo que @check aprueba entra solo en cuanto el CI pasa,
   // con las credenciales de quien firmó el plan.

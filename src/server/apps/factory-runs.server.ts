@@ -2026,7 +2026,7 @@ export async function closeFinishedRuns(): Promise<void> {
       const by = run.approvedBy ?? run.requestedBy;
       // Un major de Dependabot nunca entra solo: semver dice que puede romper.
       const { blocksAutoMerge } = await import("./dependabot.server");
-      const took = am?.on && by && !blocksAutoMerge(run.taskRef)
+      const took = am?.on && by && !blocksAutoMerge(run.taskRef, await repoMajorAuto(run.repo))
         ? await dbq("UPDATE gt_factory_runs SET merge_queued_by = ?, merge_queued_auto = 1 WHERE id = ? AND merge_queued_by IS NULL AND merge_queued_auto IS NULL RETURNING id", [by, run.id]).catch(() => [])
         : [];
       if (took.length) {
@@ -2919,6 +2919,27 @@ export async function retryRunPreviewNow(run: Run): Promise<{ state: RunPreviewS
   }
   const pv = await runPreview(run.id);
   return { state: pv.state, error: pv.error };
+}
+
+/** ¿Los majors de Dependabot de este repo entran solos si @check aprueba? */
+export async function repoMajorAuto(repo: string | null | undefined): Promise<boolean> {
+  if (!repo) return false;
+  const rows = await dbq("SELECT major_auto FROM gt_factory_repo_prefs WHERE repo = ?", [repo.toLowerCase()]).catch(() => []);
+  return Number(rows[0]?.major_auto ?? 0) === 1;
+}
+
+/** Los repos (en minúsculas) con majors automáticos: una consulta para todo el tablero. */
+export async function majorAutoRepos(): Promise<Set<string>> {
+  const rows = await dbq("SELECT repo FROM gt_factory_repo_prefs WHERE major_auto = 1").catch(() => []);
+  return new Set(rows.map((r) => String(r.repo)));
+}
+
+export async function setRepoMajorAuto(repo: string, on: boolean, by: string): Promise<void> {
+  await dbq(
+    `INSERT INTO gt_factory_repo_prefs (repo, major_auto, updated_by, updated_at) VALUES (?, ?, ?, unixepoch())
+     ON CONFLICT(repo) DO UPDATE SET major_auto = excluded.major_auto, updated_by = excluded.updated_by, updated_at = excluded.updated_at`,
+    [repo.toLowerCase(), on ? 1 : 0, by],
+  );
 }
 
 /** ¿El dueño apagó la preview de este repo («Sin preview»)? */
