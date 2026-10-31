@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { autoMergeable, bumpLevel, isDependabot } from "./dependabot";
+import { autoMergeable, bumpLevel, isDependabot, parseUpdatedDependencies, touchesRuntime } from "./dependabot";
 
 describe("bumpLevel", () => {
   it("lee el salto de versión del título", () => {
@@ -25,5 +25,44 @@ describe("bumpLevel", () => {
   it("reconoce al bot", () => {
     expect(isDependabot("dependabot[bot]")).toBe(true);
     expect(isDependabot("blissito")).toBe(false);
+  });
+});
+
+// Mensaje real del commit de Dependabot (lo que lee `dependabot/fetch-metadata`).
+const MSG = `Bump the dev group with 2 updates
+
+---
+updated-dependencies:
+- dependency-name: typescript
+  dependency-version: 6.0.0
+  dependency-type: direct:development
+  update-type: version-update:semver-major
+- dependency-name: "@types/node"
+  dependency-version: 26.0.0
+  dependency-type: direct:development
+  update-type: version-update:semver-major
+...
+
+Signed-off-by: dependabot[bot] <support@github.com>`;
+
+describe("parseUpdatedDependencies / touchesRuntime", () => {
+  it("lee nombre y tipo de cada dependencia", () => {
+    expect(parseUpdatedDependencies(MSG)).toEqual([
+      { name: "typescript", type: "direct:development" },
+      { name: "@types/node", type: "direct:development" },
+    ]);
+  });
+  it("sólo desarrollo no toca runtime", () => {
+    expect(touchesRuntime("dependabot/npm_and_yarn/dev-abc", parseUpdatedDependencies(MSG))).toBe(false);
+  });
+  it("una de producción sí", () => {
+    const prod = MSG.replace("direct:development", "direct:production");
+    expect(touchesRuntime("dependabot/npm_and_yarn/x", parseUpdatedDependencies(prod))).toBe(true);
+  });
+  it("las acciones de GitHub corren en el CI, no en prod", () => {
+    expect(touchesRuntime("dependabot/github_actions/actions/checkout-5", [])).toBe(false);
+  });
+  it("sin metadatos se asume que sí", () => {
+    expect(touchesRuntime("dependabot/npm_and_yarn/x", parseUpdatedDependencies("Bump x from 1 to 2"))).toBe(true);
   });
 });

@@ -44,6 +44,11 @@ describe("previewRequiredFrom", () => {
   it("con la preview del repo apagada, nunca", () => {
     expect(previewRequiredFrom({ ...base, repoOff: true, requiresPreview: true, dependabotLevel: "major" })).toBe(false);
   });
+  it("un major sólo de desarrollo o de acciones no pide preview (31-oct)", () => {
+    expect(previewRequiredFrom({ ...base, dependabotLevel: "major", dependabotRuntime: false })).toBe(false);
+    expect(previewRequiredFrom({ ...base, dependabotLevel: "major", dependabotRuntime: true })).toBe(true);
+    expect(previewRequiredFrom({ ...base, dependabotLevel: "major", dependabotRuntime: null })).toBe(true);
+  });
 });
 
 describe("previewGateBlock", () => {

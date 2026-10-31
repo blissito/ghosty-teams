@@ -2064,6 +2064,14 @@ export async function closeFinishedRuns(): Promise<void> {
         void refreshRoom(run.channelId);
       }
     }
+    // Carril del CI de Dependabot: sin CI no hay evidencia, así que no entra «en verde» por omisión.
+    // Si a los 30 min sigue sin checks, sale del carril y lo revisa @check como antes.
+    const { inCiLane } = await import("./dependabot.server");
+    const lane = inCiLane(run);
+    if (lane && outcome === "open" && run.status === "pr_review" && ci?.state === "none") {
+      if (Date.now() / 1000 - Number(row.created_at ?? 0) > CI_LANE_NO_CI_SECONDS) await leaveCiLane(run, "el repo no corrió CI en este PR");
+      continue;
+    }
     // Merge en cola (picado con el CI corriendo): entra solo en cuanto pasa, con las credenciales
     // de quien lo picó. Antes había que volver a picar y nadie avisaba cuándo (MailMask #34, 10-oct).
     if (outcome === "open" && run.status === "pr_review" && row.merge_queued_by && (ci?.state === "success" || ci?.state === "none")) {
@@ -2093,6 +2101,27 @@ export async function closeFinishedRuns(): Promise<void> {
     else if (outcome === "open" && run.status === "pr_review" && pr?.mergeableState === "behind") await onPrBehind(run, pr.headSha ?? null);
     if (outcome === "merged" || outcome === "closed") await onPrEvent(run, outcome);
   }
+}
+
+/** Un patch/minor de Dependabot sin un solo check en este lapso sale del carril del CI. */
+const CI_LANE_NO_CI_SECONDS = 30 * 60;
+
+/** Sale del carril del CI: el pedido pasa a @check con el encargo de siempre. Una sola vez. */
+async function leaveCiLane(run: Run, why: string): Promise<void> {
+  const meta = { ...(run.kindMeta ?? {}), ciLane: false };
+  const took = await dbq(
+    "UPDATE gt_factory_runs SET status = 'checking', kind_meta = ?, merge_queued_by = NULL, merge_queued_auto = NULL, updated_at = unixepoch() WHERE id = ? AND status = 'pr_review' RETURNING id",
+    [JSON.stringify(meta), run.id],
+  ).catch(() => []);
+  if (!took.length) return;
+  await logEvent(run.id, "ci_lane_left", null, { why });
+  const { dependabotCheckBrief, dependabotLevelOf } = await import("./dependabot.server");
+  const level = dependabotLevelOf(run.taskRef) ?? "unknown";
+  const next = { ...run, status: "checking" as RunStatus, kindMeta: meta };
+  await handoff(next, "check", run.requestedBy, "revisar un PR de Dependabot",
+    `${why}, así que no hay evidencia para mezclarlo solo. ` + dependabotCheckBrief({ url: run.prUrl ?? "", title: run.title, level, runId: run.id, runtime: null }),
+    "", "", { skills: false });
+  void refreshRoom(run.channelId);
 }
 
 /** Pedidos que adoptaron el PR de OTRA persona (`automations/pr-fix`, CI rojo): el PR no es
@@ -3027,13 +3056,14 @@ export type RunPreviewState = "none" | "pending" | "ready" | "failed" | "needs_e
 export async function previewRequired(run: Run): Promise<boolean> {
   const repo = run.repo ?? (run.prUrl ? parsePrUrl(run.prUrl)?.repo : null);
   const { previewRequiredFrom } = await import("./factory-preview-gate");
-  const { dependabotLevelOf } = await import("./dependabot.server");
+  const { dependabotLevelOf, dependabotRuntimeOf } = await import("./dependabot.server");
   const plan = run.planVersion ? await getPlan(run.id, run.planVersion).catch(() => null) : null;
   return previewRequiredFrom({
     repoOff: repo ? await repoPreviewOff(repo) : false,
     requiresPreview: plan?.requiresPreview ?? null,
     planMd: plan?.planMd ?? null,
     dependabotLevel: dependabotLevelOf(run.taskRef),
+    dependabotRuntime: dependabotRuntimeOf(run.kindMeta),
   });
 }
 

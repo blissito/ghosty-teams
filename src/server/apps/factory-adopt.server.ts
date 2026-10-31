@@ -17,7 +17,7 @@ export type AdoptedRunOpts = {
   rootBody: string;
   /** El rol que firma el mensaje raíz. */
   rootHandle: "plan" | "build" | "check";
-  status: "checking" | "plan_review";
+  status: "checking" | "plan_review" | "pr_review";
   kind: string;
   taskRef?: string | null;
   prUrl?: string | null;

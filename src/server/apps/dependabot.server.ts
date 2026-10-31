@@ -4,7 +4,7 @@
 //   · patch/minor → si aprueba, el automerge del room lo mete en cuanto el CI pasa;
 //   · major       → dice qué rompe y dónde, y espera a una persona (nunca entra solo).
 // Si algo impide el merge no hay @build que lo arregle (Dependabot reescribe su rama): escala.
-import { autoMergeable, bumpLevel, isDependabot, type BumpLevel } from "../../lib/dependabot";
+import { autoMergeable, bumpLevel, isDependabot, parseUpdatedDependencies, touchesRuntime, type BumpLevel } from "../../lib/dependabot";
 
 type PrOpened = { repo: string; number: number; title: string; url: string; author: string | null };
 
@@ -21,6 +21,65 @@ export function dependabotLevelOf(taskRef: string | null | undefined): BumpLevel
  * prendió «versiones mayores entran solas» (`gt_factory_repo_prefs.major_auto`): un major
  * aprobado por @check entra como un minor. Un salto desconocido sigue esperando a una persona.
  */
+/**
+ * Carril del CI (31-oct, como `dependabot/fetch-metadata` + auto-merge de GitHub): un patch/minor
+ * no despierta a @check (costaba $0.86–$3.81 por PR para citar el CI). Nace en `pr_review` y el
+ * vigilante de PRs lo mete con el CI en verde. Sin CI no hay evidencia: pasa a @check.
+ */
+export function inCiLane(run: { kind?: string | null; kindMeta?: Record<string, unknown> | null }): boolean {
+  return run.kind === "dependabot" && run.kindMeta?.ciLane === true;
+}
+
+/** ¿El major sube algo que corre en producción? Del commit de Dependabot (`kind_meta.runtime`). */
+export function dependabotRuntimeOf(kindMeta: Record<string, unknown> | null | undefined): boolean | null {
+  return typeof kindMeta?.runtime === "boolean" ? kindMeta.runtime : null;
+}
+
+/** Lee del primer commit del PR qué dependencias sube y de qué tipo. null si GitHub no contesta. */
+async function prRuntime(sub: string, repo: string, number: number, branch: string | null): Promise<boolean | null> {
+  try {
+    const { githubApi } = await import("../connectors/github.server");
+    const commits = (await githubApi(sub, `/repos/${repo}/pulls/${number}/commits?per_page=5`)) as any[] | { error: string };
+    if (!Array.isArray(commits)) return null;
+    const deps = commits.flatMap((c) => parseUpdatedDependencies(String(c?.commit?.message ?? "")));
+    return touchesRuntime(branch, deps);
+  } catch {
+    return null;
+  }
+}
+
+/** El encargo a @check sobre un PR de Dependabot (al adoptarlo, o al salir del carril del CI). */
+export function dependabotCheckBrief(o: { url: string; title: string; level: BumpLevel; runId: number; runtime: boolean | null }): string {
+  const { url, title, level, runId } = o;
+  const small = level === "patch" || level === "minor";
+  // Un major sólo de desarrollo o de acciones de GitHub: el CI lo ejercita entero.
+  const ciIsEnough = small || o.runtime === false;
+  return (
+    `Revisa el PR de Dependabot ${url} («${title}»). No hay plan: el cambio es subir dependencias. Salto: ${level}.\n` +
+    `1. Lee el diff (github_pr_files) y el CI (github_pr_checks). Si el CI sigue corriendo, github_watch_pr y espera el aviso.\n` +
+    `2. Lee las notas de la versión o el changelog que Dependabot pega en la descripción del PR. Busca cambios que rompen (breaking changes, APIs quitadas, versión mínima de Node) y dónde los usa el repo (github_search / github_read_file).\n` +
+    (ciIsEnough
+      ? (small
+          ? `3. Con el CI en verde, el CI es tu evidencia: cita en proof los checks que pasaron, sin levantar caja. Sólo si el CI está rojo o el repo no tiene CI, corre en tu caja lo que te dé evidencia (install, typecheck, pruebas).\n`
+          : `3. Es un salto mayor, pero sólo de dependencias de desarrollo o de acciones de GitHub: no corre en producción y NO hace falta preview. El CI es tu evidencia (typecheck, pruebas, build); cítalo en proof. Si el repo no tiene CI, corre en tu caja install, typecheck y pruebas.\n`)
+      : // Un major rompe en EJECUCIÓN lo que el CI no ve: React Router 8 pasó lint, typecheck,
+        // tests y build y tumbó toda acción en prod (#96 de Deník, 16-oct).
+        `3. Es un salto ${level === "major" ? "mayor" : "sin versión clara"}: el CI no basta. Pide la preview con factory_preview (runId ${runId}) y prueba AHÍ la acción principal de la app (un formulario que envíe datos, no sólo abrir páginas). ` +
+        `Para cada cambio que rompe de las notas de la versión di cómo lo descartaste; los de red o seguridad (CSRF, CORS, cookies, proxy, TLS) sólo se descartan en la preview. Sin preview lista no puedes aprobar: si faltan variables para levantarla, pass=false con kind=env; si sólo sigue construyéndose, espera.\n`) +
+    `Cierra con factory_check_verdict (runId ${runId}):\n` +
+    `- pass=true si se puede mergear: summary = qué cambia para el producto en 1 frase («nada visible: sólo parches de seguridad de X»); ` +
+    (small ? `risk=low salvo que encuentres algo raro.\n` : `risk=high y en readFirst los archivos que usan lo que cambió, con por qué.\n`) +
+    `- pass=false con blocked=true si algo impide el merge, con kind y reason (un renglón llano, ≤140, lo que lee la persona en su teléfono):\n` +
+    `  · kind=fix si @build lo arregla en la rama de este PR (subir juntos los paquetes hermanos del grupo, un arreglo de tipos de una línea);\n` +
+    `  · kind=skip si no conviene esta subida (p. ej. un major que el repo no puede adoptar hoy): la persona cierra el PR e ignora la versión;\n` +
+    `  · kind=env si faltan variables o credenciales para probarlo (nómbralas);\n` +
+    `  · kind=decision si una persona tiene que elegir entre caminos (di cuáles).\n` +
+    `  Nunca escales porque el CI o la preview siguen en camino: se espera. Que GitHub limite las peticiones (rate limit) tampoco es decision: ` +
+    `reintenta en unos minutos y, si no se libera, pass=false citando «GitHub está limitando las peticiones»: la plataforma lo pausa y te lo regresa sola.\n` +
+    `NO edites ni empujes nada.`
+  );
+}
+
 export function blocksAutoMerge(taskRef: string | null | undefined, majorAuto = false): boolean {
   const level = dependabotLevelOf(taskRef);
   if (level === null || autoMergeable(level)) return false;
@@ -29,8 +88,8 @@ export function blocksAutoMerge(taskRef: string | null | undefined, majorAuto = 
 
 const LEVEL_TEXT: Record<BumpLevel, string> = {
   major: "versión mayor: puede romper, espera a una persona",
-  minor: "minor: entra solo si @check lo aprueba y el CI pasa",
-  patch: "patch: entra solo si @check lo aprueba y el CI pasa",
+  minor: "minor: entra solo en cuanto el CI pase en verde (sin turno del agente)",
+  patch: "patch: entra solo en cuanto el CI pase en verde (sin turno del agente)",
   unknown: "no se sabe el salto de versión: espera a una persona",
 };
 
@@ -79,55 +138,43 @@ export async function adoptDependabotPr(ev: PrOpened, opts: { room?: number } = 
     const level = bumpLevel(ev.title);
 
     const head = await R.prHead(sub, ev.url).catch(() => null);
+    const branch = head?.ref ?? null;
+    const ciLane = autoMergeable(level);
+    // Sólo importa en los saltos que piden preview: un major de desarrollo no la necesita.
+    const runtime = ciLane ? null : await prRuntime(sub, ev.repo, ev.number, branch);
     const { openAdoptedRun } = await import("./factory-adopt.server");
     const run = await openAdoptedRun({
       room,
       sub,
       repo: ev.repo,
       title: ev.title,
-      rootBody: `📦 **Dependabot · ${ev.title}** · PR #${ev.number}\n${LEVEL_TEXT[level]}.`,
+      rootBody:
+        `📦 **Dependabot · ${ev.title}** · PR #${ev.number}\n${LEVEL_TEXT[level]}` +
+        (runtime === false ? " · sólo desarrollo o CI: sin preview, el CI es la prueba" : "") +
+        ".",
       rootHandle: "check",
-      status: "checking",
+      status: ciLane ? "pr_review" : "checking",
       kind: "dependabot",
       taskRef: dependabotRef(level),
       prUrl: ev.url,
       headSha: head?.sha ?? null,
       // `branch` = la cabeza del PR: si @build lo arregla, empuja AHÍ (el CI y la preview viven en ese PR).
-      branch: head?.ref ?? null,
-      event: { type: "adopted", actor: "dependabot", data: { pr: ev.url, level } },
+      branch,
+      kindMeta: ciLane ? { ciLane: true } : runtime === null ? null : { runtime },
+      event: { type: "adopted", actor: "dependabot", data: { pr: ev.url, level, ...(ciLane ? { lane: "ci" } : {}), ...(runtime === null ? {} : { runtime }) } },
     });
-    await R.handoff(
-      run,
-      "check",
-      sub,
-      "revisar un PR de Dependabot",
-      `Revisa el PR de Dependabot ${ev.url} («${ev.title}»). No hay plan: el cambio es subir dependencias. Salto: ${level}.\n` +
-        `1. Lee el diff (github_pr_files) y el CI (github_pr_checks). Si el CI sigue corriendo, github_watch_pr y espera el aviso.\n` +
-        `2. Lee las notas de la versión o el changelog que Dependabot pega en la descripción del PR. Busca cambios que rompen (breaking changes, APIs quitadas, versión mínima de Node) y dónde los usa el repo (github_search / github_read_file).\n` +
-        (level === "patch" || level === "minor"
-          ? `3. Con el CI en verde, el CI es tu evidencia: cita en proof los checks que pasaron, sin levantar caja. Sólo si el CI está rojo o el repo no tiene CI, corre en tu caja lo que te dé evidencia (install, typecheck, pruebas).\n`
-          : // Un major rompe en EJECUCIÓN lo que el CI no ve: React Router 8 pasó lint, typecheck,
-            // tests y build y tumbó toda acción en prod (#96 de Deník, 16-oct).
-            `3. Es un salto ${level === "major" ? "mayor" : "sin versión clara"}: el CI no basta. Pide la preview con factory_preview (runId ${run.id}) y prueba AHÍ la acción principal de la app (un formulario que envíe datos, no sólo abrir páginas). ` +
-            `Para cada cambio que rompe de las notas de la versión di cómo lo descartaste; los de red o seguridad (CSRF, CORS, cookies, proxy, TLS) sólo se descartan en la preview. Sin preview lista no puedes aprobar: si faltan variables para levantarla, pass=false con kind=env; si sólo sigue construyéndose, espera.\n`) +
-        `Cierra con factory_check_verdict (runId ${run.id}):\n` +
-        `- pass=true si se puede mergear: summary = qué cambia para el producto en 1 frase («nada visible: sólo parches de seguridad de X»); ` +
-        (level === "patch" || level === "minor"
-          ? `risk=low salvo que encuentres algo raro.\n`
-          : `risk=high y en readFirst los archivos que usan lo que cambió, con por qué.\n`) +
-        `- pass=false con blocked=true si algo impide el merge, con kind y reason (un renglón llano, ≤140, lo que lee la persona en su teléfono):\n` +
-        `  · kind=fix si @build lo arregla en la rama de este PR (subir juntos los paquetes hermanos del grupo, un arreglo de tipos de una línea);\n` +
-        `  · kind=skip si no conviene esta subida (p. ej. un major que el repo no puede adoptar hoy): la persona cierra el PR e ignora la versión;\n` +
-        `  · kind=env si faltan variables o credenciales para probarlo (nómbralas);\n` +
-        `  · kind=decision si una persona tiene que elegir entre caminos (di cuáles).\n` +
-        `  Nunca escales porque el CI o la preview siguen en camino: se espera. Que GitHub limite las peticiones (rate limit) tampoco es decision: ` +
-        `reintenta en unos minutos y, si no se libera, pass=false citando «GitHub está limitando las peticiones»: la plataforma lo pausa y te lo regresa sola.\n` +
-        `NO edites ni empujes nada.`,
-      // Llega por el webhook (sin request de una persona): como `noteFromGithub`, sin origin.
-      "",
-      "",
-      { skills: false },
-    );
+    if (!ciLane)
+      await R.handoff(
+        run,
+        "check",
+        sub,
+        "revisar un PR de Dependabot",
+        dependabotCheckBrief({ url: ev.url, title: ev.title, level, runId: run.id, runtime }),
+        // Llega por el webhook (sin request de una persona): como `noteFromGithub`, sin origin.
+        "",
+        "",
+        { skills: false },
+      );
     void R.refreshRoom(room);
     return [room];
   } catch (e) {

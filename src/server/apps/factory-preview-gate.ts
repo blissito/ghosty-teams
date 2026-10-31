@@ -22,17 +22,20 @@ export function planAsksPreview(planMd: string | null | undefined): boolean {
  * ¿Este pedido exige la preview para aprobarse y mezclarse?
  * - Con la preview del repo apagada («Sin preview», decisión explícita del dueño): no.
  * - El plan la marcó (`requires_preview`), o, en planes viejos sin la marca, un criterio la nombra.
- * - Un major de Dependabot (o un salto que no se sabe, p. ej. un grupo) siempre: semver dice que
- *   puede romper en ejecución, y el CI no lo ve (el #96 pasó lint, typecheck, tests y build).
+ * - Un major de Dependabot (o un salto que no se sabe, p. ej. un grupo): semver dice que puede
+ *   romper en ejecución, y el CI no lo ve (el #96 pasó lint, typecheck, tests y build). Salvo que
+ *   sólo suba dependencias de desarrollo o acciones de GitHub: eso no corre en producción (31-oct).
  */
 export function previewRequiredFrom(i: {
   repoOff: boolean;
   requiresPreview: boolean | null;
   planMd: string | null;
   dependabotLevel: BumpLevel | null;
+  /** false = la subida sólo trae dependencias de desarrollo o acciones de GitHub (el CI la ejercita). */
+  dependabotRuntime?: boolean | null;
 }): boolean {
   if (i.repoOff) return false;
-  if (i.dependabotLevel === "major" || i.dependabotLevel === "unknown") return true;
+  if ((i.dependabotLevel === "major" || i.dependabotLevel === "unknown") && i.dependabotRuntime !== false) return true;
   if (i.requiresPreview !== null) return i.requiresPreview;
   return planAsksPreview(i.planMd);
 }

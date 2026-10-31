@@ -32,3 +32,33 @@ export function bumpLevel(title: string): BumpLevel {
 export function autoMergeable(level: BumpLevel): boolean {
   return level === "minor" || level === "patch";
 }
+
+/** Una dependencia del bloque `updated-dependencies` que Dependabot escribe en su commit. */
+export type DependabotDep = { name: string; type: string | null };
+
+/**
+ * Lee el bloque YAML del mensaje del commit de Dependabot (lo mismo que `dependabot/fetch-metadata`):
+ *   - dependency-name: motion
+ *     dependency-type: direct:production
+ */
+export function parseUpdatedDependencies(message: string): DependabotDep[] {
+  const block = String(message ?? "").split(/^updated-dependencies:\s*$/m)[1];
+  if (!block) return [];
+  const deps: DependabotDep[] = [];
+  for (const m of block.matchAll(/^-\s*dependency-name:\s*(\S+)[\s\S]*?(?=^-\s*dependency-name:|^\.\.\.|(?![\s\S]))/gm)) {
+    const type = m[0].match(/dependency-type:\s*(\S+)/)?.[1] ?? null;
+    deps.push({ name: m[1].replace(/^["']|["']$/g, ""), type });
+  }
+  return deps;
+}
+
+/**
+ * ¿La subida toca lo que corre en producción? No, si sólo sube acciones de GitHub (corren en el
+ * CI, que ya es la prueba) o si todas son de desarrollo (`direct:development`: tipos, linters,
+ * pruebas; el CI las ejercita). Sin metadatos legibles se asume que sí: mejor pedir la preview.
+ */
+export function touchesRuntime(branch: string | null | undefined, deps: DependabotDep[]): boolean {
+  if (/^dependabot\/github_actions\//i.test(String(branch ?? ""))) return false;
+  if (!deps.length) return true;
+  return !deps.every((d) => d.type === "direct:development");
+}
