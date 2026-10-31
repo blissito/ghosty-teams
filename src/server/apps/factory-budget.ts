@@ -3,8 +3,20 @@
 // sin que nada los detuviera (#133: $47.7 en 210 h). Devin hace lo mismo con su límite por sesión:
 // al llegar se duerme hasta que alguien lo despierta.
 
-/** Tope del espacio cuando nadie lo ha cambiado. */
-export const DEFAULT_BUDGET_USD = 5;
+/** Tope de los pedidos y sprints cuando nadie lo ha cambiado: ningún pedido sano del 17–31 oct pasó de $9. */
+export const DEFAULT_BUDGET_USD = 15;
+/** Tope de un bump de Dependabot (los sanos costaron ~$1.50; los atorados, $15–50). */
+export const DEPENDABOT_BUDGET_USD = 5;
+
+/**
+ * El tope de un pedido: el suyo si alguien lo subió; si no, el del espacio (pedidos y sprints) o el
+ * de Dependabot, que nunca pasa del del espacio. Pura.
+ */
+export function budgetFor(kind: string | null | undefined, own: unknown, space: number): number {
+  const mine = parseBudget(own);
+  if (mine != null) return mine;
+  return kind === "dependabot" ? Math.min(DEPENDABOT_BUDGET_USD, space) : space;
+}
 /** Lo mínimo y lo máximo que se acepta como tope (USD). */
 export const MIN_BUDGET_USD = 1;
 export const MAX_BUDGET_USD = 500;

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { budgetSuffixes, nextBudget, overBudget, parseBudget, DEFAULT_BUDGET_USD } from "./factory-budget";
+import { budgetFor, budgetSuffixes, nextBudget, overBudget, parseBudget, DEFAULT_BUDGET_USD, DEPENDABOT_BUDGET_USD } from "./factory-budget";
 
 // Tope de gasto por pedido (31-oct): #133 gastó $47.7 en 210 h sin que nada lo detuviera.
 type Row = Record<string, unknown>;
@@ -59,6 +59,12 @@ describe("partes puras", () => {
     expect(nextBudget(5)).toBe(10);
     expect(nextBudget(20)).toBe(40);
   });
+  it("tope por tipo: Dependabot $5, pedidos el del espacio; el propio gana", () => {
+    expect(budgetFor("dependabot", null, DEFAULT_BUDGET_USD)).toBe(DEPENDABOT_BUDGET_USD);
+    expect(budgetFor(null, null, DEFAULT_BUDGET_USD)).toBe(15);
+    expect(budgetFor("dependabot", null, 3)).toBe(3);
+    expect(budgetFor("dependabot", 12, 15)).toBe(12);
+  });
   it("parseBudget acepta «$7.5» y rechaza fuera de rango", () => {
     expect(parseBudget("$7.5")).toBe(7.5);
     expect(parseBudget(0)).toBeNull();
@@ -78,7 +84,7 @@ describe("budgetGate", () => {
     expect(row.budget_paused_at).toBe(1);
     expect(JSON.parse(String(row.budget_handoff)).to).toBe("check");
     expect(events.map((e) => e.type)).toEqual(["budget_hit"]);
-    expect(posts[0]).toMatch(/Llegó al tope de \$5/);
+    expect(posts[0]).toMatch(/Llegó al tope de \$15/);
     // Otro encargo mientras está detenido: no vuelve a avisar, guarda el más reciente.
     expect(await budgetGate(run, { ...pending, to: "build" })).toBe("paused");
     expect(events).toHaveLength(1);
@@ -97,17 +103,17 @@ describe("budgetGate", () => {
 
 describe("raiseRunBudget", () => {
   it("subirlo reanuda el encargo guardado", async () => {
-    spent = 5.4;
+    spent = 15.4;
     await budgetGate(run, pending);
     const out = await raiseRunBudget(run, null, "Bliss");
-    expect(out).toMatchObject({ budgetUsd: 10, resumed: true });
+    expect(out).toMatchObject({ budgetUsd: 20, resumed: true });
     expect(row.budget_paused_at).toBeNull();
     expect(handoffs[0]?.[1]).toBe("check");
   });
   it("si el tope nuevo ya está gastado, se queda detenido y no despierta a nadie", async () => {
-    spent = 12;
+    spent = 22;
     await budgetGate(run, pending);
-    const out = await raiseRunBudget(run, 10, "Bliss");
+    const out = await raiseRunBudget(run, 20, "Bliss");
     expect(out.resumed).toBe(false);
     expect(row.budget_paused_at).toBe(1);
     expect(handoffs).toHaveLength(0);

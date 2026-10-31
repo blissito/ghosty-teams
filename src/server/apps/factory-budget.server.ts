@@ -4,7 +4,7 @@
 // tarjeta dice «Llegó al tope» y se avisa una vez a quien lo pidió; subirlo reanuda ese encargo.
 import { getConfig, setConfig } from "../../config.server";
 import { dbq } from "../../dbq.server";
-import { budgetSuffixes, DEFAULT_BUDGET_USD, formatBudget, nextBudget, overBudget, parseBudget } from "./factory-budget";
+import { budgetFor, budgetSuffixes, DEFAULT_BUDGET_USD, formatBudget, nextBudget, overBudget, parseBudget } from "./factory-budget";
 import type { Run } from "./factory-runs.server";
 
 type PendingHandoff = {
@@ -22,10 +22,10 @@ export async function spaceBudgetUsd(): Promise<number> {
   return parseBudget(await getConfig("factory_budget_usd").catch(() => null)) ?? DEFAULT_BUDGET_USD;
 }
 
-/** El tope de este pedido: el suyo si alguien lo subió, si no el del espacio. */
+/** El tope de este pedido: el suyo si alguien lo subió; si no, el del espacio o el de Dependabot (`budgetFor`). */
 export async function runBudgetUsd(runId: number): Promise<number> {
-  const [r] = await dbq("SELECT budget_usd FROM gt_factory_runs WHERE id = ?", [runId]).catch(() => []);
-  return parseBudget(r?.budget_usd) ?? (await spaceBudgetUsd());
+  const [r] = await dbq("SELECT budget_usd, kind FROM gt_factory_runs WHERE id = ?", [runId]).catch(() => []);
+  return budgetFor(r?.kind ?? null, r?.budget_usd, await spaceBudgetUsd());
 }
 
 /** Lo que lleva gastado el pedido en gs (USD), o null si gs no contesta. */
