@@ -25,6 +25,8 @@ type Body = {
   sub?: string;
   /** `close`: además de cerrar, que Dependabot ignore la versión mayor o la dependencia. */
   ignore?: "major" | "dependency" | null;
+  /** `budget` / `space_budget`: el tope nuevo en USD (null = el siguiente escalón; en `space_budget` sin él, sólo se lee). */
+  usd?: number | string | null;
 };
 
 export const Route = createFileRoute("/api/internal/factory-act")({
@@ -42,6 +44,20 @@ export const Route = createFileRoute("/api/internal/factory-act")({
           return bad("json inválido");
         }
         if (!body.sub) return bad("falta sub");
+        // El tope por pedido de todo el espacio: leerlo cualquier miembro; cambiarlo, sólo el dueño.
+        if (body.action === "space_budget") {
+          const users = await import("../users.server");
+          const member = (await users.listAllMembers().catch(() => [])).find((m) => m.sub === body.sub && !m.banned);
+          if (!member) return bad("no eres miembro de este espacio de Teams (entra una vez desde el navegador)", 403);
+          const B = await import("../server/apps/factory-budget.server");
+          if (body.usd == null) return Response.json({ ok: true, budgetUsd: await B.spaceBudgetUsd() });
+          const { isOwner } = await users.resolvePermissions(member.email, member.isOwner);
+          if (!isOwner) return bad("sólo el dueño del espacio cambia el tope", 403);
+          const { parseBudget, MIN_BUDGET_USD, MAX_BUDGET_USD } = await import("../server/apps/factory-budget");
+          const usd = parseBudget(body.usd);
+          if (usd == null) return bad(`el tope va de $${MIN_BUDGET_USD} a $${MAX_BUDGET_USD}`);
+          return Response.json({ ok: true, budgetUsd: await B.setSpaceBudget(usd) });
+        }
         const R = await import("../server/apps/factory-runs.server");
         const run = await R.getRun(Number(body.runId));
         if (!run) return bad("pedido no encontrado", 404);
@@ -56,6 +72,18 @@ export const Route = createFileRoute("/api/internal/factory-act")({
         const origin = await (await import("../origin.server")).reqOrigin().catch(() => "");
 
         try {
+          // Subir el tope de gasto del pedido (null = el siguiente escalón). Si estaba detenido por
+          // el tope, se reanuda el encargo que quedó pendiente.
+          if (body.action === "budget") {
+            if (run.status === "done" || run.status === "cancelled") return bad(`el pedido está en «${run.status}»`, 409);
+            const { parseBudget, MIN_BUDGET_USD, MAX_BUDGET_USD } = await import("../server/apps/factory-budget");
+            const usd = body.usd == null ? null : parseBudget(body.usd);
+            if (body.usd != null && usd == null) return bad(`el tope va de $${MIN_BUDGET_USD} a $${MAX_BUDGET_USD}`);
+            const B = await import("../server/apps/factory-budget.server");
+            const out = await B.raiseRunBudget(run, usd, member.name || "alguien");
+            const now = await R.getRun(run.id);
+            return Response.json({ ok: true, status: now?.status ?? run.status, ...out });
+          }
           if (body.action === "card") {
             const id = await R.ensureRunCard(run, { force: true });
             return id ? Response.json({ ok: true, status: run.status, cardMsgId: id }) : bad("no pude publicar la tarjeta", 500);

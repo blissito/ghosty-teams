@@ -838,7 +838,7 @@ export const factoryRunDetailFn = createServerFn({ method: "POST" })
  * hace por tool): detener el turno en vuelo, retomar uno colgado, cancelar.
  */
 export const factoryRunActionFn = createServerFn({ method: "POST" })
-  .validator((d: { runId: number; action: "stop" | "resume" | "cancel" }) => d)
+  .validator((d: { runId: number; action: "stop" | "resume" | "cancel" | "budget" }) => d)
   .handler(async ({ data }) => {
     const me = await sessionUser();
     if (!me) throw new Error("no autenticado");
@@ -857,10 +857,15 @@ export const factoryRunActionFn = createServerFn({ method: "POST" })
  */
 export async function runPersonAction(
   run: import("./factory-runs.server").Run,
-  action: "stop" | "resume" | "cancel",
+  action: "stop" | "resume" | "cancel" | "budget",
   me: { sub: string; name?: string | null; isOwner: boolean },
 ): Promise<{ ok: true; status: string }> {
   const R = await import("./factory-runs.server");
+  // «Subir tope»: el siguiente escalón; si estaba detenido por el tope, se reanuda.
+  if (action === "budget") {
+    await (await import("./factory-budget.server")).raiseRunBudget(run, null, me.name || me.sub);
+    return { ok: true as const, status: ((await R.getRun(run.id)) ?? run).status };
+  }
   if (action === "cancel") {
     const next = await R.applyEvent(run, "cancel", {}, { actor: me.name || me.sub });
     return { ok: true as const, status: next.status };
@@ -1098,7 +1103,7 @@ export const factoryOverviewFn = createServerFn({ method: "GET" })
     }
     if (["done", "cancelled"].includes(String(r.status))) return { column: null, label: null, turnSub: null };
     const v = viewState(
-      { status: r.status, requestedBy: String(r.requested_by), approvedBy: r.approved_by ?? null, boxWaiting: r.box_state === "waiting", dueAt: r.due_at != null ? Number(r.due_at) : null },
+      { status: r.status, requestedBy: String(r.requested_by), approvedBy: r.approved_by ?? null, boxWaiting: r.box_state === "waiting", dueAt: r.due_at != null ? Number(r.due_at) : null, budgetPaused: r.budget_paused_at != null },
       {
         lastActivityAt: Number(r.last_at ?? now),
         now,

@@ -2231,6 +2231,8 @@ export const en: Record<string, string> = {
   "Planeando": "Planning",
   "Espera tu firma": "Awaiting your signature",
   "En espera de lugar": "Waiting for a slot",
+  "Llegó al tope": "Hit its spend cap",
+  "Subir tope": "Raise cap",
   "Construyendo": "Building",
   "Listo para merge": "Ready to merge",
   "Necesita tu decisión": "Needs your decision",

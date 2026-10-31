@@ -207,7 +207,7 @@ export function needsYou(
 // «listo» (patrón de Linear: el estado de la sesión sale de sus actividades).
 
 export type ViewColumn = "planning" | "waiting" | "building" | "checking" | "ready" | "closed";
-export type PrimaryAction = "sign" | "merge" | "decide" | "resume" | "stop" | null;
+export type PrimaryAction = "sign" | "merge" | "decide" | "resume" | "stop" | "budget" | null;
 
 export type RunView = {
   column: ViewColumn;
@@ -221,7 +221,7 @@ export type RunView = {
 };
 
 export function viewState(
-  run: { status: RunStatus; requestedBy: string; approvedBy?: string | null; boxWaiting?: boolean; dueAt?: number | null },
+  run: { status: RunStatus; requestedBy: string; approvedBy?: string | null; boxWaiting?: boolean; dueAt?: number | null; budgetPaused?: boolean },
   opts: {
     lastActivityAt: number;
     now: number;
@@ -235,6 +235,8 @@ export function viewState(
   },
 ): RunView {
   const open = !["done", "cancelled"].includes(run.status);
+  // Llegó a su tope de gasto: le toca a quien lo pidió subirlo o cancelarlo; no está «parado».
+  if (run.budgetPaused && open) return { column: "waiting", label: "Llegó al tope", stale: false, whoseTurn: { kind: "person", sub: run.requestedBy }, primary: "budget" };
   // Firmado pero sin lugar en el tier: espera su caja. No es «Construyendo» ni «Sin avanzar», y
   // nadie tiene que hacer nada: arranca solo cuando se libere un lugar.
   if (run.boxWaiting && run.status === "building")

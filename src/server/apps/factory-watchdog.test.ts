@@ -77,6 +77,7 @@ import {
   handoff,
   STALE_RETRY_SECONDS,
   MAX_AUTO_RESUMES_PER_DAY,
+  previewWaitReason,
   type Run,
 } from "./factory-runs.server";
 
@@ -158,6 +159,24 @@ describe("sweepStaleRuns", () => {
     expect(wakes[0].origin).toBe("https://equipo.business.mx");
   });
 
+  it("#144: @check espera lugar de caja para la preview obligatoria → se pausa por la plataforma, sin turno", async () => {
+    runs = [runRow({ id: 144, task_ref: "dependabot:major", preview_state: "waiting", preview_error: "esperando lugar de caja (1 ocupados: #134)" })];
+    events = [{ run_id: 144, type: "build_done", at: NOW - 3600 }];
+    wakeOrigins = [{ origin: "https://business.teams.ghosty.studio" }];
+    await sweepStaleRuns(() => false);
+    expect(wakes).toHaveLength(0);
+    expect(events.some((e) => e.type === "auto_resumed")).toBe(false);
+    expect(events.at(-1)?.type).toBe("check_blocked");
+  });
+
+  it("preview que no es obligatoria: sigue el camino de siempre (retomar)", async () => {
+    runs = [runRow({ id: 145, task_ref: "dependabot:patch", preview_state: "waiting" })];
+    events = [{ run_id: 145, type: "build_done", at: NOW - 3600 }];
+    wakeOrigins = [{ origin: "https://business.teams.ghosty.studio" }];
+    await sweepStaleRuns(() => false);
+    expect(wakes).toHaveLength(1);
+  });
+
   it("con alguien trabajando no se toca", async () => {
     runs = [runRow()];
     await sweepStaleRuns(() => true);
@@ -169,6 +188,14 @@ describe("sweepStaleRuns", () => {
     const q = sqls.find((s) => s.sql.includes("FROM gt_factory_runs r"))!.sql;
     expect(q).not.toMatch(/stale_warned_at IS NULL/);
     expect(q).toMatch(/NOT \(COALESCE\(r\.box_state, ''\) = 'waiting' AND r\.status = 'building'\)/);
+  });
+});
+
+describe("previewWaitReason", () => {
+  it("sólo esperando lugar o construyéndose; lista, fallida o sin variables no", () => {
+    expect(previewWaitReason({ preview_state: "waiting", preview_error: "esperando lugar de caja" })).toBe("esperando lugar de caja");
+    expect(previewWaitReason({ preview_state: "pending" })).toMatch(/construyendo/);
+    for (const s of ["ready", "failed", "needs_env", "released", "off", null]) expect(previewWaitReason({ preview_state: s })).toBeNull();
   });
 });
 

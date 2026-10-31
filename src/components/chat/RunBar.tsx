@@ -91,7 +91,9 @@ export function RunBar({ channelId, threadId }: { channelId: number; threadId: n
             ? { label: t("Detener"), run: () => factoryRunActionFn({ data: { runId: st.runId, action: "stop" } }) }
             : v.primary === "decide"
               ? { label: t("Decidir"), run: async () => openPanel() }
-              : null;
+              : v.primary === "budget"
+                ? { label: t("Subir tope"), run: () => factoryRunActionFn({ data: { runId: st.runId, action: "budget" } }) }
+                : null;
 
   return (
     <div className="flex items-center gap-2 border-b border-border bg-surface-2 px-3 py-2 md:px-6">

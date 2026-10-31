@@ -1017,6 +1017,11 @@ async function migrate(): Promise<void> {
   await addColumn("gt_factory_runs", "box_id", "TEXT");
   await addColumn("gt_factory_runs", "box_state", "TEXT");
   await addColumn("gt_factory_runs", "box_handoff", "TEXT");
+  // Tope de gasto (31-oct): USD del pedido (NULL = el del espacio, `gc_config.factory_budget_usd`),
+  // desde cuándo está detenido por llegar al tope y el encargo que quedó pendiente (se reanuda al subirlo).
+  await addColumn("gt_factory_runs", "budget_usd", "REAL");
+  await addColumn("gt_factory_runs", "budget_paused_at", "INTEGER");
+  await addColumn("gt_factory_runs", "budget_handoff", "TEXT");
   // Sprints de la Fábrica: una épica con tickets ordenados y dependencias. Lo propone @plan
   // (borrador), una persona lo aprueba UNA vez y la plataforma arranca cada ticket como un
   // pedido cuando sus dependencias ya tienen merge (ver apps/sprint.server.ts).

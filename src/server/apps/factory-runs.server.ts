@@ -56,6 +56,8 @@ export type Run = {
   dueAt?: number | null;
   /** Datos del tipo (`kind_meta`): p. ej. las alertas de un pedido de seguridad. */
   kindMeta?: Record<string, unknown> | null;
+  /** Detenido por llegar a su tope de gasto (`budget_paused_at`): nadie trabaja hasta subirlo. */
+  budgetPaused?: boolean;
 };
 
 
@@ -81,6 +83,7 @@ const toRun = (r: Record<string, any>): Run => ({
   kind: r.kind ?? null,
   dueAt: r.due_at != null ? Number(r.due_at) : null,
   kindMeta: parseKindMeta(r.kind_meta),
+  budgetPaused: r.budget_paused_at != null,
 });
 
 export async function getRun(id: number): Promise<Run | null> {
@@ -641,7 +644,7 @@ export function turnNoticeBody(status: RunStatus, data?: Record<string, unknown>
   return copy[status] ?? null;
 }
 
-async function notifyRun(run: Run, subs: string[], body: string, tag: string): Promise<void> {
+export async function notifyRun(run: Run, subs: string[], body: string, tag: string): Promise<void> {
   try {
     const db = await import("../../db.server");
     const ch = await db.getChannelById(run.channelId);
@@ -741,7 +744,8 @@ export async function sweepStaleRuns(isBusy: (run: Run) => boolean): Promise<voi
             r.updated_at) AS last_at
        FROM gt_factory_runs r
       WHERE r.status IN ('planning','building','checking') AND (r.kind IS NULL OR r.kind != 'eval')
-        AND NOT (COALESCE(r.box_state, '') = 'waiting' AND r.status = 'building')`,
+        AND NOT (COALESCE(r.box_state, '') = 'waiting' AND r.status = 'building')
+        AND r.budget_paused_at IS NULL`,
   ).catch(() => []);
   for (const r of rows) {
     if (now - Number(r.last_at ?? now) < STALE_SECONDS) continue;
@@ -751,6 +755,18 @@ export async function sweepStaleRuns(isBusy: (run: Run) => boolean): Promise<voi
     const [lastEv] = await dbq("SELECT type FROM gt_factory_events WHERE run_id = ? ORDER BY id DESC LIMIT 1", [run.id]).catch(() => []);
     // `waiting_person`: el rol preguntó y espera a la persona; retomarlo solo sería contestarse.
     const waitingPerson = lastEv?.type === "waiting_person";
+    // @check espera la preview (sin lugar de caja o construyéndose): retomarlo sólo le hace decir
+    // «sigo esperando» y cuesta un turno cada vez (#139/#144, 20–29 oct: 207 turnos, $122 sin
+    // destrabar nada). Se pausa por la plataforma: la tarjeta dice «Esperando preview», no gasta,
+    // y cuando la preview queda lista @check revisa solo una vez (`announceRunPreview`).
+    const previewWait = run.status === "checking" && !waitingPerson ? previewWaitReason(r) : null;
+    if (previewWait) {
+      const repo = run.repo ?? (run.prUrl ? parsePrUrl(run.prUrl)?.repo : null) ?? "";
+      if (await escalatePlatform(run, previewWait, repo)) {
+        void refreshRoom(run.channelId);
+        continue;
+      }
+    }
     if (warnedAt) {
       if (waitingPerson) continue;
       const tries = await dbq(
@@ -773,6 +789,13 @@ export async function sweepStaleRuns(isBusy: (run: Run) => boolean): Promise<voi
     await notifyRun(run, [run.requestedBy], "Lleva 30 min sin avanzar. Ábrelo para retomarlo o detenerlo.", `factory:${run.id}:stale`);
     void refreshRoom(run.channelId);
   }
+}
+
+/** ¿El pedido está detenido esperando su preview (sin lugar de caja o construyéndose)? El motivo, o null. Pura. */
+export function previewWaitReason(row: { preview_state?: unknown; preview_error?: unknown }): string | null {
+  if (row.preview_state === "waiting") return String(row.preview_error || "la preview espera lugar de caja");
+  if (row.preview_state === "pending") return "la preview se está construyendo";
+  return null;
 }
 
 /** Un pedido de Dependabot sin decisión de una persona en este lapso sale del tablero. */
@@ -1169,6 +1192,12 @@ export async function handoff(
   const t0 = Date.now();
   // Sin origin (barrido, recheck de la plataforma), el de los encargos anteriores o el del espacio.
   if (!origin) origin = await fallbackOrigin(run.id);
+  // Tope de gasto: si el pedido ya llegó, el encargo se guarda y nadie trabaja hasta que una
+  // persona lo suba (`raiseRunBudget` lo reanuda). Los evals tienen su propio presupuesto.
+  if (run.kind !== "eval") {
+    const { budgetGate } = await import("./factory-budget.server");
+    if ((await budgetGate(run, { to, sub, cause, text, origin, groupSuffix, opts })) === "paused") return true;
+  }
   // @build y @check trabajan en la caja del pedido: si gs ya la tiró, se pide otra antes del
   // encargo. Sin lugar, el encargo de @build espera en cola igual que al aprobar (`decide`).
   if ((to === "build" || to === "check") && !groupSuffix) {
@@ -2527,7 +2556,14 @@ async function announceRunPreview(row: Record<string, any>, P: typeof import("./
   if (sameSha && row.preview_state === "released") return;
   // Esperar lugar tiene tope: un pedido que lleva horas en la fila sin commit nuevo deja de pedir
   // caja en cada tick (si no, al liberarse un lugar nacía la preview de un PR quieto desde hace días).
-  if (sameSha && row.preview_state === "waiting" && row.preview_since != null && Math.floor(Date.now() / 1000) - Number(row.preview_since) > PREVIEW_WAITING_MAX_S) {
+  // Salvo si el pedido está pausado justo por esa preview: soltarla lo dejaba esperando para siempre.
+  if (
+    sameSha &&
+    row.preview_state === "waiting" &&
+    row.preview_since != null &&
+    Math.floor(Date.now() / 1000) - Number(row.preview_since) > PREVIEW_WAITING_MAX_S &&
+    !(run.status === "escalated" && (await escalationOf(run))?.kind === "platform")
+  ) {
     await dbq("UPDATE gt_factory_runs SET preview_state = 'released', preview_url = NULL, preview_phase = NULL, preview_error = ? WHERE id = ?", [RELEASED_NOTE, run.id]).catch(() => {});
     void refreshRoom(run.channelId);
     return;
