@@ -4268,6 +4268,13 @@ function Sidebar({
   }, []);
   const [createOpen, setCreateOpen] = useState(false);
   const [settingsSlug, setSettingsSlug] = useState<string | null>(null);
+  // El título del room (en la cabecera del flujo) también abre sus Ajustes: el engrane del
+  // sidebar sólo aparece al pasar el mouse y en móvil queda escondido en el cajón.
+  useEffect(() => {
+    const onOpen = (e: Event) => setSettingsSlug((e as CustomEvent<string>).detail);
+    window.addEventListener("gt:room-settings", onOpen);
+    return () => window.removeEventListener("gt:room-settings", onOpen);
+  }, []);
   const [newDmOpen, setNewDmOpen] = useState(false);
   // Mismo directorio vivo que alimenta el picker de menciones (cacheado en módulo y
   // refrescado por el bus): así el aviso de abajo nombra a los agentes que EXISTEN.
@@ -7808,7 +7815,18 @@ function Flow({
           <NavToggle onOpen={onOpenNav} />
           <RoomIcon name={channel.icon} size={18} className="shrink-0 text-muted" />
           <div className="min-w-0">
-            <h2 className="truncate font-semibold leading-tight text-ink">{channel.name}</h2>
+            {canManage ? (
+              <button
+                type="button"
+                onClick={() => window.dispatchEvent(new CustomEvent("gt:room-settings", { detail: channel.slug }))}
+                title={t("Ajustes del room")}
+                className="block max-w-full truncate text-left font-semibold leading-tight text-ink hover:underline"
+              >
+                <h2 className="truncate">{channel.name}</h2>
+              </button>
+            ) : (
+              <h2 className="truncate font-semibold leading-tight text-ink">{channel.name}</h2>
+            )}
             {channel.description ? (
               <p className="hidden truncate text-xs text-muted @md/hdr:block">{channel.description}</p>
             ) : (
