@@ -183,6 +183,15 @@ function RoomAbierto() {
   const [reglasVistas, setReglasVistas] = useState(true);
   useEffect(() => { setReglasVistas(localStorage.getItem("room:reglas") === "1"); }, []);
   const [callUrl, setCallUrl] = useState<string | null>(data.callUrl);
+  // `?ver=<identity>` en la liga del evento fija qué pantalla ve el espectador al entrar;
+  // la sala lo lee de su propia URL, así que se le pasa tal cual al iframe.
+  const verRaw = (Route.useSearch() as { ver?: unknown }).ver;
+  const ver = verRaw == null || verRaw === "" ? null : String(verRaw);
+  const frameUrl = useMemo(() => {
+    if (!callUrl || !ver) return callUrl;
+    try { const u = new URL(callUrl); u.searchParams.set("ver", ver); return u.toString(); }
+    catch { return callUrl; }
+  }, [callUrl, ver]);
   // Nace ABIERTO: el chat es la mitad de para qué existe el room, y esconderlo por
   // defecto obliga a descubrirlo. En móvil se abre encima, así que ahí arranca cerrado
   // para no tapar el video nada más entrar.
@@ -565,7 +574,7 @@ function RoomAbierto() {
                `call_open` del dueño es la forma de que eso no ocurra. */
             <iframe
               ref={callRef}
-              src={callUrl}
+              src={frameUrl ?? undefined}
               title={data.title}
               className="h-full w-full border-0"
               allow="camera; microphone; display-capture; autoplay; fullscreen; speaker-selection"
