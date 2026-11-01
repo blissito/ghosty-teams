@@ -197,8 +197,8 @@ function ConnectModal({ slug, provider, locale, current, onClose, onUnlinked }: 
     <Modal title={t("Conectar {name}", { name: NAME[provider] })} onClose={onClose}>
       <p className="mb-4 text-sm text-muted">
         {provider === "youtube"
-          ? t("Inicia sesión con Google y elige el canal. Ghosty sólo crea las transmisiones de tus eventos; no toca tus videos.")
-          : t("Inicia sesión con Facebook y elige la página. Ghosty sólo crea las transmisiones en vivo de tus eventos en esa página.")}
+          ? t("Google te pedirá elegir la cuenta y el canal. Ghosty sólo crea las transmisiones de tus eventos; no toca tus videos.")
+          : t("Facebook te pedirá elegir la página (si no aparece, usa «Editar acceso»). Ghosty sólo crea las transmisiones en vivo de tus eventos en esa página.")}
       </p>
       {current && (
         <p className="mb-4 rounded-lg bg-surface-2 px-3 py-2 text-xs">
