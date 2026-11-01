@@ -17,10 +17,14 @@ import {
   isEscalationKind,
   isGithubRateLimit,
   nextStatus,
+  normalizeEscalationOptions,
+  optionNote,
+  parseOptionChoice,
   rateLimitReason,
   stageLabel,
   type EscalationAction,
   type EscalationKind,
+  type EscalationOption,
   type RunEvent,
   type RunStatus,
 } from "./factory-flow";
@@ -544,6 +548,10 @@ export type Escalation = {
   findings: string;
   at: number;
   actions: EscalationAction[];
+  /** Caminos concretos que dejó @check (sólo `decision`); null = los botones de siempre. */
+  options: EscalationOption[] | null;
+  /** `blocked`: @check (o la plataforma) lo frenó; `loops`: se agotaron las vueltas. */
+  via: "blocked" | "loops";
 };
 
 /**
@@ -555,7 +563,7 @@ export type Escalation = {
 export async function escalationOf(run: Run): Promise<Escalation | null> {
   if (run.status !== "escalated") return null;
   const [row] = await dbq(
-    "SELECT data_json, at FROM gt_factory_events WHERE run_id = ? AND type IN ('check_blocked', 'check_fail') ORDER BY id DESC LIMIT 1",
+    "SELECT type, data_json, at FROM gt_factory_events WHERE run_id = ? AND type IN ('check_blocked', 'check_fail') ORDER BY id DESC LIMIT 1",
     [run.id],
   ).catch(() => []);
   let data: Record<string, unknown> = {};
@@ -564,11 +572,11 @@ export async function escalationOf(run: Run): Promise<Escalation | null> {
   } catch {
     return null;
   }
-  return escalationFromEvent(data, Number(row?.at ?? 0));
+  return escalationFromEvent(data, Number(row?.at ?? 0), row?.type === "check_fail" ? "loops" : "blocked");
 }
 
 /** Pura: el escalado a partir del `data` de su evento (`check_blocked`/`check_fail`). */
-export function escalationFromEvent(data: Record<string, unknown>, at: number): Escalation | null {
+export function escalationFromEvent(data: Record<string, unknown>, at: number, via: "blocked" | "loops" = "blocked"): Escalation | null {
   const findings = String(data.findings ?? "");
   if (!findings && !data.reason) return null;
   const kind = isEscalationKind(data.kind) ? data.kind : deduceEscalationKind(findings);
@@ -576,7 +584,9 @@ export function escalationFromEvent(data: Record<string, unknown>, at: number): 
   // Límite de GitHub (#137): no hay preview que reintentar, sólo que @check revise otra vez.
   const rateLimited = kind === "platform" && (data.cause === "github_rate_limit" || isGithubRateLimit(`${findings}\n${data.reason ?? ""}`));
   const reason = clipReason(String(data.reason ?? "") || (rateLimited ? "GitHub limitó las peticiones; @check revisa otra vez sola." : points[0]) || "");
-  return { kind, reason, points, findings, at, actions: rateLimited ? ["recheck"] : ESCALATION_ACTIONS[kind] };
+  // Ya validadas al guardarse (`normalizeEscalationOptions`); se re-validan por si el evento es viejo o vino a mano.
+  const options = kind === "decision" ? normalizeEscalationOptions(data.options, { hasPr: true }) : null;
+  return { kind, reason, points, findings, at, actions: rateLimited ? ["recheck"] : ESCALATION_ACTIONS[kind], options, via };
 }
 
 /** Los hallazgos como viñetas (una por punto), para enseñar los primeros arriba. */
@@ -1573,6 +1583,14 @@ export async function decide(opts: {
   if (version !== run.planVersion) throw new Error(`ese es el plan v${version}; el vigente es v${run.planVersion}`);
   const note = (opts.note ?? "").trim().slice(0, 2000);
   if (decision === "changes" && !note) throw new Error("di qué cambiar");
+  // «Otra vuelta» sin decir cuál camino: @build recibía «revisa las notas» con las notas vacías y
+  // esperaba «a o b» para siempre (mailmask #153/#154, 30-oct → 1-nov). Una decisión que @check
+  // escaló (no las vueltas agotadas, ahí los hallazgos ya dicen qué arreglar) exige la elección.
+  if (decision === "approve" && run.status === "escalated" && !note) {
+    const esc = await escalationOf(run);
+    if (esc?.kind === "decision" && (esc.options || esc.via === "blocked"))
+      throw new Error(esc.options ? "elige una de las opciones de la tarjeta" : "escribe qué camino eliges: @build lo necesita para seguir");
+  }
   const checkScope = (opts.checkScope ?? "").trim().slice(0, 2000);
   const scope = checkScope ? { check_scope: checkScope } : {};
   // Replanear reinicia las vueltas de check (si no, un plan nuevo tras escalar volvía a
@@ -1635,6 +1653,44 @@ export async function decide(opts: {
  * Firma escrita en el hilo: «✅», «aprobado», «cambios: …». Sólo aplica si el hilo tiene una
  * corrida esperando firma; lo demás es conversación normal y no se toca. Nunca lanza.
  */
+/**
+ * Una persona eligió uno de los caminos que dejó @check en un escalado `decision`. La elección
+ * viaja literal al siguiente rol («Elegí la opción b: …»). `merge_as_is` exige `confirmMerge`
+ * (la tarjeta pide doble confirmación). Lanza con un mensaje para la persona.
+ */
+export async function chooseOption(opts: {
+  run: Run;
+  optionId: string;
+  sub: string;
+  who: string;
+  origin: string;
+  confirmMerge?: boolean;
+}): Promise<{ run: Run; option: EscalationOption; merged?: boolean }> {
+  const { run, sub, who } = opts;
+  if (run.status !== "escalated") throw new Error("el pedido ya no espera una decisión");
+  const esc = await escalationOf(run);
+  const option = esc?.options?.find((o) => o.id === String(opts.optionId).trim().toLowerCase());
+  if (!option) throw new Error("esa opción ya no existe: recarga la tarjeta");
+  if (option.action === "merge_as_is" && !opts.confirmMerge) throw new Error("confirma el merge con el CI como está");
+  await logEvent(run.id, "option_chosen", sub, { option: option.id, label: option.label, action: option.action, who });
+  const note = optionNote(option);
+  switch (option.action) {
+    case "build":
+      return { run: await decide({ run, version: run.planVersion, decision: "approve", note, sub, who, origin: opts.origin }), option };
+    case "replan":
+      return { run: await decide({ run, version: run.planVersion, decision: "changes", note, sub, who, origin: opts.origin }), option };
+    case "recheck":
+      return { run: await recheck({ run, sub, who, note, origin: opts.origin }), option };
+    case "close":
+      return { run: await closeRunPr(run, { ignore: null, who }), option };
+    case "merge_as_is": {
+      const r = await mergeRun(run, sub, { override: { who, reason: `${option.label}. ${esc?.reason ?? ""}`.trim() } });
+      if (!r.ok) throw new Error(r.error);
+      return { run: (await getRun(run.id)) ?? run, option, merged: true };
+    }
+  }
+}
+
 export async function maybeThreadDecision(opts: {
   channelId: number;
   rootId: number;
@@ -1648,9 +1704,26 @@ export async function maybeThreadDecision(opts: {
     if (!(await isInstalled("factory"))) return false;
     const { parseThreadDecision } = await import("./factory-flow");
     const d = parseThreadDecision(opts.text);
-    if (!d) return false;
+    // «b», «la a», «opción 2»: sólo cuenta si el pedido está escalado con opciones vigentes.
+    const maybeLetter = !d && /^\s*(?:(?:la|el)\s+|opci[oó]n\s+)?[a-c1-3][\s.)!]*$/iu.test(opts.text);
+    if (!d && !maybeLetter) return false;
     const run = await runOfThread(opts.channelId, opts.rootId);
     if (!run || (run.status !== "plan_review" && run.status !== "escalated")) return false;
+    if (run.status === "escalated") {
+      const esc = await escalationOf(run);
+      const picked = parseOptionChoice(opts.text, esc?.options);
+      if (picked) {
+        // El merge con el CI en rojo no sale de una letra en el hilo: va con doble confirmación en la tarjeta.
+        if (picked.action === "merge_as_is") {
+          await postInThread(run, "check", `Para «${picked.label}» confirma en la tarjeta de abajo: es un merge con el CI como está.`);
+          await postRunCard(run);
+          return true;
+        }
+        await chooseOption({ run, optionId: picked.id, sub: opts.sub, who: opts.who, origin: opts.origin });
+        return true;
+      }
+    }
+    if (!d) return false;
     // Escalado: un «✅» en el hilo no aprueba a ciegas lo que @check frenó (mercadito #7, 5-oct).
     // Se contesta con la tarjeta: los puntos arriba y la decisión con clics, sin escribir nada.
     if (run.status === "escalated" && d.decision === "approve" && (await escalationOf(run))) {
@@ -1759,7 +1832,21 @@ export async function ensureRunCard(run: Run, opts: { force?: boolean } = {}): P
  * Estado del CI del PR (Actions y statuses externos: Vercel, CircleCI…), con la misma tool
  * que usa el agente. `none` = el repo no tiene CI (NO es verde). null si GitHub no contesta.
  */
-export async function prCi(sub: string, url: string): Promise<{ state: string; failed: string[]; checks: import("../connectors/github-checks").CheckItem[] } | null> {
+/**
+ * ¿Lo rojo es CI que GitHub nunca arrancó? Cobro o límite de gasto («The job was not started
+ * because recent account payments have failed…»): todos los jobs salen `failure` en 0–5 s sin un
+ * solo paso (mailmask #154, 30-oct: 10 jobs en 3–4 s). Ningún job real de Actions termina tan
+ * rápido (sólo preparar el runner tarda más), así que todos los rojos ≤ 5 s es la firma. Pura.
+ */
+export function ciNotStarted(checks: { state: string; seconds: number | null }[]): boolean {
+  const red = checks.filter((c) => c.state === "failure");
+  return red.length > 0 && red.every((c) => c.seconds !== null && c.seconds <= 5);
+}
+
+export async function prCi(
+  sub: string,
+  url: string,
+): Promise<{ state: string; failed: string[]; checks: import("../connectors/github-checks").CheckItem[]; notStarted?: boolean } | null> {
   const pr = parsePrUrl(url);
   if (!pr) return null;
   try {
@@ -1768,7 +1855,8 @@ export async function prCi(sub: string, url: string): Promise<{ state: string; f
     const r = (await tool?.handler(sub, { repo: pr.repo, number: pr.number })) as any;
     if (!r || r.error) return null;
     const failed = Array.isArray(r.failed) ? r.failed.map((f: any) => String(f?.name ?? f)).slice(0, 5) : [];
-    return { state: String(r.state ?? "none"), failed, checks: Array.isArray(r.checks) ? r.checks : [] };
+    const checks = Array.isArray(r.checks) ? r.checks : [];
+    return { state: String(r.state ?? "none"), failed, checks, notStarted: ciNotStarted(checks) };
   } catch {
     return null;
   }
@@ -1800,8 +1888,15 @@ export function asksPerson(reply: string): boolean {
   if (/```gt-ask\b/.test(reply)) return true;
   const prose = reply.replace(/```[\s\S]*?```/g, " ").replace(/`[^`\n]*`/g, " ").trim();
   const last = prose.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean).pop() ?? "";
-  return /[?？]\s*[)*_]*\s*$/.test(last);
+  if (/[?？]\s*[)*_]*\s*$/.test(last)) return true;
+  // Espera una decisión sin cerrar con «?»: «en cuanto elijas a o b, lo ejecuto», «sigue sin
+  // decisión de…», «falta que @x revise…» (mailmask #153/#154: el barrido lo retomó 4 veces al día
+  // durante días y cada vuelta repetía lo mismo).
+  return WAITS_FOR_PERSON.test(last);
 }
+
+const WAITS_FOR_PERSON =
+  /\b(en cuanto|cuando)\b[^.\n]{0,40}\b(elij|decid|respond|contest|me digas|confirm)|\bsi me (dices|respondes|confirmas)\b|\bsin (la |su )?decisi[oó]n de\b|\bespero (tu|su) (decisi[oó]n|respuesta|confirmaci[oó]n)|\bfalta(?: es)? que @?\w+ (decida|elija|revise|confirme|responda|vuelva a)/i;
 
 export async function afterFactoryTurn(
   w: { key: string; ref: string; origin: string },
@@ -1900,6 +1995,9 @@ export async function afterFactoryTurn(
     `⚠️ ${who}@${role} terminó dos veces sin cerrar su paso y el pedido #${run.id} está detenido. ` +
       `Revisa su último mensaje en este hilo y dile qué hacer (o menciónalo para que retome).`,
   );
+  // Ya se le pasó a una persona: retomarlo solo repetiría el mismo turno 4 veces al día sin que
+  // nadie haya contestado (mailmask #153/#154). Espera la respuesta en el hilo o «Retomar».
+  await logEvent(run.id, "waiting_person", role, { after: "two_ends" });
   void refreshRoom(run.channelId);
   void ref;
 }
@@ -3167,7 +3265,15 @@ export async function mergeRun(
   run: Run,
   sub: string,
   /** `skipPreview`: «Mezclar sin preview», la salida explícita de una persona (queda en la bitácora). */
-  opts: { skipPreview?: boolean } = {},
+  opts: {
+    skipPreview?: boolean;
+    /**
+     * Merge con el CI en rojo, decidido por una persona desde un escalado (la opción `merge_as_is`):
+     * lo rojo no lo causa el PR (permiso del workflow, job que GitHub no arrancó). Queda en la
+     * bitácora y en el hilo con los checks que estaban rojos. Nunca con checks corriendo.
+     */
+    override?: { who: string; reason: string };
+  } = {},
 ): Promise<{ ok: true } | { ok: false; error: string; queue?: boolean }> {
   const pr = run.prUrl ? parsePrUrl(run.prUrl) : null;
   if (!pr) return { ok: false, error: "el pedido no tiene PR" };
@@ -3204,9 +3310,18 @@ export async function mergeRun(
     // CI en rojo o corriendo: no se mezcla. Sin CI (`none`) o si GitHub no contesta, como antes:
     // el chip de la tarjeta era la única señal y «Merge» entraba igual (MailMask #8, 4-oct).
     const ci = await prCi(sub, run.prUrl!);
-    if (ci?.state === "failure")
-      return { ok: false, error: `El CI del PR está en rojo (${ci.failed.join(", ") || "ver checks"}): pídele el arreglo a @build antes del merge.` };
-    if (ci?.state === "pending") return { ok: false, queue: true, error: "El CI del PR sigue corriendo: espera a que termine." };
+    if (ci?.state === "pending")
+      return { ok: false, queue: !opts.override, error: "El CI del PR sigue corriendo: espera a que termine." };
+    if (ci?.state === "failure") {
+      if (!opts.override)
+        return { ok: false, error: `El CI del PR está en rojo (${ci.failed.join(", ") || "ver checks"}): pídele el arreglo a @build antes del merge.` };
+      await logEvent(run.id, "merge_override", sub, { who: opts.override.who, reason: opts.override.reason.slice(0, 300), failing: ci.failed, sha: head ?? null });
+      await postInThread(
+        run,
+        "check",
+        `⚠️ ${opts.override.who} hizo merge con el CI en rojo (${ci.failed.join(", ") || "ver checks"}). Motivo: ${opts.override.reason.slice(0, 300)}`,
+      ).catch(() => null);
+    }
     // Preview exigida y no lista en la cabeza: no se mezcla, como un required deployment de GitHub
     // (el #96 entró con la preview en `needs_env` y tumbó la reserva de Deník 18 h, 16-oct). Cubre
     // la tarjeta, el «mézclalo» del hilo y la cola. Construyéndose: queda en cola y entra al estar.

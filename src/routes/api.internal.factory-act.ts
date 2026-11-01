@@ -3,7 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 // ── Endpoint interno: decidir un pedido de la fábrica desde la terminal ──────────
 //
 // Lo que hace la tarjeta (`factoryDecisionFn`, `factoryMergeFn`) pero a nombre de una persona que
-// llega por gs (`ghosty factory runs approve|changes|merge|card`, 19-oct; `resume|stop|cancel|close|retry_preview` desde la app, 20-oct): la fábrica como
+// llega por gs (`ghosty factory runs approve|changes|merge|card`, 19-oct; `resume|stop|cancel|close|retry_preview` desde la app, 20-oct; `choose`, 1-nov): la fábrica como
 // complemento de un agente de terminal. Firma QUIEN manda el comando (`sub`), con el mismo permiso
 // que la tarjeta: ser miembro del espacio y ver el room del pedido.
 //
@@ -23,6 +23,9 @@ type Body = {
   skipPreview?: boolean;
   dotenv?: string;
   sub?: string;
+  /** `choose`: la opción del escalado (`a`, `b`, `c`); `confirmMerge` para `merge_as_is`. */
+  option?: string;
+  confirmMerge?: boolean;
   /** `close`: además de cerrar, que Dependabot ignore la versión mayor o la dependencia. */
   ignore?: "major" | "dependency" | null;
   /** `budget` / `space_budget`: el tope nuevo en USD (null = el siguiente escalón; en `space_budget` sin él, sólo se lee). */
@@ -107,6 +110,28 @@ export const Route = createFileRoute("/api/internal/factory-act")({
               origin,
             });
             return Response.json({ ok: true, status: next.status });
+          }
+          // Uno de los caminos que dejó @check en un escalado `decision` (`ghosty factory runs choose`).
+          // La elección viaja literal al siguiente rol; `merge_as_is` exige `confirmMerge`.
+          if (body.action === "choose") {
+            if (run.status !== "escalated") return bad(`el pedido está en «${run.status}», no escalado`, 409);
+            if (!body.option) {
+              const esc = await R.escalationOf(run);
+              return Response.json({ ok: true, status: run.status, options: esc?.options ?? [] });
+            }
+            try {
+              const r = await R.chooseOption({
+                run,
+                optionId: String(body.option),
+                sub: member.sub,
+                who: member.name || "alguien",
+                origin,
+                confirmMerge: body.confirmMerge === true,
+              });
+              return Response.json({ ok: true, status: r.run.status, option: r.option, merged: !!r.merged });
+            } catch (e) {
+              return bad(e instanceof Error ? e.message : String(e), 409);
+            }
           }
           // Escalado por algo que @build no puede hacer y que la persona ya resolvió: @check revisa
           // otra vez el mismo PR, sin otra vuelta de @build.

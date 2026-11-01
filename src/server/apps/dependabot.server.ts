@@ -73,7 +73,9 @@ export function dependabotCheckBrief(o: { url: string; title: string; level: Bum
     `  · kind=fix si @build lo arregla en la rama de este PR (subir juntos los paquetes hermanos del grupo, un arreglo de tipos de una línea);\n` +
     `  · kind=skip si no conviene esta subida (p. ej. un major que el repo no puede adoptar hoy): la persona cierra el PR e ignora la versión;\n` +
     `  · kind=env si faltan variables o credenciales para probarlo (nómbralas);\n` +
-    `  · kind=decision si una persona tiene que elegir entre caminos (di cuáles).\n` +
+    `  · kind=decision si una persona tiene que elegir entre caminos: pon cada camino en options ({label, action, brief}; 2–3), cada uno es un botón. ` +
+    `Si lo rojo NO lo causa este PR (un permiso del workflow, jobs que GitHub no arrancó, una falla que ya está en main), una de las options es ` +
+    `merge_as_is con la evidencia que reuniste, y otra el arreglo concreto (build en esta rama, o recheck tras arreglarlo en main).\n` +
     `  Nunca escales porque el CI o la preview siguen en camino: se espera. Que GitHub limite las peticiones (rate limit) tampoco es decision: ` +
     `reintenta en unos minutos y, si no se libera, pass=false citando «GitHub está limitando las peticiones»: la plataforma lo pausa y te lo regresa sola.\n` +
     `NO edites ni empujes nada.`

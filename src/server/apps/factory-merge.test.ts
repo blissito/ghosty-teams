@@ -84,6 +84,21 @@ describe("mergeRun: guarda de CI", () => {
     expect(!r.ok && r.error).toContain("verify");
     expect(merged).toBe(0);
   });
+  // Una persona decide hacer merge con lo rojo que no causó el PR (opción `merge_as_is`, 1-nov).
+  it("override de una persona: mezcla con el CI en rojo y lo deja en la bitácora", async () => {
+    checks = { state: "failure", failed: ["security"] };
+    const r = await mergeRun({ ...run, status: "escalated" } as Run, "beto", { override: { who: "Beto", reason: "permiso de gitleaks" }, skipPreview: true });
+    expect(r.ok).toBe(true);
+    expect(merged).toBe(1);
+    expect(events).toContain("merge_override");
+  });
+  it("override con checks corriendo: no mezcla ni queda en cola", async () => {
+    checks = { state: "pending" };
+    const r = await mergeRun(run, "beto", { override: { who: "Beto", reason: "x" } });
+    expect(r.ok).toBe(false);
+    expect(!r.ok && r.queue).toBe(false);
+    expect(merged).toBe(0);
+  });
   it("CI corriendo: espera", async () => {
     checks = { state: "pending" };
     expect((await mergeRun(run, "beto")).ok).toBe(false);

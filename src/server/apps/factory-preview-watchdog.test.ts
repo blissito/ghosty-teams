@@ -35,7 +35,7 @@ vi.mock("../../dbq.server", () => ({
       events.push({ run_id: Number(args[0]), type: String(args[2]), data_json: args[3] ?? null, at: nowS() });
       return [];
     }
-    if (sql.startsWith("SELECT data_json, at FROM gt_factory_events")) {
+    if (/^SELECT (type, )?data_json, at FROM gt_factory_events/.test(sql)) {
       const ev = events.filter((e) => e.run_id === Number(args[0]) && (e.type === "check_blocked" || e.type === "check_fail")).at(-1);
       return ev ? [ev] : [];
     }

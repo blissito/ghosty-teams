@@ -16,7 +16,7 @@ const posts: string[] = [];
 
 vi.mock("../../dbq.server", () => ({
   dbq: async (sql: string, args: any[] = []) => {
-    if (sql.startsWith("SELECT data_json, at FROM gt_factory_events")) {
+    if (/^SELECT (type, )?data_json, at FROM gt_factory_events/.test(sql)) {
       const ev = events.filter((e) => e.type === "check_blocked" || e.type === "check_fail").at(-1);
       return ev ? [ev] : [];
     }
@@ -91,6 +91,8 @@ describe("escalationOf con tipo (easybits, 20-oct)", () => {
       findings: "- Vite 7 quita Node 18\n- el Dockerfile usa node:18",
       at: 1700,
       actions: ["close", "close_ignore", "fix"],
+      options: null,
+      via: "blocked",
     });
   });
 

@@ -267,6 +267,14 @@ describe("el rol le pregunta algo a la persona", () => {
     expect(pushes.at(-1)).toMatchObject({ recipients: ["ana"], body: expect.stringContaining("@build te hizo una pregunta") });
   });
 
+  // mailmask #153/#154 (30-oct → 1-nov): tras «terminó dos veces» el barrido lo retomaba 4 veces al día.
+  it("tras el empujón sin cerrar: aviso a la persona y queda esperándola (el barrido ya no lo retoma)", async () => {
+    await afterFactoryTurn({ key: "factory:10:build:1:nudge", ref: "r", origin: "o" }, { sub: "ana" }, "Listo, ya quedó.");
+    await flush();
+    expect(posts.some((p) => /terminó dos veces/.test(JSON.stringify(p)))).toBe(true);
+    expect(events()).toContain("waiting_person");
+  });
+
   it("sin pregunta: el empujón de siempre", async () => {
     await afterFactoryTurn({ key: "factory:10:build:1", ref: "r", origin: "o" }, { sub: "ana" }, "Listo, ya quedó.");
     expect(events()).not.toContain("waiting_person");

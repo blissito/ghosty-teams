@@ -464,6 +464,37 @@ export const factoryDecisionFn = createServerFn({ method: "POST" })
     return { ok: true as const, status: next.status };
   });
 
+/**
+ * Elegir uno de los caminos que dejó @check en un escalado `decision` (un botón por opción). La
+ * elección viaja literal al siguiente rol. `merge_as_is` llega sólo con `confirmMerge` (2º clic).
+ */
+export const factoryChooseFn = createServerFn({ method: "POST" })
+  .validator((d: { runId: number; optionId: string; confirmMerge?: boolean }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) throw new Error("no autenticado");
+    const R = await import("./factory-runs.server");
+    const run = await R.getRun(Number(data.runId));
+    if (!run) throw new Error("pedido no encontrado");
+    const db = await import("../../db.server");
+    if (!(await db.listChannels(me.sub, me.isOwner)).some((c) => c.id === run.channelId)) throw new Error("no ves ese room");
+    const { reqOrigin } = await import("../../origin.server");
+    const r = await R.chooseOption({
+      run,
+      optionId: String(data.optionId ?? ""),
+      sub: me.sub,
+      who: me.name || "alguien",
+      origin: await reqOrigin().catch(() => ""),
+      confirmMerge: data.confirmMerge === true,
+    });
+    if (run.prUrl) {
+      ciCache.delete(run.prUrl);
+      mergeableCache.delete(run.prUrl);
+    }
+    void R.refreshRoom(run.channelId);
+    return { ok: true as const, status: r.run.status, merged: !!r.merged };
+  });
+
 /** «¿Qué hago?» de un pedido escalado: sólo recomienda; decidir sigue siendo `factoryDecisionFn`. */
 export const factoryAdviseFn = createServerFn({ method: "POST" })
   .validator((d: { runId: number }) => d)
@@ -673,7 +704,7 @@ export const factoryRunCardFn = createServerFn({ method: "POST" })
       // Con su tipo, el motivo de un renglón y lo que se le ofrece a la persona (20-oct).
       escalation: await (async () => {
         const e = await R.escalationOf(run);
-        return e ? { kind: e.kind, reason: e.reason, points: e.points, at: e.at, actions: e.actions } : null;
+        return e ? { kind: e.kind, reason: e.reason, points: e.points, at: e.at, actions: e.actions, options: e.options } : null;
       })(),
       // Después del merge: lo que vio el vigilante en producción (paso «Prod»).
       prod: run.status === "done" ? await (await import("./post-merge.server")).runProd(run) : null,

@@ -31,6 +31,7 @@ let livePreview: { state: string; url: string | null; sha: string | null; error:
 let smokeResult: import("./factory-smoke.server").SmokeResult[] | null = null;
 const whyCalls: { runId: number; opts: Run }[] = [];
 let whyReply: Run | null = null;
+let ciResult: Run = { state: "success", failed: [] };
 
 vi.mock("./installed.server", () => ({ isInstalled: async () => true }));
 vi.mock("../hooks/generic-alert.server", () => ({ alertWebhookTools: () => [] }));
@@ -73,7 +74,7 @@ vi.mock("./factory-runs.server", () => ({
   consumeNote: async (id: number) => void consumed.push(id),
   steerRole: async (_r: Run, _role: string, text: string) => (steers.push(text), steerOk),
   logEvent: async (_id: number, type: string, _a: string, data: Run) => void logged.push({ type, data }),
-  prCi: async () => ({ state: "success", failed: [] }),
+  prCi: async () => ciResult,
   markPrReady: async () => true,
   previewGate: async () => gate,
   previewRequired: async () => !!gate,
@@ -120,6 +121,7 @@ beforeEach(() => {
   smokeResult = null;
   whyCalls.length = 0;
   whyReply = null;
+  ciResult = { state: "success", failed: [] };
   byPr = [];
   applied.length = 0;
   sqlLog.length = 0;
@@ -490,5 +492,49 @@ describe("factory_check_verdict: escalado con tipo (easybits, 20-oct)", () => {
     current = baseRun();
     await verdict({ pass: false, findings: "- tipo mal en a.ts:3", kind: "fix", reason: "Un tipo mal en a.ts" });
     expect(applied[0]).toMatchObject({ event: "check_fail", data: { kind: "fix", reason: "Un tipo mal en a.ts" } });
+  });
+});
+
+// mailmask #153/#154 (1-nov): una decisión sin caminos dejaba a @build esperando «a o b» para siempre.
+describe("factory_check_verdict: decision con opciones", () => {
+  const dest = { channelId: 3, parentId: 99, handle: "check" };
+  it("sin options se rechaza y dice cómo mandarlas", async () => {
+    current = baseRun({ status: "checking", prUrl: "https://github.com/o/r/pull/8" });
+    const r = (await (await tool("factory_check_verdict", dest)).handler("beto", { pass: false, findings: "- gitleaks 403", kind: "decision", reason: "Falta un permiso" })) as Run;
+    expect(r.ok).toBe(false);
+    expect(String(r.error)).toContain("options");
+    expect(applied).toHaveLength(0);
+  });
+  it("con options se guardan en el escalado y se listan en el hilo", async () => {
+    current = baseRun({ status: "checking", prUrl: "https://github.com/o/r/pull/8" });
+    await (await tool("factory_check_verdict", dest)).handler("beto", {
+      pass: false, findings: "- gitleaks 403", kind: "decision", reason: "Falta un permiso",
+      options: [
+        { label: "Arreglar en main", action: "recheck", brief: "pull-requests: read en main" },
+        { label: "Hacer merge así", action: "merge_as_is", brief: "lo rojo no es del bump" },
+      ],
+    });
+    expect(applied[0].event).toBe("check_blocked");
+    expect(applied[0].data.options.map((o: Run) => o.id)).toEqual(["a", "b"]);
+    expect(posted.at(-1)).toContain("**a)** Arreglar en main");
+  });
+});
+
+// mailmask #154 (30-oct): GitHub no arrancó los jobs (cobro) y @build no podía cerrar su paso nunca.
+describe("factory_build_done: CI que GitHub no arrancó", () => {
+  const dest = { channelId: 3, parentId: 99, handle: "build" };
+  it("pasa a @check con el aviso, en vez de rebotar a @build", async () => {
+    current = baseRun({ status: "building" });
+    ciResult = { state: "failure", failed: ["quick", "verify (1)"], notStarted: true };
+    const r = (await (await tool("factory_build_done", dest)).handler("beto", { pr_url: "https://github.com/o/r/pull/8", tests: "vitest 1785/1789" })) as Run;
+    expect(r.ok).not.toBe(false);
+    expect(handoffs.find((x) => x.to === "check")!.text).toContain("## El CI no arrancó");
+  });
+  it("un rojo que sí corrió sigue regresando a @build", async () => {
+    current = baseRun({ status: "building" });
+    ciResult = { state: "failure", failed: ["verify (1)"], notStarted: false };
+    const r = (await (await tool("factory_build_done", dest)).handler("beto", { pr_url: "https://github.com/o/r/pull/8", tests: "x" })) as Run;
+    expect(r.ok).toBe(false);
+    expect(handoffs.find((x) => x.to === "check")).toBeUndefined();
   });
 });

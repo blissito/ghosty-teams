@@ -1927,6 +1927,8 @@ export const en: Record<string, string> = {
   "Falta algo que @build no puede resolver con sus herramientas: dalo tú, o rehaz el plan.": "It needs something @build can't solve with its tools: provide it, or redo the plan.",
   "Que @build lo arregle": "Let @build fix it",
   "Leí los {n} puntos: que @build lo arregle": "I read the {n} points: let @build fix it",
+  "Confirmo: merge con {checks} en rojo": "Confirm: merge with {checks} red",
+  "Confirmo: hacer merge así": "Confirm: merge as is",
   "Rehacer el plan": "Redo the plan",
   "¿Qué hago?": "What do I do?",
   "Analizando…": "Analyzing…",

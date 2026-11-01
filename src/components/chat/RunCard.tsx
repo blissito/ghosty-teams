@@ -18,7 +18,7 @@ import { playYourTurnSound } from "../../utils/notificationSound";
 const turnChimed = new Set<string>();
 import { DiffBar, MergeBox } from "./ReviewPanel";
 import { RunSlot } from "./RunSlot";
-import { factoryVerdictFn, factoryMergeFn, factoryRunCardFn, factoryDecisionFn, factoryAdviseFn, factoryRetryPreviewFn, factorySetPreviewOffFn, factoryRunActionFn, factoryRunCiFn, factoryFixCiFn } from "../../server/apps/factory";
+import { factoryVerdictFn, factoryMergeFn, factoryRunCardFn, factoryDecisionFn, factoryChooseFn, factoryAdviseFn, factoryRetryPreviewFn, factorySetPreviewOffFn, factoryRunActionFn, factoryRunCiFn, factoryFixCiFn } from "../../server/apps/factory";
 import { prepareRepoFn } from "../../server/apps/readiness";
 import type { RunCardData } from "../../lib/ebdoc";
 import { runKindTag } from "../../lib/factory-kinds";
@@ -186,6 +186,8 @@ function RunCardBody({ card, channelId, inPanel, msgId }: { card: RunCardData; c
   // Escalado: aprobar pide un 2º clic con los puntos a la vista (no se aprueba a ciegas).
   const [confirming, setConfirming] = useState(false);
   const [allPoints, setAllPoints] = useState(false);
+  // Opción «Hacer merge así» de un escalado: pide un 2º clic con los checks rojos a la vista.
+  const [confirmOption, setConfirmOption] = useState<string | null>(null);
   // «¿Qué hago?»: la recomendación de gs, con la nota y el alcance editables antes de «Aplicar».
   const [advice, setAdvice] = useState<Awaited<ReturnType<typeof factoryAdviseFn>> | null>(null);
   const [adviceNote, setAdviceNote] = useState("");
@@ -323,6 +325,22 @@ function RunCardBody({ card, channelId, inPanel, msgId }: { card: RunCardData; c
       setAdviceNote(a.note);
       setAdviceScope(a.checkScope);
       setAsking(false);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Un camino de los que dejó @check: la elección le llega literal al siguiente rol.
+  const choose = async (optionId: string, action: string) => {
+    if (action === "merge_as_is" && confirmOption !== optionId) return setConfirmOption(optionId);
+    setBusy(true);
+    setErr("");
+    try {
+      await factoryChooseFn({ data: { runId: st!.runId, optionId, confirmMerge: action === "merge_as_is" } });
+      setConfirmOption(null);
+      refresh();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -700,9 +718,35 @@ function RunCardBody({ card, channelId, inPanel, msgId }: { card: RunCardData; c
           </p>
         )}
         <div className="mt-2 flex flex-wrap items-center gap-2">
+          {st.canSign && st.status === "escalated" && st.escalation?.options?.length
+            ? st.escalation.options.map((o, i) => {
+                const red = (st.ci?.checks ?? []).filter((c) => c.state === "failure").map((c) => c.name);
+                const confirmingThis = confirmOption === o.id;
+                return (
+                  <button
+                    key={o.id}
+                    type="button"
+                    disabled={busy}
+                    title={o.brief}
+                    onClick={() => choose(o.id, o.action)}
+                    className={
+                      i === 0
+                        ? "rounded-full border border-emerald-600 px-3 py-1 text-xs font-bold text-emerald-600 hover:bg-emerald-600/10 disabled:opacity-50"
+                        : "rounded-full border border-border px-3 py-1 text-xs font-semibold text-ink hover:bg-surface-3 disabled:opacity-50"
+                    }
+                  >
+                    {confirmingThis
+                      ? red.length
+                        ? t("Confirmo: merge con {checks} en rojo").replace("{checks}", red.slice(0, 3).join(", ") + (red.length > 3 ? "…" : ""))
+                        : t("Confirmo: hacer merge así")
+                      : `${o.id}) ${o.label}`}
+                  </button>
+                );
+              })
+            : null}
           {st.canSign && (
             <>
-              <button
+              {!(st.status === "escalated" && st.escalation?.options?.length) && <button
                 type="button"
                 disabled={busy}
                 onClick={() => {
@@ -719,7 +763,7 @@ function RunCardBody({ card, channelId, inPanel, msgId }: { card: RunCardData; c
                   : startsAt
                     ? t("Arrancar ya")
                     : `${t("Aprobar plan")} v${st.planVersion}`}
-              </button>
+              </button>}
               <button
                 type="button"
                 disabled={busy}

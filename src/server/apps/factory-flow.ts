@@ -136,6 +136,56 @@ export const ESCALATION_ACTIONS: Record<EscalationKind, EscalationAction[]> = {
   platform: ["retry_preview", "recheck"],
 };
 
+/**
+ * Un camino concreto de un escalado `decision`, con la acción que lo ejecuta. Antes las opciones
+ * vivían sólo en la prosa de @check y el botón «Que @build lo arregle» despertaba a @build sin decir
+ * cuál se eligió: @build esperaba «a o b» para siempre (mailmask #153/#154, 30-oct → 1-nov).
+ */
+export type EscalationOptionAction = "build" | "recheck" | "replan" | "close" | "merge_as_is";
+export const ESCALATION_OPTION_ACTIONS: readonly EscalationOptionAction[] = ["build", "recheck", "replan", "close", "merge_as_is"];
+export type EscalationOption = { id: string; label: string; action: EscalationOptionAction; brief: string };
+
+/**
+ * Las opciones que mandó @check, limpias: 2–3, etiqueta ≤60, brief ≤600, ids «a», «b», «c» en
+ * orden. `merge_as_is` sólo si hay PR. Lo inválido se descarta; si quedan menos de 2, no hay
+ * opciones (la tarjeta usa los botones de siempre). Pura.
+ */
+export function normalizeEscalationOptions(raw: unknown, opts: { hasPr: boolean }): EscalationOption[] | null {
+  if (!Array.isArray(raw)) return null;
+  const out: EscalationOption[] = [];
+  for (const o of raw) {
+    if (!o || typeof o !== "object") continue;
+    const action = (o as { action?: unknown }).action;
+    if (!(ESCALATION_OPTION_ACTIONS as readonly unknown[]).includes(action)) continue;
+    if (action === "merge_as_is" && !opts.hasPr) continue;
+    const label = clipReason(String((o as { label?: unknown }).label ?? ""), 60);
+    const brief = String((o as { brief?: unknown }).brief ?? "").trim().slice(0, 600);
+    if (!label) continue;
+    out.push({ id: String.fromCharCode(97 + out.length), label, action: action as EscalationOptionAction, brief: brief || label });
+    if (out.length === 3) break;
+  }
+  return out.length >= 2 ? out : null;
+}
+
+/**
+ * ¿La respuesta en el hilo elige una opción? «a», «b)», «la b», «opción 2», «2». Sólo con opciones
+ * vigentes; lo demás no se interpreta. Pura.
+ */
+export function parseOptionChoice(text: string, options: EscalationOption[] | null | undefined): EscalationOption | null {
+  if (!options?.length) return null;
+  const t = String(text ?? "").trim().toLowerCase();
+  const m = t.match(/^(?:(?:la|el)\s+|opci[oó]n\s+)?([a-c]|[1-3])[\s.)!]*$/u);
+  if (!m) return null;
+  const k = m[1];
+  const idx = /\d/.test(k) ? Number(k) - 1 : k.charCodeAt(0) - 97;
+  return options[idx] ?? null;
+}
+
+/** La nota que viaja al siguiente rol cuando una persona elige una opción. Pura. */
+export function optionNote(o: EscalationOption): string {
+  return `Elegí la opción ${o.id}: ${o.label}. ${o.brief}`.trim();
+}
+
 export function isEscalationKind(v: unknown): v is EscalationKind {
   return typeof v === "string" && (ESCALATION_KINDS as readonly string[]).includes(v);
 }

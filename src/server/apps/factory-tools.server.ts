@@ -7,7 +7,7 @@
 import { notaNombres, type ConnectorTool, type ToolChannel } from "../connectors/impl";
 import type { ToolDest } from "../connectors/tool-token.server";
 import { isInstalled } from "./installed.server";
-import { MAX_LOOPS, clipReason, countsLoop, isEscalationKind, isGithubRateLimit, stageLabel, type EscalationKind } from "./factory-flow";
+import { MAX_LOOPS, clipReason, countsLoop, isEscalationKind, isGithubRateLimit, normalizeEscalationOptions, stageLabel, type EscalationKind, type EscalationOption } from "./factory-flow";
 import type { EnvRiskEntry } from "./factory-preview-gate";
 import { ESCALATION_TITLE } from "./factory-brief";
 import { parseSeverity, type Severity } from "../automations/severity";
@@ -26,9 +26,18 @@ const ESCALATION_ASK: Record<EscalationKind, string> = {
   env: "Guarda las variables (con datos de prueba) y luego «Que @check revise».",
   fix: "Decide en la tarjeta de abajo: «Que @build lo arregle» o «Rehacer el plan».",
   skip: "Decide en la tarjeta de abajo: «Cerrar PR», «Cerrar e ignorar esta versión» o «Que @build lo arregle».",
+  // Sólo sin opciones (las vueltas agotadas): con opciones se lista cada camino (`optionsAsk`).
   decision: "Decide en la tarjeta de abajo: «¿Qué hago?», «Que @build lo arregle» o «Rehacer el plan».",
   platform: "Nadie tiene que decidir: se reintenta sola.",
 };
+
+/** Cómo se elige cuando @check dejó opciones: botones en la tarjeta o la letra en el hilo. */
+function optionsAsk(options: EscalationOption[]): string {
+  return (
+    "Elige en la tarjeta de abajo, o contesta aquí con la letra:\n" +
+    options.map((o) => `- **${o.id})** ${o.label}`).join("\n")
+  );
+}
 
 const origin = async () => {
   const { reqOrigin } = await import("../../origin.server");
@@ -467,7 +476,11 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           run = await R.applyEvent(run, "rework", {}, { actor: "build", data: { reason: "commits después del veredicto" } });
         // CI en rojo no llega a @check: se ahorra una vuelta y lo arregla quien construyó.
         const ci = await R.prCi(sub, url);
-        if (ci?.state === "failure") {
+        // GitHub no arrancó los jobs (cobro o límite de gasto): @build no lo puede arreglar con
+        // código, y rebotarlo lo dejaba girando días (mailmask #154). Pasa a @check con el aviso,
+        // y @check lo escala como decisión (volver a correr el CI o hacer merge así).
+        const ciNotStarted = ci?.state === "failure" && ci.notStarted === true;
+        if (ci?.state === "failure" && !ciNotStarted) {
           // Ciclo acotado (Stripe: máximo 2 rondas de CI): a la 2ª falla seguida, que lo vea
           // una persona en vez de seguir quemando vueltas.
           const { dbq } = await import("../../dbq.server");
@@ -507,6 +520,11 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           sub,
           "revisar el PR",
           `Revisa el PR ${url} contra el plan APROBADO (v${run.planVersion}). Resultado que reporta @build: ${String(a.tests).slice(0, 500)}\n\n` +
+            (ciNotStarted
+              ? `## El CI no arrancó\nGitHub no corrió los jobs (${ci!.failed.join(", ")}: rojos en ≤ 5 s, sin pasos; suele ser cobro o límite de gasto de Actions). ` +
+                `No es del código. Revisa con las pruebas de la caja y, si el CI sigue sin arrancar, da pass=false con kind=decision y options ` +
+                `recheck («Volver a correr el CI») y merge_as_is («Hacer merge con la evidencia de la caja»).\n\n`
+              : "") +
             `## Plan aprobado\n${plan?.planMd ?? "(no encontré el plan)"}\n\n` +
             (next.checkScope
               ? `## Alcance de esta vuelta\n${next.checkScope}\n\nRevisa SÓLO esto. Lo nuevo que encuentres fuera del alcance va como nota ` +
@@ -565,6 +583,24 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
               "Si la preview no arranca o sigue en camino NO escales: espera (la plataforma lo detecta sola). " +
               "Si GitHub limita las peticiones (rate limit, 403/429) no es decision: espera y reintenta; si no se libera, " +
               "pass=false con «GitHub está limitando las peticiones» en findings y la plataforma lo pausa y te lo regresa sola.",
+          },
+          options: {
+            type: "array",
+            description:
+              "Con kind=decision, OBLIGATORIO: los 2–3 caminos entre los que elige la persona; cada uno es un botón en la tarjeta y " +
+              "la elección viaja literal al siguiente rol. action: build (@build hace lo que dice brief en la rama), recheck (@check " +
+              "vuelve a revisar el mismo PR, p. ej. tras re-correr el CI), replan (@plan rehace el plan con brief), close (cerrar el PR) " +
+              "o merge_as_is (hacer merge tal cual: úsalo cuando lo rojo NO lo causa este PR —permiso del workflow, job que GitHub no " +
+              "arrancó, falla que ya está en main— y la evidencia de la caja basta). brief = la instrucción concreta, en una o dos frases.",
+            items: {
+              type: "object",
+              properties: {
+                label: { type: "string", description: "El texto del botón (≤60), p. ej. «Arreglar el permiso en main»" },
+                action: { type: "string", enum: ["build", "recheck", "replan", "close", "merge_as_is"] },
+                brief: { type: "string", description: "Qué se hace exactamente si se elige" },
+              },
+              required: ["label", "action", "brief"],
+            },
           },
           reason: {
             type: "string",
@@ -811,9 +847,23 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
                 `la preview ${pv.state === "waiting" ? `espera lugar (${pv.error ?? "sin lugar"})` : "se está construyendo"}, y eso no es un bloqueo: ` +
                 "espera y vuelve a pedirla con factory_preview. Si no arranca, la plataforma lo detecta sola y te avisa.",
             };
-          const next = await R.applyEvent(run, "check_blocked", checked, { actor: "check", data: { findings: findings.slice(0, 4000), kind, reason } });
+          // Una decisión sin caminos concretos dejaba a la persona con «Que @build lo arregle» a ciegas y a
+          // @build esperando «a o b» que nunca llegaba (mailmask #153/#154). Se exigen las opciones.
+          const options = kind === "decision" ? normalizeEscalationOptions(a.options, { hasPr: !!run.prUrl }) : null;
+          if (kind === "decision" && !options)
+            return {
+              ok: false,
+              error:
+                "con kind=decision faltan options: 2–3 caminos {label, action, brief} con action build|recheck|replan|close|merge_as_is " +
+                "(merge_as_is sólo con PR). Cada uno será un botón y la elección le llega literal al siguiente rol.",
+            };
+          const next = await R.applyEvent(run, "check_blocked", checked, {
+            actor: "check",
+            data: { findings: findings.slice(0, 4000), kind, reason, ...(options ? { options } : {}) },
+          });
           // decision/fix/env: el brief de gs en llano (si contesta a tiempo); si no, lo de siempre.
-          await R.postEscalation(next, kind, findings, `⚠️ **${ESCALATION_TITLE[kind]}** — ${reason}\n\n${findings}\n\n${ESCALATION_ASK[kind]}`);
+          const ask = options ? optionsAsk(options) : ESCALATION_ASK[kind];
+          await R.postEscalation(next, kind, findings, `⚠️ **${ESCALATION_TITLE[kind]}** — ${reason}\n\n${findings}\n\n${ask}`);
           await R.postRunCard(next);
           return { ok: true, status: next.status, note: "Escalado a una persona. No lo repitas." };
         }
