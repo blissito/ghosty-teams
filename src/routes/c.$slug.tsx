@@ -937,6 +937,37 @@ function useChatScroll(
   const count = msgs?.length ?? 0;
   const contentLen = msgs?.reduce((n, m) => n + (m.body?.length ?? 0), 0) ?? 0;
   const lastTop = useRef(0);
+  // Último gesto REAL de la persona sobre el scroller (rueda, toque, teclado, arrastre de la
+  // barra). Sólo eso puede despegar la vista del fondo: al abrir un hilo o room las tarjetas,
+  // imágenes y vistas lazy reflowan durante segundos y cualquier `scroll` que provoquen se
+  // tomaba por «la persona subió» → quedaba a la mitad y había que bajar a mano.
+  const lastInput = useRef(0);
+  const dragging = useRef(false);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const mark = () => { lastInput.current = performance.now(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(e.key)) mark();
+    };
+    // Arrastre de la barra: el pointerdown cae en el propio scroller, no en un hijo.
+    const onDown = (e: PointerEvent) => { mark(); if (e.target === el) dragging.current = true; };
+    const onUp = () => { dragging.current = false; };
+    el.addEventListener("wheel", mark, { passive: true });
+    el.addEventListener("touchstart", mark, { passive: true });
+    el.addEventListener("touchmove", mark, { passive: true });
+    el.addEventListener("keydown", onKey);
+    el.addEventListener("pointerdown", onDown);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      el.removeEventListener("wheel", mark);
+      el.removeEventListener("touchstart", mark);
+      el.removeEventListener("touchmove", mark);
+      el.removeEventListener("keydown", onKey);
+      el.removeEventListener("pointerdown", onDown);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, [scrollRef]);
   useEffect(() => {
     // Cambio de room con la misma vista montada: se arranca pegado al fondo.
     didLand.current = false;
@@ -953,8 +984,15 @@ function useChatScroll(
     // subió» dejaba el hilo abierto a la mitad (medido: 501 px arriba del fondo al abrir).
     const wentUp = el.scrollTop < lastTop.current - 2;
     lastTop.current = el.scrollTop;
+    const byUser = dragging.current || performance.now() - lastInput.current < 1000;
     if (near) stick.current = true;
-    else if (wentUp) stick.current = false;
+    else if (wentUp && byUser) stick.current = false;
+    else if (stick.current && !byUser) {
+      // Pegados y sin gesto: el contenido se movió solo (tarjeta lazy) → de vuelta al fondo.
+      el.scrollTop = el.scrollHeight;
+      lastTop.current = el.scrollTop;
+      return;
+    }
     if (resetKey != null) {
       if (stick.current) savedScroll.delete(resetKey);
       else {
