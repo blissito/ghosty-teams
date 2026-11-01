@@ -146,6 +146,7 @@ import { Markdown } from "../components/Markdown";
 import { Avatar } from "../components/Avatar";
 import { SettingsContent, loadSettingsData } from "../components/SettingsContent";
 import { Toggle } from "../components/Toggle";
+import { LiveDestinations } from "../components/LiveDestinations";
 import { RepoReadiness } from "../components/RepoReadiness";
 import { repoReadinessFn } from "../server/apps/readiness";
 import { getTheme, subscribeTheme, resolveDark, presetById, paletteVars } from "../utils/theme";
@@ -5607,6 +5608,8 @@ function EventSection({
         </span>
         <Toggle on={callOn} onChange={setCallOn} />
       </div>
+
+      {mode === "webinar" && <LiveDestinations slug={slug} defaultTitle={title.trim() || channel?.name || ""} startsAt={startsAt} />}
 
       {err && <p className="mb-2 text-xs text-red-400">{err}</p>}
 
