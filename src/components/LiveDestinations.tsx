@@ -14,6 +14,8 @@ type Dest = { provider: Provider; account: string; lastWatchUrl: string | null; 
 type Status = { configured: Record<Provider, boolean>; destinations: Dest[]; box: { targets: string[]; ready: boolean } | null };
 type Prepared = Awaited<ReturnType<typeof livePrepareFn>>;
 
+const fmtWhen = (iso: string) => (iso ? new Date(iso).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "");
+
 const NAME: Record<Provider, string> = { youtube: "YouTube", facebook: "Facebook" };
 const PROVIDERS: Provider[] = ["youtube", "facebook"];
 
@@ -76,6 +78,12 @@ export function LiveDestinations({ slug, defaultTitle, startsAt }: { slug: strin
 
   const dest = (p: Provider) => st?.destinations.find((d) => d.provider === p) ?? null;
   const connected = PROVIDERS.filter((p) => dest(p));
+  // Lo que dice la caja puede venir de una preparación vieja (otra cuenta): lo que manda es si cada
+  // destino conectado AHORA se preparó después de conectarse (gs borra `lastPreparedAt` al reconectar)
+  // y si la caja lo tiene cargado.
+  const boxHas = (p: Provider) => !!st?.box?.ready && st.box.targets.some((x) => x.toLowerCase().includes(p));
+  const pending = connected.filter((p) => !dest(p)?.lastPreparedAt || !boxHas(p));
+  const lastPrepared = connected.map((p) => dest(p)?.lastPreparedAt ?? "").sort()[0] ?? "";
 
   return (
     <div className="mb-3 rounded-xl border border-border p-3">
@@ -118,14 +126,19 @@ export function LiveDestinations({ slug, defaultTitle, startsAt }: { slug: strin
             >
               {t("Preparar transmisión")}
             </button>
-            <span className="text-xs text-muted">
-              {st.box?.ready && st.box.targets.length
-                ? t("Lista para transmitir a {where}", { where: st.box.targets.join(" + ") })
-                : connected.length
-                  ? t("Sin preparar")
-                  : t("Conecta un destino primero")}
-            </span>
+            {connected.length > 0 && (
+              <span className={`text-xs ${pending.length ? "text-amber-500" : "text-emerald-500"}`}>
+                {pending.length
+                  ? t("Falta preparar: {list}", { list: pending.map((p) => `${NAME[p]} · ${dest(p)!.account}`).join(", ") })
+                  : t("Lista desde {when}", { when: fmtWhen(lastPrepared) })}
+              </span>
+            )}
           </div>
+          <p className="mt-2 text-xs text-muted">
+            {connected.length
+              ? t("Prepárala el día del evento con la sala vacía (crea la transmisión en cada destino). Ya en la llamada, aprieta Grabar con «En vivo» marcado y sale al aire sola.")
+              : t("Conecta YouTube o Facebook para poder transmitir.")}
+          </p>
         </>
       )}
 

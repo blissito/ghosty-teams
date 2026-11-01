@@ -2601,6 +2601,10 @@ export const en: Record<string, string> = {
   "Tus rooms, documentos y agentes siguen aquí.": "Your rooms, documents and agents are still here.",
   "El dueño tiene que reactivar este espacio.": "The owner needs to reactivate this space.",
   // Transmisión en vivo (LiveDestinations)
+  "Falta preparar: {list}": "Not prepared yet: {list}",
+  "Lista desde {when}": "Ready since {when}",
+  "Prepárala el día del evento con la sala vacía (crea la transmisión en cada destino). Ya en la llamada, aprieta Grabar con «En vivo» marcado y sale al aire sola.": "Prepare it on event day with the room empty (it creates the stream on each destination). Then, in the call, press Record with “Live” checked and it goes on air by itself.",
+  "Conecta YouTube o Facebook para poder transmitir.": "Connect YouTube or Facebook to stream.",
   "Transmisión en vivo": "Live streaming",
   "Al grabar con «En vivo» marcado, el evento sale también en tu canal de YouTube y tu página de Facebook.": "When you record with “Live” checked, the event also goes out on your YouTube channel and Facebook page.",
   "Sin conectar": "Not connected",
