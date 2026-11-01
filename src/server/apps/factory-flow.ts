@@ -141,8 +141,10 @@ export const ESCALATION_ACTIONS: Record<EscalationKind, EscalationAction[]> = {
  * vivían sólo en la prosa de @check y el botón «Que @build lo arregle» despertaba a @build sin decir
  * cuál se eligió: @build esperaba «a o b» para siempre (mailmask #153/#154, 30-oct → 1-nov).
  */
-export type EscalationOptionAction = "build" | "recheck" | "replan" | "close" | "merge_as_is";
-export const ESCALATION_OPTION_ACTIONS: readonly EscalationOptionAction[] = ["build", "recheck", "replan", "close", "merge_as_is"];
+// `fix_main` (1-nov): el arreglo va en la rama principal, en un pedido aparte (`repo_fix`); al
+// mezclarse, los pedidos que esperaban se ponen al día y @check los revisa otra vez.
+export type EscalationOptionAction = "build" | "recheck" | "replan" | "close" | "merge_as_is" | "fix_main";
+export const ESCALATION_OPTION_ACTIONS: readonly EscalationOptionAction[] = ["build", "recheck", "replan", "close", "merge_as_is", "fix_main"];
 export type EscalationOption = { id: string; label: string; action: EscalationOptionAction; brief: string };
 
 /**
@@ -157,7 +159,7 @@ export function normalizeEscalationOptions(raw: unknown, opts: { hasPr: boolean 
     if (!o || typeof o !== "object") continue;
     const action = (o as { action?: unknown }).action;
     if (!(ESCALATION_OPTION_ACTIONS as readonly unknown[]).includes(action)) continue;
-    if (action === "merge_as_is" && !opts.hasPr) continue;
+    if ((action === "merge_as_is" || action === "fix_main") && !opts.hasPr) continue;
     const label = clipReason(String((o as { label?: unknown }).label ?? ""), 60);
     const brief = String((o as { brief?: unknown }).brief ?? "").trim().slice(0, 600);
     if (!label) continue;
@@ -242,11 +244,12 @@ export function clipReason(text: string, max = 140): string {
  */
 export function needsYou(
   run: { status: RunStatus },
-  escalation: { kind: EscalationKind } | null | undefined,
+  escalation: { kind: EscalationKind; waitingFix?: number | null } | null | undefined,
   opts: { merge?: "auto" | "queued" | null } = {},
 ): boolean {
   if (run.status === "plan_review") return true;
-  if (run.status === "escalated") return (escalation?.kind ?? "decision") !== "platform";
+  // Espera el arreglo de main que ya eligió: no le toca otra vez.
+  if (run.status === "escalated") return (escalation?.kind ?? "decision") !== "platform" && !escalation?.waitingFix;
   if (run.status === "pr_review") return !opts.merge;
   return false;
 }
@@ -282,6 +285,8 @@ export function viewState(
     merge?: "auto" | "queued" | null;
     /** El tipo del último escalado (`escalationOf`): `platform` no le toca a nadie. */
     escalationKind?: EscalationKind | null;
+    /** Pedido `repo_fix` abierto que arregla main por éste: la persona ya decidió. */
+    waitingFix?: number | null;
   },
 ): RunView {
   const open = !["done", "cancelled"].includes(run.status);
@@ -316,6 +321,8 @@ export function viewState(
     case "escalated":
       // Falla de la plataforma (la preview no arrancó): nadie tiene que decidir; se reintenta sola.
       if (opts.escalationKind === "platform") return { column: "checking", label: "Esperando preview", stale: false, whoseTurn: null, primary: null };
+      // Eligió «Arreglar en main»: espera ese pedido; al mergearse se pone al día y @check revisa solo.
+      if (opts.waitingFix) return { column: "waiting", label: `Esperando el arreglo de main (#${opts.waitingFix})`, stale: false, whoseTurn: null, primary: null };
       return { column: "waiting", label: "Necesita tu decisión", stale: false, whoseTurn: owner, primary: "decide" };
     default:
       return { column: "closed", label: run.status === "done" ? "Terminado" : "Cancelado", stale: false, whoseTurn: open ? owner : null, primary: null };

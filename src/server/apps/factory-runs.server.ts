@@ -552,6 +552,8 @@ export type Escalation = {
   options: EscalationOption[] | null;
   /** `blocked`: @check (o la plataforma) lo frenó; `loops`: se agotaron las vueltas. */
   via: "blocked" | "loops";
+  /** Pedido `repo_fix` abierto que arregla main por éste: la persona ya decidió, no le toca. */
+  waitingFix?: number | null;
 };
 
 /**
@@ -572,7 +574,24 @@ export async function escalationOf(run: Run): Promise<Escalation | null> {
   } catch {
     return null;
   }
-  return escalationFromEvent(data, Number(row?.at ?? 0), row?.type === "check_fail" ? "loops" : "blocked");
+  const esc = escalationFromEvent(data, Number(row?.at ?? 0), row?.type === "check_fail" ? "loops" : "blocked");
+  if (esc) esc.waitingFix = await openFixFor(run.id, esc.at);
+  return esc;
+}
+
+/** El pedido `repo_fix` que este pedido espera (elegido después de `since`), si sigue abierto. */
+export async function openFixFor(runId: number, since = 0): Promise<number | null> {
+  const [ev] = await dbq(
+    "SELECT data_json FROM gt_factory_events WHERE run_id = ? AND type = 'waiting_fix' AND at >= ? ORDER BY id DESC LIMIT 1",
+    [runId, since],
+  ).catch(() => []);
+  if (!ev) return null;
+  let id = 0;
+  try {
+    id = Number(JSON.parse(String(ev.data_json ?? "{}")).fixRun) || 0;
+  } catch {}
+  const fix = id ? await getRun(id) : null;
+  return fix && !["done", "cancelled"].includes(fix.status) ? fix.id : null;
 }
 
 /** Pura: el escalado a partir del `data` de su evento (`check_blocked`/`check_fail`). */
@@ -844,6 +863,8 @@ export async function parkStaleDependabotRuns(isBusy: (run: Run) => boolean): Pr
     if (now - Number(r.last_person_at ?? now) < DEPENDABOT_PARK_SECONDS) continue;
     const run = toRun(r);
     if (isBusy(run)) continue;
+    // Espera el arreglo de main que la persona ya eligió: no está abandonado.
+    if (run.status === "escalated" && (await openFixFor(run.id))) continue;
     const days = Math.round((now - Number(r.last_person_at)) / 86400);
     const next = await applyEvent(run, "cancel", {}, { data: { reason: "parked" } }).catch(() => null);
     if (!next) continue;
@@ -1654,6 +1675,56 @@ export async function decide(opts: {
  * corrida esperando firma; lo demás es conversación normal y no se toca. Nunca lanza.
  */
 /**
+ * Abre un pedido con el plan YA escrito y la tarjeta para firmar, sin despertar a @plan: la raíz del
+ * hilo con la cara de @plan, plan v1 y `plan_review`. Al firmar, la estafeta de siempre despierta a
+ * @build. Lo usan «Preparar repo» (`prep`) y «Arreglar en main» (`repo_fix`, 1-nov).
+ */
+export async function openPlannedRun(o: {
+  channelId: number;
+  repo: string;
+  title: string;
+  planMd: string;
+  kind: string;
+  requestedBy: string;
+  rootBody: string;
+}): Promise<Run> {
+  const db = await import("../../db.server");
+  const bus = await import("../bus.server");
+  const { currentNamespace } = await import("../tenant.server");
+  const { resolvedAgents } = await import("../../agents.server");
+  const ns = await currentNamespace();
+  const plan = (await resolvedAgents()).find((a) => a.handle === "plan");
+  const { id: rootId } = await db.postAgent(o.channelId, null, o.rootBody, "msg", "plan", plan?.name ?? "Plan", "general", plan?.avatar ?? "");
+  const rootMsg = await db.getMessage(rootId);
+  if (rootMsg) bus.publish(bus.ch.room(ns, o.channelId), { t: "message:new", msg: rootMsg });
+  const rows = await dbq(
+    `INSERT INTO gt_factory_runs (channel_id, root_msg_id, topic, title, status, repo, requested_by, kind)
+     VALUES (?, ?, 'general', ?, 'planning', ?, ?, ?) RETURNING id`,
+    [o.channelId, rootId, o.title, o.repo, o.requestedBy, o.kind],
+  );
+  let run = (await getRun(Number(rows[0].id)))!;
+  run = await applyEvent(run, "plan_submitted", { plan_version: 1 });
+  await dbq("INSERT INTO gt_factory_plans (run_id, version, plan_md) VALUES (?, 1, ?)", [run.id, o.planMd]);
+  const msgId = await postInThread(run, "plan", planCardFence(run.id, 1));
+  if (msgId) await dbq("UPDATE gt_factory_plans SET msg_id = ? WHERE run_id = ? AND version = 1", [msgId, run.id]);
+  await ensureRunCard(run);
+  void refreshRoom(o.channelId);
+  return run;
+}
+
+/** El plan de «Arreglar en main»: lo que eligió la persona, los checks rojos y la evidencia de @check. Pura. */
+export function repoFixPlan(o: { origin: Pick<Run, "id" | "title" | "prUrl">; option: EscalationOption; reason: string; findings: string }): string {
+  return (
+    `## Objetivo\n${o.option.brief}\n\n` +
+    `## Por qué\nEl CI del pedido #${o.origin.id} («${o.origin.title}»${o.origin.prUrl ? `, ${o.origin.prUrl}` : ""}) está rojo por algo que no causa su PR: ${o.reason}. ` +
+    `El arreglo va en la rama principal, en un PR aparte; al mergearse, la plataforma pone al día los PRs afectados y @check los revisa otra vez.\n\n` +
+    `## Lo que encontró @check\n${o.findings.slice(0, 2500)}\n\n` +
+    `## Cómo sabemos que quedó\n- El PR de este pedido toca sólo lo necesario (típicamente .github/workflows) y su CI pasa.\n` +
+    `- Después del merge, el check que estaba rojo pasa en el PR #${o.origin.id}.`
+  );
+}
+
+/**
  * Una persona eligió uno de los caminos que dejó @check en un escalado `decision`. La elección
  * viaja literal al siguiente rol («Elegí la opción b: …»). `merge_as_is` exige `confirmMerge`
  * (la tarjeta pide doble confirmación). Lanza con un mensaje para la persona.
@@ -1665,7 +1736,7 @@ export async function chooseOption(opts: {
   who: string;
   origin: string;
   confirmMerge?: boolean;
-}): Promise<{ run: Run; option: EscalationOption; merged?: boolean }> {
+}): Promise<{ run: Run; option: EscalationOption; merged?: boolean; fixRun?: number }> {
   const { run, sub, who } = opts;
   if (run.status !== "escalated") throw new Error("el pedido ya no espera una decisión");
   const esc = await escalationOf(run);
@@ -1683,6 +1754,35 @@ export async function chooseOption(opts: {
       return { run: await recheck({ run, sub, who, note, origin: opts.origin }), option };
     case "close":
       return { run: await closeRunPr(run, { ignore: null, who }), option };
+    case "fix_main": {
+      if (!run.repo) throw new Error("el pedido no tiene repo");
+      // Ya hay uno abierto para este pedido (o para otro del mismo repo): no se abre otro.
+      const mine = await openFixFor(run.id);
+      if (mine) return { run, option, fixRun: mine };
+      const [shared] = await dbq(
+        "SELECT id FROM gt_factory_runs WHERE kind = 'repo_fix' AND lower(repo) = lower(?) AND status NOT IN ('done','cancelled') ORDER BY id DESC LIMIT 1",
+        [run.repo],
+      ).catch(() => []);
+      if (shared) {
+        await logEvent(run.id, "waiting_fix", sub, { fixRun: Number(shared.id) });
+        await postInThread(run, "check", `🔧 Ya hay un arreglo de main en curso: pedido #${shared.id}. Al mergearse, pongo este PR al día y @check lo revisa otra vez.`).catch(() => null);
+        void refreshRoom(run.channelId);
+        return { run, option, fixRun: Number(shared.id) };
+      }
+      const fix = await openPlannedRun({
+        channelId: run.channelId,
+        repo: run.repo,
+        title: clipReason(`Arreglar en main: ${option.label}`, 90),
+        planMd: repoFixPlan({ origin: run, option, reason: esc?.reason ?? "", findings: esc?.findings ?? "" }),
+        kind: "repo_fix",
+        requestedBy: sub,
+        rootBody: `🔧 **Arreglar en main** — ${who} eligió «${option.label}» para destrabar el pedido #${run.id}. Firma el plan y @build abre un PR aparte contra la rama principal.`,
+      });
+      await logEvent(run.id, "waiting_fix", sub, { fixRun: fix.id });
+      await postInThread(run, "check", `🔧 ${who} eligió arreglarlo en main: pedido #${fix.id}. Al mergearse, pongo este PR al día y @check lo revisa otra vez.`).catch(() => null);
+      void refreshRoom(run.channelId);
+      return { run, option, fixRun: fix.id };
+    }
     case "merge_as_is": {
       const r = await mergeRun(run, sub, { override: { who, reason: `${option.label}. ${esc?.reason ?? ""}`.trim() } });
       if (!r.ok) throw new Error(r.error);
@@ -1856,7 +1956,45 @@ export async function prCi(
     if (!r || r.error) return null;
     const failed = Array.isArray(r.failed) ? r.failed.map((f: any) => String(f?.name ?? f)).slice(0, 5) : [];
     const checks = Array.isArray(r.checks) ? r.checks : [];
+    void import("./factory-repo-alerts.server").then((m) => m.trackRepoCi(pr.repo, checks)).catch(() => {});
     return { state: String(r.state ?? "none"), failed, checks, notStarted: ciNotStarted(checks) };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * ¿De quién es el rojo del PR? Los checks rojos con su origen (`factory-ci-attribution.ts`): la cabeza
+ * de la rama base y los PRs de otros pedidos abiertos del mismo repo (≤ 7 días, máx. 5). null si
+ * GitHub no contesta. Caché 10 min por PR y cabeza: lo piden build_done, el vigilante y la tarjeta.
+ */
+const attributionCache = new Map<string, { at: number; v: import("./factory-ci-attribution").RedCheck[] }>();
+export async function prCiAttribution(sub: string, run: Pick<Run, "id" | "prUrl">): Promise<import("./factory-ci-attribution").RedCheck[] | null> {
+  const pr = run.prUrl ? parsePrUrl(run.prUrl) : null;
+  if (!pr) return null;
+  try {
+    const own = await prCi(sub, run.prUrl!);
+    if (!own) return null;
+    const { ciAttribution } = await import("./factory-ci-attribution");
+    if (own.state !== "failure") return [];
+    const { githubApi } = await import("../connectors/github.server");
+    const { loadChecks } = await import("../connectors/github-checks");
+    const info = await githubApi(sub, `/repos/${pr.repo}/pulls/${pr.number}`).catch(() => null);
+    const key = `${run.prUrl}@${info?.head?.sha ?? ""}`;
+    const hit = attributionCache.get(key);
+    if (hit && Date.now() - hit.at < 10 * 60_000) return hit.v;
+    const baseRef = info?.base?.ref ? String(info.base.ref) : null;
+    const base = baseRef ? await loadChecks((p) => githubApi(sub, p).catch(() => null), pr.repo, encodeURIComponent(baseRef)).catch(() => null) : null;
+    const since = Math.floor(Date.now() / 1000) - 7 * 86400;
+    const sibs = await dbq(
+      `SELECT pr_url FROM gt_factory_runs WHERE id != ? AND pr_url IS NOT NULL AND LOWER(pr_url) LIKE ? AND updated_at > ?
+         AND status NOT IN ('cancelled') ORDER BY updated_at DESC LIMIT 5`,
+      [run.id, `%github.com/${pr.repo.toLowerCase()}/pull/%`, since],
+    ).catch(() => []);
+    const siblings = (await Promise.all(sibs.map((r) => prCi(sub, String(r.pr_url)).catch(() => null)))).filter(Boolean).map((c) => c!.checks);
+    const v = ciAttribution(own.checks, base && !("error" in base) ? base.checks : null, siblings);
+    attributionCache.set(key, { at: Date.now(), v });
+    return v;
   } catch {
     return null;
   }
@@ -2308,6 +2446,20 @@ export async function onPrCiRed(
     await postInThread(run, "build", `⚠️ El CI del PR ${run.prUrl ?? ""} sigue en rojo (${what}; ${por}). Necesita que una persona revise el log o le diga a @build qué cambiar.`);
   };
   if (prevs.length >= 2) return pideAyuda("ya se lo regresé a @build dos veces");
+  // Todo lo rojo es ajeno al PR (no arrancó, también truena en main o en otros PRs): @build no lo
+  // puede arreglar en esta rama. Se dice una vez y se ofrece arreglarlo en main (1-nov, MailMask #153).
+  if (run.prUrl) {
+    const reds = await prCiAttribution(run.approvedBy ?? run.requestedBy, run).catch(() => null);
+    const { allRedForeign, foreignRedLine } = await import("./factory-ci-attribution");
+    if (reds && allRedForeign(reds)) {
+      const ya = await dbq("SELECT 1 FROM gt_factory_events WHERE run_id = ? AND type = 'ci_red_foreign' AND json_extract(data_json, '$.sha') IS ?", [run.id, headSha]).catch(() => []);
+      if (ya.length) return;
+      await logEvent(run.id, "ci_red_foreign", null, { sha: headSha, reds });
+      await postInThread(run, "check", `⚠️ El CI está en rojo, pero no por este PR: ${foreignRedLine(reds)}. No se lo regreso a @build; se arregla en main (o en GitHub si no arrancó). ${run.prUrl}`);
+      void refreshRoom(run.channelId);
+      return;
+    }
+  }
   if (opts.fork) return forkHelp(run, "ci_red", headSha, opts.fork, what);
   // ¿El workflow que truena ya es flaky conocido? Entonces @build reintenta antes de tocar código.
   const flaky = await flakyOfChecks(run, opts.checks ?? []);
@@ -2474,11 +2626,62 @@ export async function onPrEvent(run: Run, outcome: "merged" | "closed", role: "c
     await dbq("UPDATE gt_factory_runs SET merged_at = COALESCE(merged_at, unixepoch()) WHERE id = ?", [run.id]);
     const done = await applyEvent(run, "merged").catch(() => null);
     if (done) await postInThread(done, role, mergedMessage(run));
+    // Arreglo de main: los pedidos que lo esperaban se ponen al día y @check los revisa solo.
+    if (done && run.kind === "repo_fix") void resumeAfterFix(done).catch((e) => console.error("[factory] retomar tras arreglo", e));
     return done;
   }
   const gone = await applyEvent(run, "cancel", {}, { data: { reason: "pr_closed" } }).catch(() => null);
   if (gone) await postInThread(gone, role, `⏹️ El PR se cerró sin merge: pedido cancelado. ${run.prUrl}`);
   return gone;
+}
+
+/**
+ * El arreglo de main (`repo_fix`) se mergeó: cada pedido escalado que lo esperaba (`waiting_fix`)
+ * se pone al día y vuelve a @check. Rama intacta de Dependabot → `@dependabot rebase` (re-correr el
+ * job no basta: conserva los privilegios con que nació); rama tocada por otros → `update-branch`
+ * (Dependabot se niega a rebasar lo editado, MailMask #124). @check espera el CI si sigue corriendo.
+ */
+export async function resumeAfterFix(fix: Run): Promise<number> {
+  const rows = await dbq(
+    `SELECT DISTINCT e.run_id FROM gt_factory_events e JOIN gt_factory_runs r ON r.id = e.run_id
+      WHERE e.type = 'waiting_fix' AND r.status = 'escalated' AND CAST(json_extract(e.data_json, '$.fixRun') AS INTEGER) = ?`,
+    [fix.id],
+  ).catch(() => []);
+  const { githubApi } = await import("../connectors/github.server");
+  let n = 0;
+  for (const row of rows) {
+    const run = await getRun(Number(row.run_id));
+    if (!run || run.status !== "escalated") continue;
+    const sub = run.approvedBy ?? run.requestedBy;
+    const pr = run.prUrl ? parsePrUrl(run.prUrl) : null;
+    let how: "rebase" | "update" | "none" = "none";
+    if (pr) {
+      const commits = await githubApi(sub, `/repos/${pr.repo}/pulls/${pr.number}/commits?per_page=100`).catch(() => null);
+      const onlyBot = Array.isArray(commits) && commits.length > 0 && commits.every((c: any) => /dependabot/i.test(String(c?.author?.login ?? c?.commit?.author?.name ?? "")));
+      if (onlyBot) {
+        const c = await githubApi(sub, `/repos/${pr.repo}/issues/${pr.number}/comments`, { method: "POST", body: JSON.stringify({ body: "@dependabot rebase" }) }).catch(() => null);
+        if (c && !c.error) how = "rebase";
+      }
+      if (how === "none") {
+        const up = await githubApi(sub, `/repos/${pr.repo}/pulls/${pr.number}/update-branch`, { method: "PUT", body: "{}" }).catch(() => null);
+        if (up && !up.error) how = "update";
+      }
+    }
+    await logEvent(run.id, "fix_merged", null, { fixRun: fix.id, how });
+    const [w] = await dbq("SELECT origin FROM gt_agent_wakeups WHERE key LIKE ? AND origin IS NOT NULL AND origin != '' ORDER BY rowid DESC LIMIT 1", [`factory:${run.id}:%`]).catch(() => []);
+    await recheck({
+      run,
+      sub,
+      who: "La plataforma",
+      note:
+        `se mergeó el arreglo de main (pedido #${fix.id})` +
+        (how === "rebase" ? " y le pedí a Dependabot rebasar el PR" : how === "update" ? " y puse el PR al día con main" : "") +
+        ". Espera a que el CI nuevo termine antes de dar el veredicto",
+      origin: String(w?.origin ?? ""),
+    }).catch((e) => console.error("[factory] recheck tras arreglo", run.id, e));
+    n++;
+  }
+  return n;
 }
 
 /**

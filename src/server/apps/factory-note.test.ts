@@ -75,6 +75,8 @@ vi.mock("./factory-runs.server", () => ({
   steerRole: async (_r: Run, _role: string, text: string) => (steers.push(text), steerOk),
   logEvent: async (_id: number, type: string, _a: string, data: Run) => void logged.push({ type, data }),
   prCi: async () => ciResult,
+  prCiAttribution: async () =>
+    ciResult?.state === "failure" ? (ciResult.failed ?? []).map((name: string) => ({ name, origin: ciResult.notStarted ? "not_started" : "pr" })) : null,
   markPrReady: async () => true,
   previewGate: async () => gate,
   previewRequired: async () => !!gate,
@@ -528,7 +530,7 @@ describe("factory_build_done: CI que GitHub no arrancó", () => {
     ciResult = { state: "failure", failed: ["quick", "verify (1)"], notStarted: true };
     const r = (await (await tool("factory_build_done", dest)).handler("beto", { pr_url: "https://github.com/o/r/pull/8", tests: "vitest 1785/1789" })) as Run;
     expect(r.ok).not.toBe(false);
-    expect(handoffs.find((x) => x.to === "check")!.text).toContain("## El CI no arrancó");
+    expect(handoffs.find((x) => x.to === "check")!.text).toContain("## Lo rojo del CI no es de este PR");
   });
   it("un rojo que sí corrió sigue regresando a @build", async () => {
     current = baseRun({ status: "building" });

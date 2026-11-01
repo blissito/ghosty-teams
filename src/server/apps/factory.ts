@@ -704,7 +704,7 @@ export const factoryRunCardFn = createServerFn({ method: "POST" })
       // Con su tipo, el motivo de un renglón y lo que se le ofrece a la persona (20-oct).
       escalation: await (async () => {
         const e = await R.escalationOf(run);
-        return e ? { kind: e.kind, reason: e.reason, points: e.points, at: e.at, actions: e.actions, options: e.options } : null;
+        return e ? { kind: e.kind, reason: e.reason, points: e.points, at: e.at, actions: e.actions, options: e.options, waitingFix: e.waitingFix ?? null } : null;
       })(),
       // Después del merge: lo que vio el vigilante en producción (paso «Prod»).
       prod: run.status === "done" ? await (await import("./post-merge.server")).runProd(run) : null,
@@ -816,8 +816,8 @@ export async function runLive(run: import("./factory-runs.server").Run) {
   const majorAuto = await (await import("./factory-runs.server")).repoMajorAuto(run.repo);
   const roomAuto = !blocksAutoMerge(run.taskRef, majorAuto) && ((await (await import("../../db.server")).getRoomAutoMerge(run.channelId).catch(() => null))?.on ?? false);
   const merge = mq ? mergeMode(mq.merge_queued_by, mq.merge_queued_auto, roomAuto) : null;
-  const escalationKind = run.status === "escalated" ? ((await (await import("./factory-runs.server")).escalationOf(run))?.kind ?? null) : null;
-  const view = viewState(run, { lastActivityAt, now, busy: !!live, waitingOn, merge, escalationKind });
+  const esc = run.status === "escalated" ? await (await import("./factory-runs.server")).escalationOf(run) : null;
+  const view = viewState(run, { lastActivityAt, now, busy: !!live, waitingOn, merge, escalationKind: esc?.kind ?? null, waitingFix: esc?.waitingFix ?? null });
   return {
     view,
     waitingOn,
@@ -1117,12 +1117,14 @@ export const factoryOverviewFn = createServerFn({ method: "GET" })
       deploys.set(Number(d.pr), String(d.state));
   // El tipo de cada escalado: uno de la plataforma no va a «te toca» (easybits, 20-oct).
   const escKinds = new Map<number, string>();
+  const escFix = new Map<number, number>();
   {
     const R = await import("./factory-runs.server");
     for (const r of rows.filter((x) => x.status === "escalated" && byId.has(Number(x.channel_id))).slice(0, 100)) {
       const run = await R.getRun(Number(r.id));
       const e = run ? await R.escalationOf(run) : null;
       if (e) escKinds.set(Number(r.id), e.kind);
+      if (e?.waitingFix) escFix.set(Number(r.id), e.waitingFix);
     }
   }
   const viewOf = (r: Record<string, any>) => {
@@ -1141,6 +1143,7 @@ export const factoryOverviewFn = createServerFn({ method: "GET" })
         busy: live.some((t) => t.channelId === Number(r.channel_id) && t.parentId === Number(r.root_msg_id)),
         merge: r.status === "pr_review" ? mergeMode(r.merge_queued_by, r.merge_queued_auto, roomAuto && !blocksAutoMerge(r.task_ref, majorAuto.has(String(r.repo ?? "").toLowerCase()))) : null,
         escalationKind: (escKinds.get(Number(r.id)) as import("./factory-flow").EscalationKind | undefined) ?? null,
+        waitingFix: escFix.get(Number(r.id)) ?? null,
       },
     );
     return { column: v.column, label: v.label, turnSub: v.whoseTurn?.kind === "person" ? v.whoseTurn.sub : null };

@@ -6,6 +6,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const sqls: { sql: string; args: unknown[] }[] = [];
 let notes: { id: number; by: string; text: string }[] = [];
 let escalEvent: { type: string; data_json: string; at: number } | null = null;
+let sharedFix: number | null = null;
 
 const row = (over: Record<string, unknown> = {}) => ({
   id: 153, channel_id: 5, root_msg_id: 900, topic: "general", title: "Bump actions", status: "escalated", plan_version: 0,
@@ -16,7 +17,7 @@ vi.mock("../../dbq.server", () => ({
   dbq: async (sql: string, args: unknown[] = []) => {
     sqls.push({ sql, args });
     if (sql.startsWith("UPDATE gt_factory_runs SET status")) {
-      const r: Record<string, unknown> = row({ status: args[0] });
+      const r: Record<string, unknown> = row({ status: args[0], ...(args.includes(200) ? { id: 200, kind: "repo_fix" } : {}) });
       const cols = [...sql.matchAll(/, (\w+) = \?/g)].map((m) => m[1]);
       cols.forEach((c, i) => (r[c] = args[1 + i]));
       return [r];
@@ -29,6 +30,9 @@ vi.mock("../../dbq.server", () => ({
     if (sql.startsWith("UPDATE gt_factory_notes")) return notes.splice(0);
     if (sql.startsWith("SELECT * FROM gt_factory_plans")) return [{ plan_md: "" }];
     if (sql.startsWith("SELECT box_state")) return [{ box_state: "waiting" }];
+    if (sql.startsWith("INSERT INTO gt_factory_runs")) return [{ id: 200 }];
+    if (sql.startsWith("SELECT * FROM gt_factory_runs WHERE id = ?") && args[0] === 200) return [row({ id: 200, status: "planning", kind: "repo_fix", title: "Arreglar en main" })];
+    if (sql.includes("kind = 'repo_fix'")) return sharedFix ? [{ id: sharedFix }] : [];
     return [];
   },
 }));
@@ -71,6 +75,7 @@ beforeEach(() => {
   sqls.length = 0;
   notes = [];
   escalEvent = null;
+  sharedFix = null;
 });
 
 describe("opciones del escalado (puras)", () => {
@@ -125,6 +130,26 @@ describe("decidir un escalado decision", () => {
     expect(r.option.action).toBe("build");
     expect(handoffText()).toContain("Beto: Elegí la opción b: Arreglarlo en esta rama. Agrega pull-requests: read");
     expect(sqls.some((s) => s.sql.includes("INSERT INTO gt_factory_events") && s.args.includes("option_chosen"))).toBe(true);
+  });
+
+  it("fix_main abre un pedido repo_fix que nace esperando firma y deja al original esperándolo", async () => {
+    const fixOpts = normalizeEscalationOptions([{ label: "Dar permiso a gitleaks en main", action: "fix_main", brief: "pull-requests: read en el job security" }, OPTIONS[2]], { hasPr: true });
+    escalEvent = blocked({ findings: "- gitleaks 403 en main", kind: "decision", reason: "Falta un permiso en main", options: fixOpts });
+    const r = await chooseOption({ run: run(), optionId: "a", sub: "beto", who: "Beto", origin: "" });
+    expect(r.fixRun).toBe(200);
+    const ins = sqls.find((x) => x.sql.startsWith("INSERT INTO gt_factory_runs"))!;
+    expect(ins.args).toContain("repo_fix");
+    const plan = sqls.find((x) => x.sql.startsWith("INSERT INTO gt_factory_plans"))!;
+    expect(String(plan.args[1])).toContain("pull-requests: read en el job security");
+    expect(sqls.some((x) => x.sql.includes("INSERT INTO gt_factory_events") && x.args.includes("waiting_fix"))).toBe(true);
+  });
+
+  it("fix_main reutiliza el arreglo abierto del mismo repo (no abre uno por PR)", async () => {
+    sharedFix = 77;
+    escalEvent = blocked({ findings: "- x", kind: "decision", reason: "r", options: normalizeEscalationOptions([{ label: "main", action: "fix_main", brief: "b" }, OPTIONS[2]], { hasPr: true }) });
+    const r = await chooseOption({ run: run(), optionId: "a", sub: "beto", who: "Beto", origin: "" });
+    expect(r.fixRun).toBe(77);
+    expect(sqls.some((x) => x.sql.startsWith("INSERT INTO gt_factory_runs"))).toBe(false);
   });
 
   it("merge_as_is exige confirmación explícita", async () => {

@@ -647,6 +647,11 @@ function RunCardBody({ card, channelId, inPanel, msgId }: { card: RunCardData; c
                   ? `${t("Vueltas de check")}: ${st.loops}`
                   : ""}
         </p>
+        {st.status === "escalated" && st.escalation?.waitingFix ? (
+          <p className="mt-2 rounded-lg border border-border bg-surface-2 px-3 py-2 text-xs text-ink" role="status">
+            {t("🔧 Esperando el arreglo de main (#{n}). Al mergearse, este PR se pone al día y @check lo revisa solo.").replace("{n}", String(st.escalation.waitingFix))}
+          </p>
+        ) : null}
         {st.status === "escalated" && st.escalation?.points.length ? (
           <div className="mt-2 rounded-lg border border-amber-600/40 bg-amber-500/5 px-3 py-2 text-xs" role="note">
             {st.escalation.reason ? <p className="font-semibold text-ink">{st.escalation.reason}</p> : null}
@@ -718,7 +723,7 @@ function RunCardBody({ card, channelId, inPanel, msgId }: { card: RunCardData; c
           </p>
         )}
         <div className="mt-2 flex flex-wrap items-center gap-2">
-          {st.canSign && st.status === "escalated" && st.escalation?.options?.length
+          {st.canSign && st.status === "escalated" && st.escalation?.options?.length && !st.escalation.waitingFix
             ? st.escalation.options.map((o, i) => {
                 const red = (st.ci?.checks ?? []).filter((c) => c.state === "failure").map((c) => c.name);
                 const confirmingThis = confirmOption === o.id;

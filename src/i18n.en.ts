@@ -1929,6 +1929,7 @@ export const en: Record<string, string> = {
   "Leí los {n} puntos: que @build lo arregle": "I read the {n} points: let @build fix it",
   "Confirmo: merge con {checks} en rojo": "Confirm: merge with {checks} red",
   "Confirmo: hacer merge así": "Confirm: merge as is",
+  "🔧 Esperando el arreglo de main (#{n}). Al mergearse, este PR se pone al día y @check lo revisa solo.": "🔧 Waiting for the main fix (#{n}). Once it merges, this PR is updated and @check reviews it again on its own.",
   "Rehacer el plan": "Redo the plan",
   "¿Qué hago?": "What do I do?",
   "Analizando…": "Analyzing…",

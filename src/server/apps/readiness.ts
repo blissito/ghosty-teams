@@ -90,30 +90,16 @@ export const prepareRepoFn = createServerFn({ method: "POST" })
     if (!fixes.length) throw new Error("no hay nada que preparar en el repo");
 
     const R = await import("./factory-runs.server");
-    const { dbq } = await import("../../dbq.server");
-    const bus = await import("../bus.server");
-    const { currentNamespace } = await import("../tenant.server");
-    const ns = await currentNamespace();
-    // La raíz del pedido con la cara de @plan, como cualquier otro: todo cuelga de su hilo.
-    const { resolvedAgents } = await import("../../agents.server");
-    const plan = (await resolvedAgents()).find((a) => a.handle === "plan");
-    const rootBody = `🧰 **${title}** — ${me.name ?? "El dueño"} pidió preparar el repo (nivel ${r.level} de 3, ${r.passed}/${r.total}). Firma el plan y @build abre un solo PR.`;
-    const { id: rootId } = await db.postAgent(room, null, rootBody, "msg", "plan", plan?.name ?? "Plan", "general", plan?.avatar ?? "");
-    const rootMsg = await db.getMessage(rootId);
-    if (rootMsg) bus.publish(bus.ch.room(ns, room), { t: "message:new", msg: rootMsg });
-
-    const rows = await dbq(
-      `INSERT INTO gt_factory_runs (channel_id, root_msg_id, topic, title, status, repo, requested_by, kind)
-       VALUES (?, ?, 'general', ?, 'planning', ?, ?, 'prep') RETURNING id`,
-      [room, rootId, title, data.repo, me.sub],
-    );
-    let run = (await R.getRun(Number(rows[0].id)))!;
-    run = await R.applyEvent(run, "plan_submitted", { plan_version: 1 });
-    await dbq("INSERT INTO gt_factory_plans (run_id, version, plan_md) VALUES (?, 1, ?)", [run.id, planMd]);
-    const msgId = await R.postInThread(run, "plan", R.planCardFence(run.id, 1));
-    if (msgId) await dbq("UPDATE gt_factory_plans SET msg_id = ? WHERE run_id = ? AND version = 1", [msgId, run.id]);
-    await R.ensureRunCard(run);
-    void R.refreshRoom(room);
+    const run = await R.openPlannedRun({
+      channelId: room,
+      repo: data.repo,
+      title,
+      planMd,
+      kind: "prep",
+      requestedBy: me.sub,
+      rootBody: `🧰 **${title}** — ${me.name ?? "El dueño"} pidió preparar el repo (nivel ${r.level} de 3, ${r.passed}/${r.total}). Firma el plan y @build abre un solo PR.`,
+    });
+    const rootId = run.rootMsgId;
     return { runId: run.id, status: run.status, threadUrl: await threadUrl(room, rootId), existing: false };
   });
 

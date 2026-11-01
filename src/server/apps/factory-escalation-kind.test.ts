@@ -93,6 +93,7 @@ describe("escalationOf con tipo (easybits, 20-oct)", () => {
       actions: ["close", "close_ignore", "fix"],
       options: null,
       via: "blocked",
+      waitingFix: null,
     });
   });
 

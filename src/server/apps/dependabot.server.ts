@@ -75,7 +75,8 @@ export function dependabotCheckBrief(o: { url: string; title: string; level: Bum
     `  · kind=env si faltan variables o credenciales para probarlo (nómbralas);\n` +
     `  · kind=decision si una persona tiene que elegir entre caminos: pon cada camino en options ({label, action, brief}; 2–3), cada uno es un botón. ` +
     `Si lo rojo NO lo causa este PR (un permiso del workflow, jobs que GitHub no arrancó, una falla que ya está en main), una de las options es ` +
-    `merge_as_is con la evidencia que reuniste, y otra el arreglo concreto (build en esta rama, o recheck tras arreglarlo en main).\n` +
+    `merge_as_is con la evidencia que reuniste, y otra el arreglo concreto: fix_main si hay que cambiar algo de la rama principal (workflow, permiso, ` +
+    `config; brief = qué cambiar), o build si se arregla en esta rama. Para saber si es ajeno, mira si el mismo check truena en main o en otros PRs abiertos del repo.\n` +
     `  Nunca escales porque el CI o la preview siguen en camino: se espera. Que GitHub limite las peticiones (rate limit) tampoco es decision: ` +
     `reintenta en unos minutos y, si no se libera, pass=false citando «GitHub está limitando las peticiones»: la plataforma lo pausa y te lo regresa sola.\n` +
     `NO edites ni empujes nada.`
@@ -127,6 +128,11 @@ export async function adoptDependabotPr(ev: PrOpened, opts: { room?: number } = 
     const db = await import("../../db.server");
     const room = opts.room ?? (await db.notifyRoomsOfRepo(ev.repo))[0];
     if (!room) return [];
+    // GitHub no arranca los jobs del repo (cobro): no se adopta nada nuevo hasta que vuelva; ya hay un aviso en el room.
+    if (await (await import("./factory-repo-alerts.server")).repoCiDown(ev.repo)) {
+      console.log(`[dependabot] ${ev.repo}#${ev.number} en pausa: el CI del repo no arranca`);
+      return [room];
+    }
     // Tope de vivos por repo (también por el webhook): éste queda en cola para el barrido. El room
     // cuenta como cubierto para que no le llegue además el aviso suelto.
     if ((await liveDependabotRuns(ev.repo)) >= DEPENDABOT_LIVE_CAP) {

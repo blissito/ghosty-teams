@@ -476,11 +476,13 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           run = await R.applyEvent(run, "rework", {}, { actor: "build", data: { reason: "commits después del veredicto" } });
         // CI en rojo no llega a @check: se ahorra una vuelta y lo arregla quien construyó.
         const ci = await R.prCi(sub, url);
-        // GitHub no arrancó los jobs (cobro o límite de gasto): @build no lo puede arreglar con
-        // código, y rebotarlo lo dejaba girando días (mailmask #154). Pasa a @check con el aviso,
-        // y @check lo escala como decisión (volver a correr el CI o hacer merge así).
-        const ciNotStarted = ci?.state === "failure" && ci.notStarted === true;
-        if (ci?.state === "failure" && !ciNotStarted) {
+        // Rojo que no causa el PR (GitHub no arrancó los jobs, ya truena en main o en otros PRs del
+        // repo): @build no lo arregla en esta rama y rebotarlo lo dejaba girando días (mailmask
+        // #153/#154). Pasa a @check con el aviso; @check escala con «arreglar en main» o «merge así».
+        const reds = ci?.state === "failure" ? await R.prCiAttribution(sub, { id: run.id, prUrl: url }) : null;
+        const { allRedForeign, foreignRedLine } = await import("./factory-ci-attribution");
+        const ciForeign = !!reds && allRedForeign(reds);
+        if (ci?.state === "failure" && !ciForeign) {
           // Ciclo acotado (Stripe: máximo 2 rondas de CI): a la 2ª falla seguida, que lo vea
           // una persona en vez de seguir quemando vueltas.
           const { dbq } = await import("../../dbq.server");
@@ -520,17 +522,20 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           sub,
           "revisar el PR",
           `Revisa el PR ${url} contra el plan APROBADO (v${run.planVersion}). Resultado que reporta @build: ${String(a.tests).slice(0, 500)}\n\n` +
-            (ciNotStarted
-              ? `## El CI no arrancó\nGitHub no corrió los jobs (${ci!.failed.join(", ")}: rojos en ≤ 5 s, sin pasos; suele ser cobro o límite de gasto de Actions). ` +
-                `No es del código. Revisa con las pruebas de la caja y, si el CI sigue sin arrancar, da pass=false con kind=decision y options ` +
-                `recheck («Volver a correr el CI») y merge_as_is («Hacer merge con la evidencia de la caja»).\n\n`
+            (ciForeign
+              ? `## Lo rojo del CI no es de este PR\n${foreignRedLine(reds!)}.\nNo lo cuentes como hallazgo del cambio: revísalo con las pruebas de la caja. ` +
+                `Si sigue rojo, da pass=false con kind=decision y options: ` +
+                (reds!.some((r) => r.origin === "base" || r.origin === "repo_wide") ? `fix_main («Arreglarlo en main», brief = qué cambiar), ` : "") +
+                (reds!.some((r) => r.origin === "not_started") ? `recheck («Volver a correr el CI» tras revisar Billing), ` : "") +
+                `y merge_as_is («Hacer merge con la evidencia de la caja»).\n\n`
               : "") +
             `## Plan aprobado\n${plan?.planMd ?? "(no encontré el plan)"}\n\n` +
             (next.checkScope
               ? `## Alcance de esta vuelta\n${next.checkScope}\n\nRevisa SÓLO esto. Lo nuevo que encuentres fuera del alcance va como nota ` +
                 `(factory_note) o issue aparte, no como pass=false.\n\n`
               : "") +
-            (touchesGithub
+            // `repo_fix` (arreglar main tras un rojo ajeno, 1-nov) ES un arreglo de CI: tocar .github/ es su trabajo.
+            (touchesGithub && run.kind !== "repo_fix"
               ? `⚠️ Este PR modifica archivos de .github/ (CI o CODEOWNERS). Si el pedido NO es agregar o arreglar el CI, es un hallazgo: repórtalo con pass=false` +
                 (R.isDependabotUpgrade(run)
                   ? ` (excepción: en una subida de Dependabot se pide agregar un grupo de paquetes hermanos a .github/dependabot.yml; sólo eso, nada de workflows ni CODEOWNERS). `
@@ -591,12 +596,14 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
               "la elección viaja literal al siguiente rol. action: build (@build hace lo que dice brief en la rama), recheck (@check " +
               "vuelve a revisar el mismo PR, p. ej. tras re-correr el CI), replan (@plan rehace el plan con brief), close (cerrar el PR) " +
               "o merge_as_is (hacer merge tal cual: úsalo cuando lo rojo NO lo causa este PR —permiso del workflow, job que GitHub no " +
-              "arrancó, falla que ya está en main— y la evidencia de la caja basta). brief = la instrucción concreta, en una o dos frases.",
+              "arrancó, falla que ya está en main— y la evidencia de la caja basta) o fix_main (abrir un pedido aparte que arregla la rama " +
+              "principal —workflow, permiso, config— cuando lo rojo también truena en main o en otros PRs; al mergearse, este PR se pone al " +
+              "día y se revisa solo). brief = la instrucción concreta, en una o dos frases.",
             items: {
               type: "object",
               properties: {
                 label: { type: "string", description: "El texto del botón (≤60), p. ej. «Arreglar el permiso en main»" },
-                action: { type: "string", enum: ["build", "recheck", "replan", "close", "merge_as_is"] },
+                action: { type: "string", enum: ["build", "recheck", "replan", "close", "merge_as_is", "fix_main"] },
                 brief: { type: "string", description: "Qué se hace exactamente si se elige" },
               },
               required: ["label", "action", "brief"],
@@ -854,8 +861,8 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
             return {
               ok: false,
               error:
-                "con kind=decision faltan options: 2–3 caminos {label, action, brief} con action build|recheck|replan|close|merge_as_is " +
-                "(merge_as_is sólo con PR). Cada uno será un botón y la elección le llega literal al siguiente rol.",
+                "con kind=decision faltan options: 2–3 caminos {label, action, brief} con action build|recheck|replan|close|merge_as_is|fix_main " +
+                "(merge_as_is y fix_main sólo con PR). Cada uno será un botón y la elección le llega literal al siguiente rol.",
             };
           const next = await R.applyEvent(run, "check_blocked", checked, {
             actor: "check",

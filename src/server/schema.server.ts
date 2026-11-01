@@ -1113,6 +1113,15 @@ async function migrate(): Promise<void> {
     consumed_at INTEGER
   )`);
   await exec("CREATE INDEX IF NOT EXISTS gt_factory_notes_run ON gt_factory_notes(run_id, consumed_at)");
+  // Avisos por repo, no por pedido (1-nov): GitHub no arranca los jobs (cobro o límite de gasto).
+  await exec(`CREATE TABLE IF NOT EXISTS gt_factory_repo_alerts (
+    repo        TEXT NOT NULL,
+    kind        TEXT NOT NULL,
+    since       INTEGER NOT NULL DEFAULT (unixepoch()),
+    notified_at INTEGER,
+    cleared_at  INTEGER,
+    PRIMARY KEY (repo, kind)
+  )`);
   // Tareas programadas de la Software Factory (revisión nocturna, dependencias): a su hora
   // la plataforma despierta a @plan en el room de la fábrica con un encargo fijo. Una fila
   // por tipo; `owner_sub` = con qué credenciales (GitHub) trabaja @plan.
