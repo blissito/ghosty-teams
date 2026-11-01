@@ -7,6 +7,7 @@
 import { parseKindMeta } from "../../lib/factory-kinds";
 import { GITHUB_REPLY_FORMAT } from "./factory-roles";
 import { dbq } from "../../dbq.server";
+import type { FactoryPushTarget } from "../notify.server";
 import {
   ESCALATION_ACTIONS,
   MAX_LOOPS,
@@ -94,6 +95,16 @@ export async function getRun(id: number): Promise<Run | null> {
 export async function runOfThread(channelId: number, rootMsgId: number): Promise<Run | null> {
   const rows = await dbq("SELECT * FROM gt_factory_runs WHERE channel_id = ? AND root_msg_id = ?", [channelId, rootMsgId]);
   return rows[0] ? toRun(rows[0]) : null;
+}
+
+/** A dónde abre la app móvil un aviso de este hilo: el pedido si el hilo ya es uno, el hilo con
+ *  @plan si el room trabaja como fábrica (tiene repo), `null` si no es de la fábrica. */
+export async function factoryPushTarget(channel: { id: number; slug: string }, threadId: number | null | undefined): Promise<FactoryPushTarget | null> {
+  if (!threadId) return null;
+  const run = await runOfThread(channel.id, threadId);
+  if (run) return { room: channel.slug, thread: threadId, runId: run.id };
+  const db = await import("../../db.server");
+  return (await db.listRoomRepos(channel.id)).length ? { room: channel.slug, thread: threadId } : null;
 }
 
 export async function getPlan(runId: number, version: number) {
@@ -660,6 +671,7 @@ export async function notifyRun(run: Run, subs: string[], body: string, tag: str
         body,
         url: `/c/${ch.slug}?thread=${run.rootMsgId}&run=${run.id}`,
         tag,
+        factory: { room: ch.slug, thread: run.rootMsgId, runId: run.id },
       },
       await currentNamespace(),
     );

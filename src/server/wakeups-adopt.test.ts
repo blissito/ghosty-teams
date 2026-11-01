@@ -30,7 +30,7 @@ vi.mock("./turns.server", () => ({
   setTurnStep: (_ns: string, _id: number, p: string) => void steps.push(p),
   touchTurn: () => {},
 }));
-vi.mock("./mentions.server", () => ({ notificarMencionesDelAgente: async (_ns: string, _c: unknown, reply: string) => (mentioned.push(reply), "") }));
+vi.mock("./mentions.server", () => ({ notifyAgentMentions: async (_ns: string, _c: unknown, reply: string) => (mentioned.push(reply), "") }));
 vi.mock("./apps/factory-runs.server", () => ({ afterFactoryTurn: async () => {} }));
 vi.mock("./delivery-fences.server", () => ({ attachDeliveryFences: async () => null }));
 vi.mock("../agents.server", () => ({

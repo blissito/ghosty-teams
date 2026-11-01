@@ -45,8 +45,8 @@ export function nativeTools(
     const db = await import("../../db.server");
     const channel = await db.getChannelById(dest.channelId);
     if (!channel) return "";
-    const { notificarMencionesDelAgente } = await import("../mentions.server");
-    return notificarMencionesDelAgente(ns, channel, text, agentName).catch(() => "");
+    const { notifyAgentMentions } = await import("../mentions.server");
+    return notifyAgentMentions(ns, channel, text, agentName).catch(() => "");
   };
   return [
     {

@@ -3,7 +3,7 @@ import { pendingAsk } from "@ghostystudio/computer";
 import type { RtEvent } from "./bus.server";
 import type { SessionUser } from "../users.server";
 import type { Channel } from "../db.server";
-import { notifyMentions, notificarMencionesDelAgente, mencionaAAlguienMas } from "./mentions.server";
+import { notifyMentions, notifyAgentMentions, mencionaAAlguienMas } from "./mentions.server";
 import { FACTORY_HANDLES } from "./apps/factory-roles";
 
 // Server functions — modelo Slack. El pool_ token nunca toca el browser.
@@ -1025,7 +1025,7 @@ export const postMessageAs = createServerOnlyFn(async (me: SessionMe | null, dat
   // `unresolved` viaja al cliente: un `@algo` que no es nadie y no despierta a ningún
   // agente se quedaba en silencio absoluto (ni 👀 ni aviso). Ahora se dice, con los
   // handles que sí hay.
-  const menciones = await notifyMentions(ns, channel, body, name, me?.sub ?? "").catch(() => null);
+  const menciones = await notifyMentions(ns, channel, body, name, me?.sub ?? "", true, { parentId: data.parentId ?? null }).catch(() => null);
   // ¿Qué agentes responden y dónde? (multi-mención: cada @tagged responde)
   //
   // MODELO ZULIP (2026-08-03): la respuesta del agente NACE SIEMPRE EN UN HILO, colgada
@@ -1735,7 +1735,7 @@ export const askAgentAs = createServerOnlyFn(async (me: SessionMe | null, data: 
   // ~6 reescrituras del body en bloques best-effort, todas derivadas de `reply` y todas
   // quitando fences: un aviso pegado después se lo comería la siguiente. Metido aquí,
   // viaja con el texto y sobrevive a todas.
-  const mencionesAgente = await notificarMencionesDelAgente(ns, channel, replyDelTurno, name).catch(() => "");
+  const mencionesAgente = await notifyAgentMentions(ns, channel, replyDelTurno, name, { parentId: data.parentId ?? null }).catch(() => "");
   // Relevo: un @agente en la respuesta lo despierta en este hilo (con tope por hilo).
   // Un turno muerto no releva: su texto es trabajo a medias, no un encargo.
   const relevo = turnResult.failure

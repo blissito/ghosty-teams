@@ -483,9 +483,8 @@ export async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
   if (dest.channelId != null) {
     const channel = await db.getChannelById(dest.channelId).catch(() => null);
     if (channel) {
-      const { notificarMencionesDelAgente } = await import("./mentions.server");
-      const app = agent?.backend?.kind === "fleet" ? { agentId: agent.backend.id, sessionId: ref.groupId } : undefined;
-      gapNotice = await notificarMencionesDelAgente(ns, channel, finalBody, name, { app, parentId: dest.parentId ?? null }).catch(() => "");
+      const { notifyAgentMentions } = await import("./mentions.server");
+      gapNotice = await notifyAgentMentions(ns, channel, finalBody, name, { parentId: dest.parentId ?? null }).catch(() => "");
     }
   }
   // Un ```eb-doc``` del relevo se publica como en un turno de chat (antes quedaba crudo y la

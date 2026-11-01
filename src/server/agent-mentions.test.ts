@@ -32,8 +32,12 @@ vi.mock("../db.server", () => ({
   GHOSTY_HANDLE: "ghosty",
 }));
 vi.mock("./notify.server", () => ({ notify: (...a: unknown[]) => notify(...a) }));
+// Hilo 812 = pedido #96 de la fábrica; cualquier otro hilo no es de la fábrica.
+vi.mock("./apps/factory-runs.server", () => ({
+  factoryPushTarget: async (ch: { slug: string }, thread: number | null | undefined) => (thread === 812 ? { room: ch.slug, thread, runId: 96 } : null),
+}));
 
-const { notifyMentions, notificarMencionesDelAgente } = await import("./mentions.server");
+const { notifyMentions, notifyAgentMentions } = await import("./mentions.server");
 
 const ROOM = { id: 7, slug: "general", name: "general", is_private: 0 } as never;
 const PRIVADO = { id: 7, slug: "legal", name: "legal", is_private: 1 } as never;
@@ -108,7 +112,22 @@ describe("notifyMentions con el AGENTE como emisor", () => {
   });
 });
 
-describe("notificarMencionesDelAgente", () => {
+describe("aviso de un hilo de la Fábrica", () => {
+  it("lleva el pedido para que la app móvil lo abra, nunca la conversación del agente", async () => {
+    await notifyAgentMentions("acme", ROOM, "@ana firma el plan", "Constructor", { parentId: 812 });
+    const ev = notify.mock.calls[0][0] as Record<string, unknown>;
+    expect(ev.factory).toEqual({ room: "general", thread: 812, runId: 96 });
+    expect(ev.url).toBe("/c/general?thread=812");
+    expect(ev).not.toHaveProperty("app");
+  });
+
+  it("fuera de la fábrica no lleva `factory`", async () => {
+    await notifyAgentMentions("acme", ROOM, "@ana mira esto", "Ghosty", { parentId: 5 });
+    expect(notify.mock.calls[0][0]).not.toHaveProperty("factory");
+  });
+});
+
+describe("notifyAgentMentions", () => {
   it("🔴 un @ dentro de un ```eb-doc``` NO es una mención", async () => {
     const reply = [
       "Ya quedó el escrito.",
@@ -116,7 +135,7 @@ describe("notificarMencionesDelAgente", () => {
       "Notificar a @ana en el domicilio señalado.",
       "```",
     ].join("\n");
-    const aviso = await notificarMencionesDelAgente("acme", ROOM, reply, "Ghosty");
+    const aviso = await notifyAgentMentions("acme", ROOM, reply, "Ghosty");
     expect(notify).not.toHaveBeenCalled();
     expect(aviso).toBe("");
   });
@@ -128,13 +147,13 @@ describe("notificarMencionesDelAgente", () => {
       "Cuerpo del contrato.",
       "```",
     ].join("\n");
-    await notificarMencionesDelAgente("acme", ROOM, reply, "Ghosty");
+    await notifyAgentMentions("acme", ROOM, reply, "Ghosty");
     expect(notify).toHaveBeenCalledOnce();
   });
 
   it("devuelve el aviso para la burbuja cuando el handle no llegó a nadie", async () => {
     resolveMentionedUsers.mockResolvedValue([]);
-    const aviso = await notificarMencionesDelAgente("acme", ROOM, "@anna lo revisa", "Ghosty");
+    const aviso = await notifyAgentMentions("acme", ROOM, "@anna lo revisa", "Ghosty");
     // Es lo que hace que el agente se entere: el aviso queda en el body, o sea en el
     // historial, y lo lee en el turno siguiente.
     expect(aviso).toContain("@anna");
@@ -142,7 +161,7 @@ describe("notificarMencionesDelAgente", () => {
   });
 
   it("sin ninguna @ no toca la DB", async () => {
-    const aviso = await notificarMencionesDelAgente("acme", ROOM, "Listo, quedó publicado.", "Ghosty");
+    const aviso = await notifyAgentMentions("acme", ROOM, "Listo, quedó publicado.", "Ghosty");
     expect(aviso).toBe("");
     expect(resolveMentionedUsers).not.toHaveBeenCalled();
   });

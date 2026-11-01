@@ -27,9 +27,13 @@ export type NotifyEvent = {
   tag?: string;
   /** El destinatario pidió correo para ESTE aviso → ignora el toggle global. */
   forceEmail?: boolean;
-  /** Aviso de un agente: su id en gs y la conversación, para que la app móvil abra ESE chat. */
-  app?: { agentId: string; sessionId: string };
+  /** El aviso es de un hilo de la Fábrica: la app móvil abre el pedido (o el hilo con @plan) en su
+   *  vista nativa. Nunca se manda la conversación del agente: vive aquí, no en gs, y la app abría
+   *  un chat vacío (1-nov). */
+  factory?: FactoryPushTarget;
 };
+
+export type FactoryPushTarget = { room: string; thread: number; runId?: number };
 
 export async function notify(ev: NotifyEvent, ns: string): Promise<void> {
   if (!ev.recipients.length) return;
@@ -74,7 +78,7 @@ async function deliverAppPush(ev: NotifyEvent, ns: string): Promise<void> {
   const root = process.env.TEAMS_ROOT_DOMAIN ?? "teams.ghosty.studio";
   const url = /^https?:\/\//.test(ev.url) ? ev.url : slug ? `https://${slug}.${root}${ev.url}` : "";
   if (!url) return;
-  const body = JSON.stringify({ userIds, title: ev.title, body: ev.body, url, tag: ev.tag, kind: ev.kind, urgent: ev.kind === "factory" || ev.kind === "mention", ...(ev.app ?? {}) });
+  const body = JSON.stringify({ userIds, title: ev.title, body: ev.body, url, tag: ev.tag, kind: ev.kind, urgent: ev.kind === "factory" || ev.kind === "mention", ...(ev.factory && slug ? { factory: { space: slug, ...ev.factory } } : {}) });
   const res = await fetch(`${base}/api/v2/push`, { method: "POST", headers: partnerHeaders(body, ns), body, signal: AbortSignal.timeout(10_000) });
   console.log(`[push app ${ev.kind}] ${userIds.length} persona(s) → ${res.status}`);
 }

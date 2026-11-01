@@ -2,7 +2,7 @@ import type { Channel } from "../db.server";
 
 // Menciones: a quién avisa un @ y quién puede escribirlo.
 //
-// Vive aparte de `chat.ts` porque `notificarMencionesDelAgente` la llama el camino del
+// Vive aparte de `chat.ts` porque `notifyAgentMentions` la llama el camino del
 // agente y `chat.ts` lo importa el cliente (tiene server functions): exportarla desde ahí
 // arrastraba `session.server` al bundle del navegador y el build lo rechaza.
 
@@ -60,9 +60,8 @@ export async function notifyMentions(
   // @todos le suena el teléfono a la empresa entera por iniciativa propia, y no tiene
   // forma de medir ese coste. Se le ignora el token en vez de negarle el mensaje.
   allowGroup = true,
-  // Del agente que escribió: su conversación, para que el push abra ESE chat en la app móvil,
-  // y el hilo, para que la liga caiga en él y no en el room.
-  extra: { app?: { agentId: string; sessionId: string }; parentId?: number | null } = {}
+  // El hilo: la liga cae en él y no en el room, y si es de la Fábrica la app móvil abre el pedido.
+  extra: { parentId?: number | null } = {}
 ): Promise<MentionOutcome> {
   const { id: channelId, slug, name: channelName } = channel;
   const isPrivate = channel.is_private === 1;
@@ -126,13 +125,15 @@ export async function notifyMentions(
   if (!subs.length) return { notified: [], unresolved };
   const { notify } = await import("./notify.server");
   const excerpt = body.length > 120 ? body.slice(0, 117) + "…" : body;
+  const { factoryPushTarget } = await import("./apps/factory-runs.server");
+  const factory = await factoryPushTarget(channel, extra.parentId).catch(() => null);
   await notify({
     kind: "mention",
     recipients: subs,
     title: `${senderName} te mencionó en #${channelName}`,
     body: excerpt,
     url: extra.parentId ? `/c/${slug}?thread=${extra.parentId}` : `/c/${slug}`,
-    ...(extra.app ? { app: extra.app } : {}),
+    ...(factory ? { factory } : {}),
   }, ns);
   return { notified: subs, unresolved };
 }
@@ -145,12 +146,12 @@ export async function notifyMentions(
  * herramientas o de un diff no es una mención: sin quitar los fences, un `eb-doc` con un
  * correo adentro le manda push a media oficina.
  */
-export async function notificarMencionesDelAgente(
+export async function notifyAgentMentions(
   ns: string,
   channel: Channel,
   reply: string,
   agentName: string,
-  extra: { app?: { agentId: string; sessionId: string }; parentId?: number | null } = {}
+  extra: { parentId?: number | null } = {}
 ): Promise<string> {
   if (!reply.trim() || !mencionaAAlguienMas(reply)) return "";
   const eb = await import("../lib/ebdoc");
