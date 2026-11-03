@@ -1,3 +1,4 @@
+import { trackStick } from "../utils/stick-to-bottom";
 import { useEffect, useRef, useState } from "react";
 import GhostyMascot from "./GhostyMascot";
 
@@ -209,8 +210,12 @@ export function LiveArtifactPreview({
   // dejamos de arrastrarlo, y volvemos a seguirlo si él mismo baja al final. Sin esto, un
   // artefacto largo es imposible de mirar mientras se construye.
   const pegadoRef = useRef(true);
-  const alFinal = (el: HTMLDivElement) =>
-    el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  // Despega con la intención de subir y se re-pega sólo en el fondo real (utils/stick-to-bottom).
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el || !follow) return;
+    return trackStick(el, pegadoRef);
+  }, [follow]);
   // Arranca "no vacío" cuando el HTML ya trae cuerpo: así el primer frame no es el
   // esqueleto (el efecto de pintado corre justo después y ya hay contenido real).
   const [empty, setEmpty] = useState(() => !/<body[^>]*>[\s\S]*\S/i.test(html));
@@ -312,13 +317,6 @@ export function LiveArtifactPreview({
     <div
       className={className}
       ref={scrollerRef}
-      onScroll={
-        follow
-          ? (e) => {
-              pegadoRef.current = alFinal(e.currentTarget);
-            }
-          : undefined
-      }
     >
       <style ref={styleRef} />
       <div ref={hostRef} className="gt-live" />

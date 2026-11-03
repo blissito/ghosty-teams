@@ -277,7 +277,7 @@ async function migrate(): Promise<void> {
   // de cada navegador). `value` es la lista JSON tal cual la usa el cliente.
   await exec(`CREATE TABLE IF NOT EXISTS gc_sidebar_prefs (
     user_sub TEXT NOT NULL,
-    kind     TEXT NOT NULL,               -- 'pinnedRooms' | 'closedDms' | 'collapsedThreads'
+    kind     TEXT NOT NULL,               -- 'pinnedRooms' | 'closedDms' | 'collapsedThreads' | 'collapsedPanels'
     value    TEXT NOT NULL,
     PRIMARY KEY (user_sub, kind)
   )`);

@@ -29,6 +29,25 @@ export const listMyConnectorsFn = createServerFn({ method: "GET" }).handler(asyn
   const { describeCredentials } = await import("./connectors/credentials.server");
   const { listHooks } = await import("./hooks/registry.server");
   const hooks = await listHooks().catch(() => []);
+  // Con QUÉ cuenta del proveedor estoy conectado (login/nombre/avatar del userinfo que ya se
+  // guarda al conectar). Sin esto la fila decía «Conectado» y nadie sabía con cuál (Brendi, 3-nov).
+  const { getConnectorRow } = await import("./connectors/store.server");
+  const accountOf = async (id: string) => {
+    if (!connected.has(id)) return null;
+    const row = await getConnectorRow(me.sub, id).catch(() => null);
+    let m: Record<string, unknown> = {};
+    try { m = row?.meta ? (JSON.parse(row.meta) as Record<string, unknown>) : {}; } catch { /* meta vieja */ }
+    const str = (k: string) => (typeof m[k] === "string" && m[k] ? (m[k] as string) : null);
+    const login = str("login") ?? str("username");
+    const name = str("name");
+    const email = str("email");
+    const label = login ? `@${login}` : (name ?? email);
+    return {
+      account: label ? { label, name: login ? name : null, avatar: str("avatarUrl") ?? str("avatar_url") ?? str("picture") } : null,
+      expiresAt: row?.expires_at ?? null,
+    };
+  };
+  const accounts = new Map(await Promise.all(CONNECTORS.map(async (c) => [c.id, await accountOf(c.id)] as const)));
 
   const ours = CONNECTORS.map((c) => ({
     id: c.id,
@@ -44,6 +63,8 @@ export const listMyConnectorsFn = createServerFn({ method: "GET" }).handler(asyn
     // son OAuth. `null` en los OAuth, que siguen yéndose por /setup/<id>/connect.
     credentials: describeCredentials(c.id),
     connected: connected.has(c.id),
+    account: accounts.get(c.id)?.account ?? null,
+    expiresAt: accounts.get(c.id)?.expiresAt ?? null,
     // La conexión del EQUIPO, si la hay: quién la puso y si soy yo. `mine` es lo que
     // decide si el switch se pinta como "compartir la mía" o como "es de fulano".
     shared: (() => {
@@ -92,7 +113,7 @@ export const listMyConnectorsFn = createServerFn({ method: "GET" }).handler(asyn
       id: c.id, name: c.nombre, blurb: c.id === "google-drive" ? `${c.descripcion}${googleNote}` : c.descripcion, icon: c.logo?.icon ?? c.id, logoUrl: S.studioLogoUrl(c), type: "Ghosty Studio",
       custom: false, status: c.disponible ? ("available" as const) : ("soon" as const),
       manage: c.conectado ? { url: S.studioConnectUrl(c.id), label: c.id === "google-drive" ? "Elegir archivos" : c.kind === "credential" ? "Cambiar llave" : "Administrar" } : null,
-      intro: null, credentials: null, connected: c.conectado, shared: null, mineShared: false, canShareOthers: false,
+      intro: null, credentials: null, connected: c.conectado, account: null, expiresAt: null, shared: null, mineShared: false, canShareOthers: false,
       hooks: [], holders: [], studio: true, connectUrl: S.studioConnectUrl(c.id),
     }));
   return [...ours.map((x) => ({ ...x, connectUrl: null as string | null, logoUrl: null as string | null })), ...studio];

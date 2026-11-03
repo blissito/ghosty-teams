@@ -2640,4 +2640,9 @@ export const en: Record<string, string> = {
   "Prepáralo con la sala vacía: reinicia la sala de eventos. Facebook sale público en la página.": "Prepare it with the room empty: it restarts the event room. Facebook goes out public on the page.",
   "Preparando… (hasta 1 min)": "Preparing… (up to 1 min)",
   "Preparar": "Prepare",
+  "Revisando la GitHub App…": "Checking the GitHub App…",
+  "GitHub App instalada en": "GitHub App installed on",
+  "La GitHub App no está instalada: los agentes no pueden entrar a tus repos.": "The GitHub App isn't installed: agents can't reach your repos.",
+  "Instalarla": "Install it",
+  "Repos en rooms": "Repos in rooms",
 };

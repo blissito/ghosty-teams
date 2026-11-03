@@ -34,6 +34,7 @@ import { intlLocale } from "../i18n.core";
 import { Monitor, Sun, Moon, Check, SlidersHorizontal, Palette, SwatchBook, Github, Plug, Users, Calendar, CalendarClock, CalendarCheck, Link2, RefreshCw, Gauge, Bug, Boxes, HardDrive } from "lucide-react";
 import { workspaceUsageFn } from "../server/workspaces";
 import { listMyConnectorsFn, disconnectConnectorFn, shareConnectorFn, connectCredentialsFn } from "../server/connectors";
+import { githubInstallationReposFn, workspaceRoomReposFn } from "../server/room-repos";
 import { probeAcpBoxFn } from "../server/agent-ask";
 
 /**
@@ -408,6 +409,9 @@ export function SettingsContent({
 type ConnItem = {
   id: string; name: string; blurb: string; icon: string; type: string;
   custom: boolean; status: "available" | "soon"; connected: boolean;
+  /** Con qué cuenta del proveedor (login/nombre/avatar). `null` si no se sabe. */
+  account: { label: string; name: string | null; avatar: string | null } | null;
+  expiresAt: number | null;
   manage: { url: string; label: string } | null;
   /** Aviso antes de mandar al proveedor (GitHub: por qué «All repositories»). */
   intro: { title: string; subtitle: string; items: { title: string; body: string }[]; continueLabel: string; cancelLabel: string } | null;
@@ -741,6 +745,60 @@ function ConnectIntroDialog({ item, onClose, onContinue }: { item: ConnItem; onC
   );
 }
 
+/**
+ * Lo que la fila de GitHub no decía (Brendi, 3-nov): dónde está instalada la App, cuántos repos
+ * alcanza y qué repos están en qué rooms. «Conectado sin App» y «con App» se veían igual, y
+ * de ahí salen los «el agente no puede hacer nada». Se pide al abrir: es una llamada a GitHub.
+ */
+function GithubConnectionDetails() {
+  const t = useT();
+  const [inst, setInst] = useState<Awaited<ReturnType<typeof githubInstallationReposFn>> | null>(null);
+  const [rooms, setRooms] = useState<Awaited<ReturnType<typeof workspaceRoomReposFn>>>([]);
+  useEffect(() => {
+    let alive = true;
+    githubInstallationReposFn().then((r) => alive && setInst(r)).catch(() => {});
+    workspaceRoomReposFn().then((r) => alive && setRooms(r)).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  if (!inst) return <p className="mt-1 text-[11px] text-muted">{t("Revisando la GitHub App…")}</p>;
+  const linkCls = "text-brand hover:underline";
+  return (
+    <div className="mt-1 space-y-0.5 text-[11px] text-muted">
+      {inst.installed && inst.accounts.length ? (
+        <p className="truncate">
+          {t("GitHub App instalada en")}: <span className="text-ink">{inst.accounts.join(", ")}</span> · {inst.repos.length}{" "}
+          {inst.repos.length === 1 ? t("repo") : t("repos")}
+          {inst.installUrl ? (
+            <>
+              {" · "}
+              <a href={inst.installUrl} target="_blank" rel="noreferrer" className={linkCls}>{t("Administrar")}</a>
+            </>
+          ) : null}
+        </p>
+      ) : (
+        <p className="truncate text-amber-500">
+          {t("La GitHub App no está instalada: los agentes no pueden entrar a tus repos.")}{" "}
+          {inst.installUrl ? (
+            <a href={inst.installUrl} target="_blank" rel="noreferrer" className={linkCls}>{t("Instalarla")}</a>
+          ) : null}
+        </p>
+      )}
+      {rooms.length > 0 ? (
+        <p className="truncate" title={rooms.map((r) => `${r.repo} → ${r.rooms.map((x) => `#${x.name}`).join(", ")}`).join("\n")}>
+          {t("Repos en rooms")}:{" "}
+          {rooms.slice(0, 3).map((r, i) => (
+            <span key={r.repo}>
+              {i ? ", " : ""}
+              <span className="text-ink">{r.repo}</span> → {r.rooms.map((x) => `#${x.name}`).join(", ")}
+            </span>
+          ))}
+          {rooms.length > 3 ? ` ${t("y")} ${rooms.length - 3} ${t("más")}` : ""}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function IntegrationsPanel() {
   const t = useT();
   const [items, setItems] = useState<ConnItem[] | null>(null);
@@ -836,7 +894,19 @@ function IntegrationsPanel() {
                         </span>
                       )}
                     </div>
+                    {c.connected && c.account ? (
+                      <div className="mt-0.5 flex items-center gap-1.5">
+                        {c.account.avatar ? (
+                          <img src={c.account.avatar} alt="" className="h-4 w-4 rounded-full" />
+                        ) : null}
+                        <span className="truncate text-xs font-medium text-ink">
+                          {c.account.label}
+                          {c.account.name ? <span className="font-normal text-muted"> · {c.account.name}</span> : null}
+                        </span>
+                      </div>
+                    ) : null}
                     <p className="truncate text-xs text-muted">{t(c.blurb)}</p>
+                    {c.id === "github" && c.connected ? <GithubConnectionDetails /> : null}
                     {/* Quién más del equipo lo tiene. Sin esto el panel MIENTE por
                         omisión: un conector que medio equipo usa se veía idéntico a uno
                         que nadie ha tocado, y de ahí salió el "David dice que la hizo

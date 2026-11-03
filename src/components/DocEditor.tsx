@@ -1,3 +1,4 @@
+import { trackStick } from "../utils/stick-to-bottom";
 import "@blocknote/core/fonts/inter.css";
 import "@blocknote/mantine/style.css";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -293,6 +294,7 @@ export default function DocEditor({
   useEffect(() => {
     let el: HTMLElement | null = null;
     let on: (() => void) | null = null;
+    let soltar: (() => void) | null = null;
     let ro: ResizeObserver | null = null;
     let t: ReturnType<typeof setTimeout>;
     let intentos = 0;
@@ -308,9 +310,11 @@ export default function DocEditor({
         return;
       }
       el = box;
+      // `pegado` (seguir el streaming) lo lleva trackStick: despega al subir y se re-pega en
+      // el fondo real. `alFondo` (el botón) sigue con su umbral de 120 px.
+      soltar = trackStick(box, pegado);
       on = () => {
         const v = alFinal(box);
-        pegado.current = v;
         setAlFondo((prev) => (prev === v ? prev : v));
         const arriba = alPrincipio(box);
         setAlTope((prev) => (prev === arriba ? prev : arriba));
@@ -356,6 +360,7 @@ export default function DocEditor({
     return () => {
       clearTimeout(t);
       ro?.disconnect();
+      soltar?.();
       if (el && on) {
         el.removeEventListener("scroll", on);
         window.removeEventListener("resize", on);

@@ -47,10 +47,14 @@ export const githubInstallationReposFn = createServerFn({ method: "GET" }).handl
     installed?: boolean;
     installUrl?: string;
     addMoreUrl?: string;
+    accounts?: string[];
     error?: string;
   };
   return {
     repos: (r?.repos ?? []).filter((x) => typeof x?.repo === "string"),
+    // Dónde está instalada la App (tu cuenta y las organizaciones): Integraciones lo enseña.
+    accounts: (r?.accounts ?? []).filter((a): a is string => typeof a === "string"),
+    installed: r?.installed !== false && !r?.error,
     // Sin repos la salida correcta NO es un buscador mudo: es la liga para elegirlos en
     // GitHub. Es el mismo caso de "revisa la integración en Ajustes".
     installUrl: r?.addMoreUrl ?? r?.installUrl ?? null,

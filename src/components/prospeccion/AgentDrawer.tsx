@@ -1,3 +1,4 @@
+import { useStickToBottom } from "../../utils/stick-to-bottom";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronUp, FileText, Loader2, Mail, Maximize2, Minimize2, Paperclip, RotateCcw, Square, X } from "lucide-react";
@@ -166,16 +167,20 @@ export function AgentDrawer({
     if (!el) return;
     setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 80);
   };
-  useEffect(() => { if (atBottom) bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, atBottom]);
+  // Seguir el streaming SIN scroll suave (pelea con el dedo) ni scrollIntoView (mueve también a
+  // los padres): sólo el propio scroller, y sólo si sigue pegado (utils/stick-to-bottom).
+  const listStick = useStickToBottom(listRef, open);
+  useEffect(() => { listStick.follow(); }, [msgs]);
   // Al ABRIR, al fondo sin animación y después de que el panel haya pintado: el scroll
   // suave de arriba corría antes del layout de la animación de entrada y se quedaba a medias.
   useEffect(() => {
     if (!open) return;
     setAtBottom(true);
+    listStick.stuck.current = true;
     const id = setTimeout(() => { const el = listRef.current; if (el) el.scrollTop = el.scrollHeight; }, 350);
     return () => clearTimeout(id);
   }, [open]);
-  const scrollDown = () => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); setAtBottom(true); };
+  const scrollDown = () => { listStick.stuck.current = true; bottomRef.current?.scrollIntoView({ behavior: "smooth" }); setAtBottom(true); };
 
   const reset = async () => {
     if (running) return;

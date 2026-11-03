@@ -75,9 +75,9 @@ export const listMutesFn = createServerFn({ method: "GET" }).handler(async () =>
   return db.listMutes(me.sub);
 });
 
-// Preferencias del sidebar (rooms fijados, DMs cerrados, hilos plegados): personales y en
+// Preferencias del sidebar (rooms fijados, DMs cerrados, hilos y paneles plegados): personales y en
 // el servidor para que sigan a la persona entre dispositivos.
-const SIDEBAR_KINDS = ["pinnedRooms", "closedDms", "collapsedThreads"] as const;
+const SIDEBAR_KINDS = ["pinnedRooms", "closedDms", "collapsedThreads", "collapsedPanels"] as const;
 export type SidebarPrefKind = (typeof SIDEBAR_KINDS)[number];
 
 export const listSidebarPrefsFn = createServerFn({ method: "GET" }).handler(async () => {

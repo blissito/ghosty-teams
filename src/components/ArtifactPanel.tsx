@@ -1,3 +1,4 @@
+import { useStickToBottom } from "../utils/stick-to-bottom";
 import { AgentComputerPanel } from "./chat/AgentComputer";
 import { RunPanel } from "./chat/RunPanel";
 import { SprintCard } from "./chat/SprintCard";
@@ -913,10 +914,13 @@ export default function ArtifactPanel({
   // (al terminar, no peleamos el scroll del usuario).
   const draftLen = artifact?.kind === "draft" ? artifact.content.length : 0;
   const draftStreaming = artifact?.kind === "draft" && !!artifact.streaming;
+  // Seguir sí, atar no: subir a releer despega (utils/stick-to-bottom).
+  const draftStick = useStickToBottom(scrollRef, draftStreaming);
   useEffect(() => {
-    if (!draftStreaming) return;
-    const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (draftStreaming) draftStick.stuck.current = true;
+  }, [draftStreaming]);
+  useEffect(() => {
+    if (draftStreaming) draftStick.follow();
   }, [draftLen, draftStreaming]);
   // PREVIEW EN VIVO del artefacto HTML: el HTML PARCIAL se escribe con document.write() dentro
   // del iframe (ver StreamingHtmlFrame) → el parser incremental del navegador lo pinta desde el
@@ -983,12 +987,6 @@ export default function ArtifactPanel({
   const onPatchFail = useCallback((nodeId: string) => {
     setFailedPatches((cur) => (cur.includes(nodeId) ? cur : [...cur, nodeId]));
   }, []);
-  // Hasta que abre el <body> no hay nada visual: mostramos el código en vivo (auto-scroll).
-  const draftSrcRef = useRef<HTMLPreElement | null>(null);
-  useEffect(() => {
-    const el = draftSrcRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [draftPreview]);
   // Descarga con FEEDBACK: doc→.docx (se genera aquí desde los bloques), sheet→.xlsx (CSV
   // con SheetJS) y doc→.pdf (Chromium en render-svc, que puede estar despertando) tardan un
   // poco; fetch same-origin → blob → download, con spinner. Office = URL pública externa →

@@ -948,22 +948,37 @@ function useChatScroll(
     const el = scrollRef.current;
     if (!el) return;
     const mark = () => { lastInput.current = performance.now(); };
+    // Patrón de use-stick-to-bottom (StackBlitz; Conversation de AI Elements/shadcn): la
+    // INTENCIÓN de subir despega al instante, antes de que llegue el `scroll`. Antes se
+    // despegaba por distancia (>120 px del fondo) y cada token o tarjeta que crecía te
+    // regresaba al fondo en medio del gesto: «se captura, vibra y no deja subir» (Brendi, 3-nov).
+    const release = () => { stick.current = false; };
+    const onWheel = (e: WheelEvent) => { mark(); if (e.deltaY < 0) release(); };
+    let touchY = 0;
+    const onTouchStart = (e: TouchEvent) => { mark(); touchY = e.touches[0]?.clientY ?? 0; };
+    const onTouchMove = (e: TouchEvent) => {
+      mark();
+      const y = e.touches[0]?.clientY ?? touchY;
+      if (y > touchY + 2) release(); // dedo hacia abajo = contenido hacia arriba
+      touchY = y;
+    };
     const onKey = (e: KeyboardEvent) => {
       if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(e.key)) mark();
+      if (e.key === "ArrowUp" || e.key === "PageUp" || e.key === "Home" || (e.key === " " && e.shiftKey)) release();
     };
     // Arrastre de la barra: el pointerdown cae en el propio scroller, no en un hijo.
     const onDown = (e: PointerEvent) => { mark(); if (e.target === el) dragging.current = true; };
     const onUp = () => { dragging.current = false; };
-    el.addEventListener("wheel", mark, { passive: true });
-    el.addEventListener("touchstart", mark, { passive: true });
-    el.addEventListener("touchmove", mark, { passive: true });
+    el.addEventListener("wheel", onWheel, { passive: true });
+    el.addEventListener("touchstart", onTouchStart, { passive: true });
+    el.addEventListener("touchmove", onTouchMove, { passive: true });
     el.addEventListener("keydown", onKey);
     el.addEventListener("pointerdown", onDown);
     window.addEventListener("pointerup", onUp);
     return () => {
-      el.removeEventListener("wheel", mark);
-      el.removeEventListener("touchstart", mark);
-      el.removeEventListener("touchmove", mark);
+      el.removeEventListener("wheel", onWheel);
+      el.removeEventListener("touchstart", onTouchStart);
+      el.removeEventListener("touchmove", onTouchMove);
       el.removeEventListener("keydown", onKey);
       el.removeEventListener("pointerdown", onDown);
       window.removeEventListener("pointerup", onUp);
@@ -978,7 +993,8 @@ function useChatScroll(
   const onScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
-    const near = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const near = gap < 120; // sólo para el botón «ir al final»
     // Sólo se DESPEGA del fondo si la persona subió (scrollTop bajó). Si el contenido crece
     // abajo (una tarjeta que carga sus datos después: plan, pedido, veredicto), el navegador
     // también dispara `scroll` y `near` sale false por un instante; tomarlo como «el usuario
@@ -986,9 +1002,11 @@ function useChatScroll(
     const wentUp = el.scrollTop < lastTop.current - 2;
     lastTop.current = el.scrollTop;
     const byUser = dragging.current || performance.now() - lastInput.current < 1000;
-    if (near) stick.current = true;
-    else if (wentUp && byUser) stick.current = false;
-    else if (stick.current && !byUser) {
+    // Se vuelve a pegar sólo al llegar DE VERDAD al fondo; «cerca» (120 px) ya no rearma,
+    // o un paso de trackpad nunca alcanzaba a salir.
+    if (gap <= 4) stick.current = true;
+    else if (wentUp && (byUser || gap > 120)) stick.current = false; // >120 sin gesto: rueda sobre un iframe
+    else if (stick.current && !byUser && !wentUp) {
       // Pegados y sin gesto: el contenido se movió solo (tarjeta lazy) → de vuelta al fondo.
       el.scrollTop = el.scrollHeight;
       lastTop.current = el.scrollTop;
@@ -1002,10 +1020,6 @@ function useChatScroll(
         const msg = hit?.closest?.('[id^="msg-"]') as HTMLElement | null;
         if (msg && el.contains(msg)) savedScroll.set(resetKey, { id: msg.id, offset: msg.getBoundingClientRect().top - box.top });
       }
-    }
-    else if (stick.current) {
-      el.scrollTo({ top: el.scrollHeight });
-      return;
     }
     setAtBottom((prev) => (prev === near ? prev : near)); // solo re-render al cambiar
   };
@@ -4014,6 +4028,12 @@ function LiveTurnsPanel({
   // La fila trae el NOMBRE del agente, no su handle; el robot se resuelve por handle (el mismo
   // que en Studio), así que se busca en los agentes del espacio por nombre y, si no, por cara.
   const agents = useMentions().filter((m) => m.kind === "agent");
+  // Plegable (Brendi, 3-nov): arranca abierto y, si lo pliegas, se queda plegado en todos tus
+  // dispositivos. Plegado queda el encabezado, que ya resume «N · M en cola».
+  const [collapsedPanels, saveCollapsedPanels] = useSidebarPref<string>("collapsedPanels");
+  const collapsed = collapsedPanels.includes("liveTurns");
+  const toggleCollapsed = () =>
+    saveCollapsedPanels(collapsed ? collapsedPanels.filter((k) => k !== "liveTurns") : [...collapsedPanels, "liveTurns"]);
   const handleOf = (x: LiveTurnRow) =>
     x.handle || (agents.find((a) => a.name === x.agent)?.handle ?? agents.find((a) => !!x.avatar && a.avatar === x.avatar)?.handle ?? null);
   // Un id en las dos listas se pinta una vez (la viva gana): duplicado, React dejaba filas huérfanas.
@@ -4023,7 +4043,14 @@ function LiveTurnsPanel({
   const nombreDe = (id: number | null) => channels.find((c) => c.id === id)?.name ?? "";
   return (
     <div className="mb-2 rounded-lg border border-border bg-surface-3/40 p-1.5">
-      <div className="flex items-center gap-1.5 px-1 pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
+      <button
+        type="button"
+        onClick={toggleCollapsed}
+        aria-expanded={!collapsed}
+        title={collapsed ? t("Mostrar") : t("Ocultar")}
+        className={`flex w-full items-center gap-1.5 rounded px-1 text-left text-[11px] font-semibold uppercase tracking-wide text-muted hover:text-ink ${collapsed ? "" : "pb-1"}`}
+      >
+        {collapsed ? <ChevronRight size={13} className="shrink-0" /> : <ChevronDown size={13} className="shrink-0" />}
         <span className="relative flex h-2 w-2">
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand opacity-60" />
           <span className="relative inline-flex h-2 w-2 rounded-full bg-brand" />
@@ -4037,8 +4064,8 @@ function LiveTurnsPanel({
           if (!corriendo && !enCola) return t("Listo");
           return `${t("Trabajando ahora")} · ${corriendo}${enCola ? ` · ${enCola} ${t("en cola")}` : ""}`;
         })()}
-      </div>
-      {filas.map((x) => (
+      </button>
+      {!collapsed && filas.map((x) => (
         <div key={x.id} className="group flex items-center gap-1.5 rounded-md px-1 py-1 hover:bg-surface-3">
           <button
             type="button"
