@@ -1090,6 +1090,9 @@ async function migrate(): Promise<void> {
   await exec("CREATE INDEX IF NOT EXISTS gt_factory_events_run ON gt_factory_events(run_id, id)");
   // El pedido se quedó sin actividad (stale): se avisó UNA vez a quien lo pidió.
   await addColumn("gt_factory_runs", "stale_warned_at", "INTEGER");
+  // Candado del merge en cola (3-nov): quién lo está metiendo y desde cuándo. Caduca a los 5 min,
+  // así que un reinicio a media operación ya no pierde el merge (business #162).
+  await addColumn("gt_factory_runs", "merge_claimed_at", "INTEGER");
   // La cabeza del PR que @check revisó en su último veredicto: un `check_fail` sólo gasta vuelta
   // si @build la movió (`countsLoop` en apps/factory-flow.ts).
   await addColumn("gt_factory_runs", "checked_sha", "TEXT");

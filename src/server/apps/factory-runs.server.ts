@@ -2322,14 +2322,33 @@ export async function closeFinishedRuns(): Promise<void> {
     }
     // Merge en cola (picado con el CI corriendo): entra solo en cuanto pasa, con las credenciales
     // de quien lo picó. Antes había que volver a picar y nadie avisaba cuándo (MailMask #34, 10-oct).
+    // Merge perdido (antes del candado): se soltaba la cola ANTES de mergear, y un reinicio a media
+    // operación dejaba el pedido aprobado y en verde sin volver a formarse (business #162, 3-nov).
+    if (outcome === "open" && run.status === "pr_review" && !row.merge_queued_by && Number(row.merge_queued_auto) === 1) {
+      const lost = await lostMergeActor(run.id);
+      if (lost) {
+        await dbq("UPDATE gt_factory_runs SET merge_queued_by = ? WHERE id = ? AND merge_queued_by IS NULL", [lost, run.id]).catch(() => {});
+        await logEvent(run.id, "merge_requeued", lost, { reason: "merge interrumpido" });
+        row.merge_queued_by = lost;
+      }
+    }
     if (outcome === "open" && run.status === "pr_review" && row.merge_queued_by && (ci?.state === "success" || ci?.state === "none")) {
       const by = String(row.merge_queued_by);
-      await dbq("UPDATE gt_factory_runs SET merge_queued_by = NULL WHERE id = ?", [run.id]).catch(() => {});
+      // La cola se queda puesta mientras se mergea: un candado con caducidad evita que otro proceso
+      // (el relevo azul/verde) entre a la vez, y si éste muere, a los 5 min se reintenta solo.
+      const claimed = await dbq(
+        `UPDATE gt_factory_runs SET merge_claimed_at = unixepoch() WHERE id = ? AND merge_queued_by IS NOT NULL
+           AND (merge_claimed_at IS NULL OR merge_claimed_at < unixepoch() - ?) RETURNING id`,
+        [run.id, MERGE_CLAIM_TTL_S],
+      ).catch(() => []);
+      if (!claimed.length) continue;
       const r = await mergeRun(run, by);
-      if (!r.ok) {
-        // Se volvió a quedar atrás de main: mergeRun ya lo puso al día; sigue en cola.
-        if (r.queue) await dbq("UPDATE gt_factory_runs SET merge_queued_by = ? WHERE id = ?", [by, run.id]).catch(() => {});
-        else await postInThread(run, "build", `⚠️ El merge en cola no entró: ${r.error}. ${run.prUrl}`);
+      if (r.ok || !r.queue) await dbq("UPDATE gt_factory_runs SET merge_queued_by = NULL, merge_claimed_at = NULL WHERE id = ?", [run.id]).catch(() => {});
+      // Se volvió a quedar atrás de main: mergeRun ya lo puso al día; sigue en cola.
+      else await dbq("UPDATE gt_factory_runs SET merge_claimed_at = NULL WHERE id = ?", [run.id]).catch(() => {});
+      if (!r.ok && !r.queue) {
+        await logEvent(run.id, "merge_failed", by, { error: r.error.slice(0, 300) });
+        await postInThread(run, "build", `⚠️ El merge en cola no entró: ${r.error}. ${run.prUrl}`);
       }
       continue;
     }
@@ -3464,6 +3483,27 @@ export async function queueMerge(runId: number, sub: string): Promise<void> {
 }
 
 /** `queue`: no entró por el CI (corriendo, o recién lanzado al poner la rama al día); puede quedar en cola. */
+/** Cuánto vale el candado de un merge en cola: un merge real tarda segundos. */
+const MERGE_CLAIM_TTL_S = 300;
+
+/**
+ * ¿El merge automático de este pedido se perdió? Sí cuando lo último que pasó con la cola fue
+ * formarlo (no un fallo avisado ni una recuperación) y hace más de 5 min: nadie lo está metiendo.
+ * Devuelve a nombre de quién estaba formado.
+ */
+export async function lostMergeActor(runId: number): Promise<string | null> {
+  const [e] = await dbq(
+    // Sólo lo de los últimos 3 días: un pedido viejo sin `merge_failed` (antes no se registraba)
+    // no debe resucitar con un aviso repetido.
+    `SELECT type, actor, at FROM gt_factory_events WHERE run_id = ? AND type IN ('merge_queued','merge_failed','merge_requeued')
+       AND at > unixepoch() - 3 * 86400
+      ORDER BY id DESC LIMIT 1`,
+    [runId],
+  ).catch(() => []);
+  if (!e || e.type !== "merge_queued" || !e.actor) return null;
+  return Date.now() / 1000 - Number(e.at ?? 0) > MERGE_CLAIM_TTL_S ? String(e.actor) : null;
+}
+
 export async function mergeRun(
   run: Run,
   sub: string,
