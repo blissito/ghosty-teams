@@ -7,6 +7,7 @@
 //
 // El token NUNCA sale de Teams: la caja del agente sólo tiene un tool-token HMAC
 // de 15 min con su `sub` firmado, y los handlers de aquí corren en el servidor.
+import { AsyncLocalStorage } from "node:async_hooks";
 import { getValidToken } from "./oauth.server";
 import { getConnectorRow } from "./store.server";
 import { notaNombres, type ConnectorTool, type ToolChannel } from "./impl";
@@ -28,6 +29,60 @@ const APP_SLUG = process.env.GITHUB_APP_SLUG ?? "ghosty-studio";
 const INSTALL_URL = `https://github.com/apps/${APP_SLUG}/installations/new`;
 /** Cambiar los repos de una instalación que ya existe. */
 const MANAGE_URL = "https://github.com/settings/installations";
+
+// ── Respaldo con la App (3-nov-2026) ─────────────────────────────────────────
+//
+// Antes TODO salía del token personal de quien pide: si Brenda (miembro del room, sin GitHub)
+// pedía algo en la fábrica sobre un repo de bliss con la App instalada, el agente no veía el
+// repo, @build no podía empujar y los barridos fallaban mudos (business #162, palmera-legal,
+// 3-nov). Como Devin e Inspect: la persona aporta su cuenta si la tiene (y entonces manda su
+// permiso); si no, la App trabaja sobre los repos que alguien ya conectó a un room.
+//
+// ⚠️ La frontera depende de QUIÉN llama:
+// - Turno del agente (`runTool` abre `withAgentRepoScope`): SÓLO los repos de SU room. En un
+//   DM no hay respaldo: ahí no hay room que diga qué repo se puede tocar.
+// - Plataforma (barridos, tarjeta, proxy git; sin scope abierto): repos conectados a algún room
+//   de este espacio. Nunca un repo que nadie conectó.
+const appFallbackScope = new AsyncLocalStorage<{ repos: ReadonlySet<string> }>();
+
+/** Corre `fn` como turno del agente: el respaldo con la App queda limitado a `repos`. */
+export function withAgentRepoScope<T>(repos: string[] | null, fn: () => Promise<T>): Promise<T> {
+  return appFallbackScope.run({ repos: new Set((repos ?? []).map((r) => r.toLowerCase())) }, fn);
+}
+
+/** `owner/name` de una ruta `/repos/owner/name/...` de la API; null si no es de un repo. */
+export function repoOfPath(path: string): string | null {
+  const m = /^\/repos\/([^/?#]+)\/([^/?#]+)/.exec(path);
+  return m ? `${decodeURIComponent(m[1])}/${decodeURIComponent(m[2])}` : null;
+}
+
+async function workspaceHasRepo(repo: string): Promise<boolean> {
+  const { dbq } = await import("../../dbq.server");
+  const rows = await dbq("SELECT 1 AS x FROM gt_room_repos WHERE LOWER(repo) = LOWER(?) LIMIT 1", [repo]);
+  return rows.length > 0;
+}
+
+/** Token de instalación recortado a `repo`, si este llamador puede usar el respaldo ahí. */
+async function appFallbackToken(repo: string | null): Promise<string | null> {
+  if (!repo || !botIdentityEnabled()) return null;
+  const store = appFallbackScope.getStore();
+  const ok = store ? store.repos.has(repo.toLowerCase()) : await workspaceHasRepo(repo).catch(() => false);
+  if (!ok) return null;
+  const instId = await installationIdFor(repo).catch(() => null);
+  return instId ? await installationToken(instId, { onlyRepo: repo.split("/")[1] }) : null;
+}
+
+/** El de la persona; si no tiene, el de la App sobre `repo` (ver arriba). */
+async function tokenFor(sub: string, repo: string | null): Promise<string | null> {
+  return (await getValidToken(sub, "github")) ?? (await appFallbackToken(repo));
+}
+
+/** ¿Este turno puede trabajar con la App aunque la persona no tenga GitHub? (para el listado) */
+export async function appCoversAny(repos: string[]): Promise<boolean> {
+  if (!botIdentityEnabled()) return false;
+  for (const r of repos) if (await installationIdFor(r).catch(() => null)) return true;
+  return false;
+}
 
 type GithubMeta = { login?: string | null; name?: string | null; avatarUrl?: string | null };
 
@@ -105,7 +160,7 @@ export function githubApi(sub: string, path: string, init?: RequestInit): Promis
 }
 
 async function api(sub: string, path: string, init?: RequestInit): Promise<any> {
-  const token = await getValidToken(sub, "github");
+  const token = await tokenFor(sub, repoOfPath(path));
   if (!token) {
     return { error: "La cuenta de GitHub no está conectada. Conéctala en Ajustes → Integraciones." };
   }
@@ -223,7 +278,7 @@ async function apiText(
   path: string,
   accept = "application/vnd.github+json",
 ): Promise<string | { error: string; githubStatus?: number }> {
-  const token = await getValidToken(sub, "github");
+  const token = await tokenFor(sub, repoOfPath(path));
   if (!token) {
     return { error: "La cuenta de GitHub no está conectada. Conéctala en Ajustes → Integraciones." };
   }
@@ -299,7 +354,13 @@ async function writeToken(
   repoPath: string,
 ): Promise<{ token: string; bot: boolean } | { error: string }> {
   const userToken = await getValidToken(sub, "github");
-  if (!userToken) return { error: "La cuenta de GitHub no está conectada. Conéctala en Ajustes → Integraciones." };
+  if (!userToken) {
+    // Sin cuenta personal escribe la App, sólo sobre repos conectados a un room (ver
+    // `appFallbackToken`): la autoridad la da ser del room, no el permiso de GitHub de alguien.
+    const appToken = await appFallbackToken(repoPath);
+    if (appToken) return { token: appToken, bot: true };
+    return { error: "La cuenta de GitHub no está conectada. Conéctala en Ajustes → Integraciones." };
+  }
   if (!botIdentityEnabled()) return { token: userToken, bot: false };
 
   const meta = await readMeta(sub);
@@ -614,7 +675,8 @@ async function apiWith(token: string, path: string, init?: RequestInit): Promise
  * los dos, o un rechazo pasaría por éxito.
  */
 async function graphql(sub: string, query: string, variables: Record<string, unknown>): Promise<any> {
-  const token = await getValidToken(sub, "github");
+  const repo = typeof variables.owner === "string" && typeof variables.name === "string" ? `${variables.owner}/${variables.name}` : null;
+  const token = await tokenFor(sub, repo);
   if (!token) {
     return { error: "La cuenta de GitHub no está conectada. Conéctala en Ajustes → Integraciones." };
   }

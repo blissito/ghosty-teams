@@ -124,6 +124,11 @@ export async function listUserTools(
       // un conector roto no rompe el listado de los demás
     }
   }
+  // Sin GitHub propio ni compartido, en un room con repos y la App instalada: las de GitHub
+  // trabajan con la App sobre los repos del room (`withAgentRepoScope`, 3-nov).
+  if (!connected.has("github")) {
+    for (const t of await appGithubTools(sub, dest).catch(() => [])) out.push({ name: t.name, description: t.description, inputSchema: t.inputSchema });
+  }
   // Los conectores de Ghosty Studio (Drive) con la cuenta de quien escribe: se conectan en
   // ghosty.studio y sirven aquí sin conectar otra vez (`studio-bridge.server.ts`).
   for (const t of await studioTools(sub).catch(() => [])) out.push(t);
@@ -307,7 +312,9 @@ export async function runTool(
     const dueño = await resolveConnectorOwner(sub, id);
     if (!dueño) continue;
     try {
-      const result = await tool.handler(dueño.ownerSub, args ?? {});
+      const result = id === "github"
+        ? await withRoomRepos(dest, () => tool.handler(dueño.ownerSub, args ?? {}))
+        : await tool.handler(dueño.ownerSub, args ?? {});
       if (!dueño.shared) return { ok: true, result };
       // Con una conexión ajena, el resultado DICE de quién es. Que el equipo vea con qué
       // cuenta se actuó es parte del control, no un adorno — y evita que el agente hable
@@ -324,5 +331,40 @@ export async function runTool(
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
   }
+  // GitHub sin cuenta propia ni compartida: la App, sólo sobre los repos del room.
+  if (toolName.startsWith("github_") && !connected.has("github")) {
+    const tool = (await appGithubTools(sub, dest).catch(() => [])).find((t) => t.name === toolName);
+    if (tool) {
+      try {
+        const result = await withRoomRepos(dest, () => tool.handler(sub, args ?? {}));
+        return {
+          ok: true,
+          result,
+          usedSharedConnection: "Se usó la GitHub App de Ghosty (la persona no tiene GitHub conectado): lo que se escriba sale como ghosty-studio[bot].",
+        } as RunResult;
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      }
+    }
+  }
   return { ok: false, error: `tool no disponible o conector no conectado: ${toolName}` };
+}
+
+/** Corre una tool de GitHub con el respaldo de la App acotado a los repos del room del turno. */
+async function withRoomRepos<T>(dest: ToolDest | null, fn: () => Promise<T>): Promise<T> {
+  const G = await import("./github.server");
+  const allowed = dest?.channelId ? await G.allowedRepos(dest).catch(() => []) : [];
+  return G.withAgentRepoScope(allowed ?? [], fn);
+}
+
+/**
+ * Las tools de GitHub que puede usar un turno SIN cuenta de GitHub: sólo en un room con repos
+ * y con la App instalada en alguno. En DM, [] (no hay room que diga sobre qué repo se trabaja).
+ */
+async function appGithubTools(sub: string, dest: ToolDest | null) {
+  if (!dest?.channelId) return [];
+  const G = await import("./github.server");
+  const allowed = await G.allowedRepos(dest);
+  if (!allowed?.length || !(await G.appCoversAny(allowed))) return [];
+  return G.tools(sub, dest);
 }

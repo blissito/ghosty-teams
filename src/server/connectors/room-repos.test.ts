@@ -16,7 +16,7 @@ vi.mock("../../db.server", () => ({
 // hay ninguno: a estas pruebas les importa la puerta, no lo que hay detrás — si el candado
 // deja pasar, el error es "conector no conectado", que es un caso claramente distinto.
 vi.mock("./store.server", () => ({
-  listAvailableProviders: async () => [],
+  listAvailableProviders: async () => new Set([]),
   resolveConnectorOwner: async () => null,
 }));
 vi.mock("./native.server", () => ({ nativeTools: () => [] }));

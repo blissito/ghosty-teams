@@ -150,9 +150,12 @@ async function refresh(def: ConnectorDef, refreshToken: string): Promise<TokenRe
 const refreshing = new Map<string, Promise<string | null>>();
 
 export async function getValidToken(sub: string, provider: string): Promise<string | null> {
-  // Por espacio: cada uno puede tener fijada otra cuenta del proveedor (ver store.server.ts).
-  const { currentNamespace } = await import("../tenant.server");
-  const key = `${await currentNamespace().catch(() => "")}:${sub}:${provider}`;
+  // ⚠️ Por persona y proveedor, NO por espacio (3-nov). Desde el 3-oct la fila vive en gs y es
+  // la MISMA para todos los espacios de la persona: con la llave por espacio, business y denik
+  // refrescaban a la vez el mismo refresh token, GitHub rotaba, el segundo recibía
+  // `bad_refresh_token` y borraba la conexión buena (así se cayó el GitHub de Brenda, 3-nov).
+  // Si dos espacios tienen fijadas cuentas distintas se serializan de más; es barato.
+  const key = `${sub}:${provider}`;
   const inflight = refreshing.get(key);
   if (inflight) return inflight;
   const p = getValidTokenOnce(sub, provider).finally(() => refreshing.delete(key));
@@ -203,6 +206,14 @@ async function getValidTokenOnce(sub: string, provider: string): Promise<string 
       forgetConnectorCache(sub, provider);
       const now2 = await getConnectorRow(sub, provider).catch(() => null);
       if (now2?.access_token && now2.refresh_token !== row.refresh_token) return now2.access_token;
+      // Otro proceso (el relevo azul/verde, gs) puede estar a media rotación: todavía no guarda el
+      // token nuevo. Se espera y se relee UNA vez antes de dar la conexión por muerta (Coder #17069).
+      await new Promise((r) => setTimeout(r, 2500));
+      forgetConnectorCache(sub, provider);
+      const now3 = await getConnectorRow(sub, provider).catch(() => null);
+      if (now3?.access_token && now3.refresh_token !== row.refresh_token) return now3.access_token;
+      // Borrar era mudo: nadie sabía por qué alguien quedaba sin GitHub. Ahora deja rastro.
+      console.warn(`[connector] borro ${provider} de ${sub}: el refresco falló (${String(e).slice(0, 160)})`);
       await deleteConnectorRow(sub, provider).catch(() => {}); // gs caído: se reintenta en el siguiente turno
       return null;
     }

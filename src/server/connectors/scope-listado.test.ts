@@ -10,7 +10,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("./studio-bridge.server", async (orig) => ({ ...(await orig<any>()), studioTools: async () => [] }));
 vi.mock("./store.server", () => ({
-  listAvailableProviders: async () => ["github"],
+  listAvailableProviders: async () => new Set(["github"]),
   resolveConnectorOwner: async () => null,
 }));
 vi.mock("./native.server", () => ({
