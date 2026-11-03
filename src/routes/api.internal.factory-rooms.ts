@@ -140,7 +140,7 @@ export const Route = createFileRoute("/api/internal/factory-rooms")({
             account: i.account?.login ?? null,
             selection: i.repository_selection ?? null,
           }));
-          return bad(`la GitHub App de Ghosty no ve ${repo} con tu cuenta${url ? `: dale acceso en ${url}` : ""}`, 409, {
+          return bad(`ni tu GitHub ni el de alguien del espacio comparte ${repo} con Ghosty${url ? `: elígelo en ${url}` : ""}`, 409, {
             code: "repo_not_in_installation",
             installUrl: url,
             installations,

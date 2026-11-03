@@ -760,29 +760,31 @@ function GithubConnectionDetails() {
     workspaceRoomReposFn().then((r) => alive && setRooms(r)).catch(() => {});
     return () => { alive = false; };
   }, []);
-  if (!inst) return <p className="mt-1 text-[11px] text-muted">{t("Revisando la GitHub App…")}</p>;
+  if (!inst) return <p className="mt-1 text-[11px] text-muted">{t("Revisando tus repos…")}</p>;
   const linkCls = "text-brand hover:underline";
+  // Un solo concepto para la persona: la conexión y QUÉ repos ve Ghosty. Nada de «instalar la App».
   return (
     <div className="mt-1 space-y-0.5 text-[11px] text-muted">
-      {inst.installed && inst.accounts.length ? (
+      {inst.repos.length > 0 ? (
         <p className="truncate">
-          {t("GitHub App instalada en")}: <span className="text-ink">{inst.accounts.join(", ")}</span> · {inst.repos.length}{" "}
-          {inst.repos.length === 1 ? t("repo") : t("repos")}
+          {t("Repos que ve Ghosty")}: <span className="text-ink">{inst.repos.length}</span>
+          {inst.accounts.length ? <> ({inst.accounts.join(", ")})</> : null}
           {inst.installUrl ? (
             <>
               {" · "}
-              <a href={inst.installUrl} target="_blank" rel="noreferrer" className={linkCls}>{t("Administrar")}</a>
+              <a href={inst.installUrl} target="_blank" rel="noreferrer" className={linkCls}>{t("Elegir repos")}</a>
             </>
           ) : null}
         </p>
-      ) : (
+      ) : null}
+      {inst.ownMissing || !inst.repos.length ? (
         <p className="truncate text-amber-500">
-          {t("La GitHub App no está instalada: los agentes no pueden entrar a tus repos.")}{" "}
+          {inst.login ? `${t("Tus repos de")} @${inst.login} ${t("todavía no están en Ghosty.")}` : t("Ghosty todavía no ve tus repos.")}{" "}
           {inst.installUrl ? (
-            <a href={inst.installUrl} target="_blank" rel="noreferrer" className={linkCls}>{t("Instalarla")}</a>
+            <a href={inst.installUrl} target="_blank" rel="noreferrer" className={linkCls}>{t("Elegir mis repos")}</a>
           ) : null}
         </p>
-      )}
+      ) : null}
       {rooms.length > 0 ? (
         <p className="truncate" title={rooms.map((r) => `${r.repo} → ${r.rooms.map((x) => `#${x.name}`).join(", ")}`).join("\n")}>
           {t("Repos en rooms")}:{" "}

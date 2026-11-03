@@ -41,7 +41,7 @@ export const githubInstallationReposFn = createServerFn({ method: "GET" }).handl
   if (!me) throw new Error("no autenticado");
   const { allTools } = await import("./connectors/github.server");
   const tool = allTools().find((t) => t.name === "github_list_repos");
-  if (!tool) return { repos: [], installUrl: null as string | null };
+  if (!tool) return { repos: [], accounts: [] as string[], installed: false, connected: false, login: null as string | null, ownMissing: false, installUrl: null as string | null };
   const r = (await tool.handler(me.sub, {})) as {
     repos?: { repo: string; private?: boolean; description?: string | null; pushedAt?: string | null }[];
     installed?: boolean;
@@ -55,6 +55,16 @@ export const githubInstallationReposFn = createServerFn({ method: "GET" }).handl
     // Dónde está instalada la App (tu cuenta y las organizaciones): Integraciones lo enseña.
     accounts: (r?.accounts ?? []).filter((a): a is string => typeof a === "string"),
     installed: r?.installed !== false && !r?.error,
+    // ¿Faltan los repos de SU cuenta? (ver github-own-install.ts) Con la liga para elegirlos.
+    ...(await (async () => {
+      const { getConnectorRow } = await import("./connectors/store.server");
+      const { ownReposMissing } = await import("./connectors/github-own-install");
+      const row = await getConnectorRow(me.sub, "github").catch(() => null);
+      let login: string | null = null;
+      try { login = row?.meta ? ((JSON.parse(row.meta) as { login?: string }).login ?? null) : null; } catch { /* meta vieja */ }
+      const accounts = (r?.accounts ?? []).filter((a): a is string => typeof a === "string");
+      return { login, ownMissing: !!row?.access_token && ownReposMissing(accounts.map((a) => ({ account: { login: a } })), login) };
+    })()),
     // Sin repos la salida correcta NO es un buscador mudo: es la liga para elegirlos en
     // GitHub. Es el mismo caso de "revisa la integración en Ajustes".
     installUrl: r?.addMoreUrl ?? r?.installUrl ?? null,

@@ -61,7 +61,7 @@ const RULES: { re: RegExp; cause: string; hint: string; env?: boolean }[] = [
   {
     re: /no pude bajar el commit/i,
     cause: "No se pudo bajar el código del PR",
-    hint: "Revisa que la GitHub App de Ghosty siga instalada en el repo.",
+    hint: "Revisa que el repo siga entre los que compartes con Ghosty en GitHub.",
   },
   {
     re: /bun todavía no está soportado/i,

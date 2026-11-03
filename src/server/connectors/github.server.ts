@@ -619,7 +619,7 @@ export async function upsertCheckRun(
   // El mismo token de instalación que `publishPreviewDeployment` (vía `writeToken`), sin usuario.
   const instId = await installationIdFor(repo);
   const token = instId ? await installationToken(instId) : null;
-  if (!token) return { error: "la GitHub App no está instalada en el repo (o no está configurada)" };
+  if (!token) return { error: "el repo no está entre los que la persona comparte con Ghosty en GitHub (que lo elija en Integraciones → GitHub → Elegir repos)" };
   if (!existing) {
     const appId = Number(process.env.GITHUB_APP_ID ?? 0);
     const list = await apiWith(token, `/repos/${repo}/commits/${sha}/check-runs?check_name=${encodeURIComponent(c.name)}&filter=latest&per_page=20`);
@@ -1557,8 +1557,8 @@ const ALL_TOOLS: ConnectorTool[] = [
         if (!token) {
           return {
             error:
-              "El modo git necesita la GitHub App instalada en ese repositorio " +
-              `(se instala aquí: ${INSTALL_URL}). Mientras tanto usa el modo tarball, que funciona con la conexión del usuario.`,
+              "El modo git necesita que la persona comparta ese repo con Ghosty en GitHub " +
+              `(lo elige aquí: ${INSTALL_URL}). Mientras tanto usa el modo tarball, que funciona con la conexión del usuario.`,
           };
         }
         return {

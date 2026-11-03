@@ -270,14 +270,18 @@ export const finishConnectFn = createServerFn({ method: "POST" })
       externalId,
       meta,
     });
-    // GitHub: autorizado no es instalado. Sin la app instalada todas las tools dan 404, así
-    // que se manda a elegir repos (al instalar, GitHub vuelve aquí con otro `code`).
+    // GitHub: conectar = autorizar + elegir TUS repos en el mismo viaje. Sin eso las tools dan
+    // 404 en tus repos. Se mira que haya una instalación en TU cuenta, no «alguna»: una colaboradora
+    // ve la del dueño del repo ajeno y antes eso contaba como «ya eligió» (Brenda, 3-nov). Al elegir,
+    // GitHub vuelve aquí con otro `code` y ya pasa.
     if (def.id === "github") {
       const r = await fetch("https://api.github.com/user/installations", {
         headers: { Authorization: `Bearer ${tok.access_token}`, Accept: "application/vnd.github+json" },
       }).catch(() => null);
-      const j = r?.ok ? ((await r.json().catch(() => null)) as { total_count?: number } | null) : null;
-      if (j && !j.total_count)
+      const j = r?.ok ? ((await r.json().catch(() => null)) as { installations?: { account?: { login?: string } }[] } | null) : null;
+      const { ownReposMissing } = await import("./connectors/github-own-install");
+      const login = typeof (meta as { login?: unknown } | null)?.login === "string" ? (meta as { login: string }).login : null;
+      if (j && ownReposMissing(j.installations, login))
         return { ok: true as const, next: `https://github.com/apps/${process.env.GITHUB_APP_SLUG ?? "ghosty-studio"}/installations/new?state=${encodeURIComponent(data.state)}` };
     }
     return { ok: true as const };
