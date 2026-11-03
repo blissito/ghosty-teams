@@ -14,7 +14,12 @@ import { createFileRoute } from "@tanstack/react-router";
 
 const bad = (error: string, status = 400) => Response.json({ error }, { status });
 
+/** Lo que staff puede hacer en un espacio ajeno (gs lo marca con `staff`). */
+const STAFF_ACTIONS = new Set(["resume", "stop", "cancel", "recheck", "retry_preview", "card"]);
+
 type Body = {
+  /** Correo de staff de Ghosty (lo pone gs, dentro de la firma): soporte sin ser miembro. */
+  staff?: string;
   runId?: number;
   action?: string;
   version?: number;
@@ -67,9 +72,14 @@ export const Route = createFileRoute("/api/internal/factory-act")({
 
         const db = await import("../db.server");
         const users = await import("../users.server");
-        const member = (await users.listAllMembers().catch(() => [])).find((m) => m.sub === body.sub && !m.banned);
-        if (!member) return bad("no eres miembro de este espacio de Teams (entra una vez desde el navegador)", 403);
-        const { isOwner } = await users.resolvePermissions(member.email, member.isOwner);
+        // Staff de Ghosty sin ser miembro (soporte, 3-nov): sólo lo operativo de un pedido atorado
+        // —retomar, detener, cancelar, revisar otra vez, la preview— nunca firmar ni mergear por el
+        // cliente. La identidad la garantiza gs (firma HMAC) y el registro queda en su AuditEvent.
+        const found = (await users.listAllMembers().catch(() => [])).find((m) => m.sub === body.sub && !m.banned);
+        const staffOk = !found && !!body.staff && STAFF_ACTIONS.has(String(body.action));
+        if (!found && !staffOk) return bad("no eres miembro de este espacio de Teams (entra una vez desde el navegador)", 403);
+        const member = found ?? { sub: body.sub, email: String(body.staff), name: "Staff de Ghosty", isOwner: true };
+        const { isOwner } = found ? await users.resolvePermissions(member.email, member.isOwner) : { isOwner: true };
         const ch = await db.getChannelById(run.channelId);
         if (!ch || !(await db.canSeeChannel(ch, member.sub, isOwner))) return bad("no ves el room de ese pedido", 403);
         const origin = await (await import("../origin.server")).reqOrigin().catch(() => "");
