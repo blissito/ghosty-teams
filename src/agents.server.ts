@@ -3345,7 +3345,7 @@ async function runAgentTurnInner(opts: {
         status: isPlumbing(tool) ? "ok" : "running",
         startedAt: steps.find((x) => x.id === ev.id)?.startedAt ?? Date.now(),
         ...(ev.detail ? { detail: ev.detail.slice(0, 300) } : {}),
-        ...(ev.command ? { command: ev.command.slice(0, 2000) } : {}),
+        ...(ev.command ? { command: ev.command.slice(0, 4000) } : {}),
         ...(intent ? { intent } : {}),
         ...(ev.todos?.length ? { todos: ev.todos } : {}),
       });
