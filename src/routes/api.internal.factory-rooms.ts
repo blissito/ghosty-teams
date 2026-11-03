@@ -109,7 +109,24 @@ export const Route = createFileRoute("/api/internal/factory-rooms")({
         // `github_list_repos` sólo trae la primera página (100) y en una cuenta con más repos decía
         // «no lo ve» de uno que sí veía (blissito/ghosty-studio, 19-oct).
         const { githubApi } = await import("../server/connectors/github.server");
-        const info = await githubApi(member.sub, `/repos/${repo}`).catch((e: Error) => ({ error: e.message }));
+        let info = await githubApi(member.sub, `/repos/${repo}`).catch((e: Error) => ({ error: e.message }));
+        // El dueño (o staff) conecta el repo de OTRA persona del espacio que ya le dio acceso a la App
+        // con su GitHub (Brenda y acaliClub, 3-nov): se revisa con el token de cada miembro que tiene
+        // GitHub y queda conectado a su nombre. Sólo miembros de ESTE espacio: nunca el repo de un
+        // cliente ajeno que también tenga la App.
+        let connectedBy = member.sub;
+        if ((!info || info.error || !info.full_name) && isOwner) {
+          const { listConnectorHolders } = await import("../server/connectors/store.server");
+          const holders = ((await listConnectorHolders().catch(() => new Map<string, string[]>())).get("github") ?? []).filter((s) => s !== member.sub);
+          for (const sub of holders) {
+            const other = await githubApi(sub, `/repos/${repo}`).catch(() => null);
+            if (other?.full_name) {
+              info = other;
+              connectedBy = sub;
+              break;
+            }
+          }
+        }
         if (!info || info.error || !info.full_name) {
           const list = allTools().find((t) => t.name === "github_install_link");
           const links = list ? ((await list.handler(member.sub, {}).catch(() => null)) as { instalarOAgregarRepos?: string } | null) : null;
@@ -142,7 +159,7 @@ export const Route = createFileRoute("/api/internal/factory-rooms")({
           });
           created = true;
         }
-        await db.addRoomRepo(ch.id, repo, member.sub);
+        await db.addRoomRepo(ch.id, repo, connectedBy);
 
         // Con la fábrica instalada, como `addRoomRepoFn`: el repo entra a la caja de CI del espacio
         // y su homepage al uptime. Aquí se espera la caja: el CLI dice con qué runner quedó.
@@ -150,12 +167,12 @@ export const Route = createFileRoute("/api/internal/factory-rooms")({
         if (factoryInstalled) {
           const { requestCiBox } = await import("../server/apps/factory");
           ciLabel = await requestCiBox([repo]);
-          void import("../server/apps/uptime.server").then((U) => U.autoMonitorRepo(ch!.id, repo, member.sub)).catch(() => {});
+          void import("../server/apps/uptime.server").then((U) => U.autoMonitorRepo(ch!.id, repo, connectedBy)).catch(() => {});
         }
         const { repoReadiness } = await import("../server/apps/readiness.server");
-        const rd = await repoReadiness(member.sub, repo, { fresh: true }).catch(() => null);
+        const rd = await repoReadiness(connectedBy, repo, { fresh: true }).catch(() => null);
         const readiness = rd && !("error" in rd) ? { level: rd.level, passed: rd.passed, total: rd.total, missing: rd.checks.filter((c) => !c.ok).map((c) => c.key) } : null;
-        console.log(`[factory-rooms] ${member.name} conectó ${repo} → #${ch.slug}${created ? " (nuevo)" : ""}`);
+        console.log(`[factory-rooms] ${member.name} conectó ${repo} → #${ch.slug}${created ? " (nuevo)" : ""}${connectedBy !== member.sub ? ` con el GitHub de ${connectedBy}` : ""}`);
         return Response.json({ ok: true, room: ch.slug, created, repo, factoryInstalled, ciLabel, readiness, repos: (await db.listRoomRepos(ch.id)).map((r) => r.repo) });
       },
     },
