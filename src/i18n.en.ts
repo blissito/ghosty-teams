@@ -2593,7 +2593,7 @@ export const en: Record<string, string> = {
   "Reactivar por {price}/mes": "Reactivate for {price}/mo",
   "Tu prueba terminó, elige tu plan": "Your trial ended, choose your plan",
   "Tu pago está pendiente": "Your payment is due",
-  "Tus rooms, documentos y agentes siguen aquí. Los agentes vuelven a contestar en cuanto pagues.": "Your rooms, documents and agents are still here. Agents reply again as soon as you pay.",
+  "Tus rooms, documentos y agentes siguen aquí. Los agentes vuelven a contestar cuando reactives tu espacio.": "Your rooms, documents and agents are still here. Agents reply again once you reactivate your space.",
   "Pagar {price}/mes": "Pay {price}/month",
   "Pagar mi plan": "Pay my plan",
   "MXN, IVA incluido": "MXN, VAT included",

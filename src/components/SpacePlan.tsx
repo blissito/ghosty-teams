@@ -299,7 +299,7 @@ export function SpaceClosedScreen({ status, isOwner }: { status: SpaceStatus; is
           <p className="mt-2 text-[15px] text-muted">
             {isOwner
               ? status.overdue
-                ? t("Tus rooms, documentos y agentes siguen aquí. Los agentes vuelven a contestar en cuanto pagues.")
+                ? t("Tus rooms, documentos y agentes siguen aquí. Los agentes vuelven a contestar cuando reactives tu espacio.")
                 : status.bornClosed
                 ? t("Tu prueba ya la usaste en otro espacio.")
                 : t("Tus rooms, documentos y agentes siguen aquí.")
