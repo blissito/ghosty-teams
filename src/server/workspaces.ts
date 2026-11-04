@@ -247,6 +247,9 @@ export const spaceStatusFn = createServerFn({ method: "GET" }).handler(async () 
       checkoutUrl?: string;
       /** Módulos que se suman al Space (Factory, Sales, Partner), con precio del cotizador de gs. */
       modules?: { key: string; name: string; fromMxn: number | null; href: string }[];
+      /** Pago a mano vencido: el mismo cierre, cobrando el plan del Space (`planPriceMxn`). */
+      overdue?: boolean;
+      planPriceMxn?: number;
     };
     const returnUrl = `https://${slug}.${ROOT}/`;
     // Respaldo por si gs todavía no manda las ligas: mismo destino, armado aquí.
@@ -267,6 +270,8 @@ export const spaceStatusFn = createServerFn({ method: "GET" }).handler(async () 
       payUrl: j.payUrl ?? planUrl,
       checkoutUrl: j.checkoutUrl ?? `${planUrl}&checkout=1`,
       modules: Array.isArray(j.modules) ? j.modules : undefined,
+      overdue: !!j.overdue,
+      priceMxn: typeof j.planPriceMxn === "number" ? j.planPriceMxn : null,
       studioUrl: IDP,
     };
   } catch {

@@ -32,6 +32,10 @@ export type SpaceStatus = {
   usdRef?: { planPrice: number; firstMonth: number | null } | null;
   /** Módulos debajo del Space, armados por gs con su cotizador (MXN al mes, IVA incluido). */
   modules?: SpaceModule[];
+  /** Space de pago a mano con el pago vencido (no es prueba): se cobra SU plan, `priceMxn`. */
+  overdue?: boolean;
+  /** Lo que cobra gs al mes, IVA incluido (en `overdue` es el plan del Space, no `SPACE_PRICE`). */
+  priceMxn?: number | null;
 };
 
 export type SpaceModule = { key: string; name: string; fromMxn: number | null; href: string };
@@ -286,20 +290,32 @@ export function SpaceClosedScreen({ status, isOwner }: { status: SpaceStatus; is
           <h1 id="space-closed-title" className="mt-7 text-balance text-2xl font-bold tracking-tight sm:text-[28px]">
             {!isOwner
               ? t("Este espacio está en pausa")
-              : status.bornClosed
+              : status.overdue
+                ? t("Tu pago está pendiente")
+                : status.bornClosed
                 ? t("Este espacio se abre con su plan")
                 : t("Tu prueba terminó, elige tu plan")}
           </h1>
           <p className="mt-2 text-[15px] text-muted">
             {isOwner
-              ? status.bornClosed
+              ? status.overdue
+                ? t("Tus rooms, documentos y agentes siguen aquí. Los agentes vuelven a contestar en cuanto pagues.")
+                : status.bornClosed
                 ? t("Tu prueba ya la usaste en otro espacio.")
                 : t("Tus rooms, documentos y agentes siguen aquí.")
               : `${t("El dueño tiene que reactivar este espacio.")} ${t("Tus rooms, documentos y agentes siguen aquí.")}`}
           </p>
         </header>
 
-        {isOwner ? (
+        {isOwner && status.overdue ? (
+          <section className="mt-10">
+            <PayButton
+              status={status}
+              label={status.priceMxn ? t("Pagar {price}/mes", { price: fmt(status.priceMxn) }) : t("Pagar mi plan")}
+            />
+            <p className="mt-3 text-center text-xs text-muted">{t("MXN, IVA incluido")}</p>
+          </section>
+        ) : isOwner ? (
           <>
             <section className="mt-10">
               <SpaceCard offer={status.offer} usdRef={status.usdRef} cta={<PayButton status={status} />} />
