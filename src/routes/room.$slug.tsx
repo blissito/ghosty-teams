@@ -73,12 +73,31 @@ export function faltan(startsAt: number, ahora: number): string | null {
 }
 
 const loadRoom = createServerFn({ method: "GET" })
-  .validator((d: { slug: string }) => d)
+  .validator((d: { slug: string; pase?: string | null }) => d)
   .handler(async ({ data }): Promise<RoomInfo | null> => {
     await (await import("../server/schema.server")).ensureSchema().catch(() => {});
     const { channelByShareSlug } = await import("../db.server");
     const ch = await channelByShareSlug(data.slug);
     if (!ch || !ch.call_mode) return null;
+    // Pase personal del correo (6-nov): abrir la liga desde su buzón ya verifica el correo, así
+    // que se registra como verificado y entra sin teclear correo ni código. El baneo manda igual.
+    let passViewer: { sub: string; name: string; isMember: false; isHost: false } | null = null;
+    if (data.pase && ch.public_access === 1) {
+      const { verifyRoomPass } = await import("../server/events/invite-pass.server");
+      const { currentNamespace } = await import("../server/tenant.server");
+      const pass = verifyRoomPass(data.pase, { ns: await currentNamespace(), room: data.slug });
+      if (pass) {
+        const db = await import("../db.server");
+        const name = pass.name || pass.email.split("@")[0];
+        const { banned } = await db.startEventVerification({ channelId: ch.id, name, email: pass.email, codeHash: "pase", expiresAt: 0, ipHash: null });
+        if (!banned) {
+          const { guestSubForEvents } = await import("../server/events/guest.server");
+          const sub = await guestSubForEvents();
+          await db.confirmEventVerification({ channelId: ch.id, email: pass.email, guestSub: sub });
+          passViewer = { sub, name, isMember: false, isHost: false };
+        }
+      }
+    }
     // La marca REAL del tenant: el visitante viene por el cliente, no por nosotros. Los
     // colores y la tipografía ya entran solos por `/api/brand-css`, que el shell inyecta
     // en todas las rutas; aquí sólo hace falta el logo y el nombre.
@@ -91,7 +110,9 @@ const loadRoom = createServerFn({ method: "GET" })
     let callUrl: string | null = null;
     if (ch.call_open === 1) {
       const { eventViewerFor, roomUrlFor } = await import("../server/events/access.server");
-      const viewer = await eventViewerFor(ch).catch(() => null);
+      // Con pase, el invitado recién registrado: su cookie sale en ESTA respuesta, así que
+      // `eventViewerFor` (que la lee del request) todavía no lo vería.
+      const viewer = (await eventViewerFor(ch).catch(() => null)) ?? passViewer;
       if (viewer) callUrl = await roomUrlFor(ch, viewer).catch(() => null);
     }
     return {
@@ -106,8 +127,11 @@ const loadRoom = createServerFn({ method: "GET" })
   });
 
 export const Route = createFileRoute("/room/$slug")({
-  loader: async ({ params }) => {
-    const info = await loadRoom({ data: { slug: params.slug } });
+  validateSearch: (search: Record<string, unknown>): { pase?: string } =>
+    typeof search.pase === "string" ? { pase: search.pase } : {},
+  loaderDeps: ({ search }) => ({ pase: search.pase }),
+  loader: async ({ params, deps }) => {
+    const info = await loadRoom({ data: { slug: params.slug, pase: deps.pase ?? null } });
     if (!info) throw notFound();
     return info;
   },
@@ -164,6 +188,14 @@ function RoomAbierto() {
   // Se lee perezosamente para no tocar `window` en el render del servidor.
   const [suena, setSuena] = useState(true);
   useEffect(() => { setSuena(localStorage.getItem("room:mudo") !== "1"); }, []);
+  // El pase ya se canjeó en el loader: se quita de la barra para que no salga al compartir pantalla.
+  useEffect(() => {
+    const u = new URL(window.location.href);
+    if (u.searchParams.has("pase")) {
+      u.searchParams.delete("pase");
+      window.history.replaceState(window.history.state, "", u.pathname + u.search + u.hash);
+    }
+  }, []);
   const alternarSonido = () => {
     setSuena((v) => {
       localStorage.setItem("room:mudo", v ? "1" : "0");
