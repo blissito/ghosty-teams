@@ -91,7 +91,12 @@ function AppError() {
 export function getRouter() {
   const router = createTanStackRouter({
     routeTree,
-    scrollRestoration: true,
+    // Fuera de las vistas de chat (`/c/…`): ahí cada panel lleva su propio scroll (`useChatScroll`
+    // pega al fondo, guarda dónde ibas leyendo). El router guardaba el `scrollTop` del contenedor
+    // del chat por URL y lo reaplicaba al volver: Brenda subió una vez hasta arriba en su DM con
+    // Ghosty y desde entonces cada entrada la dejaba en el tope, aunque bajara con «ir al final»
+    // (medido el 9-nov: el chat aterrizaba abajo y ~0.7 s después el router le ponía 0).
+    scrollRestoration: ({ location }) => !location.pathname.startsWith('/c/'),
     // Preload al hover y REUSA lo precargado al hacer clic (no refetch) → nav instantáneo.
     defaultPreload: 'intent',
     defaultPreloadStaleTime: 30_000,
