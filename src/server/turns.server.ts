@@ -32,6 +32,10 @@ export type LiveTurn = {
   // Contexto para pintar la barra sin volver a consultar la base en cada refresco.
   channelId?: number | null;
   parentId?: number | null;
+  /** El HILO del turno (su raíz: `parentId`, o el mensaje que lo invocó si fue en el room). Sólo
+   *  en memoria: un steer entra al turno vivo de ESTE hilo, nunca al de otro hilo del mismo room
+   *  aunque compartan sesión (Brendi, 9-nov: la respuesta salía en otro hilo). */
+  threadRoot?: number | null;
   /** DM al que pertenece el turno (los DMs no tienen channelId). */
   dmId?: number | null;
   agent?: string;
@@ -599,9 +603,15 @@ export function turnOwnedByOther(ns: string, messageId: number, bySub?: string |
  * se mete al turno vivo (el worker lo empuja a la misma sesión del SDK) en vez de matarlo.
  * El de otra persona no cuenta: el canal es compartido, ese trabajo no es mío.
  */
-export function hasOwnInflight(groupId: string, invokerSub?: string | null): boolean {
+export function hasOwnInflight(groupId: string, invokerSub?: string | null, threadRoot?: number | null): boolean {
   if (!invokerSub) return false;
-  for (const t of siblings(groupId)) if (t.invokerSub === invokerSub && !t.stopped) return true;
+  for (const t of siblings(groupId)) {
+    if (t.invokerSub !== invokerSub || t.stopped) continue;
+    // Con hilo conocido de los dos lados, sólo el MISMO hilo: el de otro hilo va a la fila y
+    // contesta en el suyo (el room comparte sesión, no burbuja).
+    if (threadRoot != null && t.threadRoot != null && t.threadRoot !== threadRoot) continue;
+    return true;
+  }
   return false;
 }
 

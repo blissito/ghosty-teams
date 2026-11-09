@@ -11,7 +11,7 @@ vi.mock("./tenant.server", () => ({ withNamespace: async (_ns: string, fn: () =>
 const T = await import("./turns.server");
 
 let next = 1000;
-function turn(over: { groupId?: string; invokerSub?: string | null; startedAt?: number; ns?: string } = {}) {
+function turn(over: { groupId?: string; invokerSub?: string | null; startedAt?: number; ns?: string; threadRoot?: number } = {}) {
   const controller = new AbortController();
   const t = T.registerTurn({
     ns: over.ns ?? "acme",
@@ -20,6 +20,7 @@ function turn(over: { groupId?: string; invokerSub?: string | null; startedAt?: 
     invokerSub: over.invokerSub === undefined ? "ana" : over.invokerSub,
     controller,
     ...(over.startedAt ? { startedAt: over.startedAt } : {}),
+    ...(over.threadRoot ? { threadRoot: over.threadRoot } : {}),
   } as never);
   return { id: t.messageId, ns: t.ns, controller };
 }
@@ -91,6 +92,13 @@ describe("steer e interrupción: sólo los turnos propios", () => {
     expect(T.hasOwnInflight("g-steer", null)).toBe(false);
     T.stopTurn("acme", t.id, "ana");
     expect(T.hasOwnInflight("g-steer", "ana")).toBe(false);
+  });
+
+  it("hasOwnInflight no mezcla hilos del mismo room (comparten sesión, no burbuja)", () => {
+    reg({ groupId: "g-hilos", invokerSub: "ana", threadRoot: 10 });
+    expect(T.hasOwnInflight("g-hilos", "ana", 10)).toBe(true);
+    expect(T.hasOwnInflight("g-hilos", "ana", 20)).toBe(false);
+    expect(T.hasOwnInflight("g-hilos", "ana")).toBe(true);
   });
 
   it("interruptOwnTurns corta los míos y deja vivo el de otra persona", () => {

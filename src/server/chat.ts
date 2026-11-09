@@ -1459,7 +1459,9 @@ export const askAgentAs = createServerOnlyFn(async (me: SessionMe | null, data: 
   // burbuja que ya estoy mirando. Antes se mataba el turno: la corrección llegaba, pero
   // tirando a la basura todo lo que el agente llevaba hecho.
   const turns = await import("./turns.server");
-  const steer = turns.hasOwnInflight(groupId, poster?.sub);
+  // El hilo de ESTE mensaje: su raíz, o él mismo si se escribió en el room (ahí abre hilo).
+  const threadRoot = data.parentId ?? data.invokerMessageId ?? null;
+  const steer = turns.hasOwnInflight(groupId, poster?.sub, threadRoot);
 
   const controller = new AbortController();
   const flusher = (await import("./body-flush.server")).makeBodyFlusher();
@@ -1525,7 +1527,7 @@ export const askAgentAs = createServerOnlyFn(async (me: SessionMe | null, data: 
     // cliente no tiene que preguntar por el mensaje y su padre cada pocos segundos.
     turns.registerTurn({
       ns, messageId: mid, groupId, invokerSub: poster?.sub ?? null, controller, announce,
-      channelId: channel.id, parentId: data.parentId ?? null,
+      channelId: channel.id, parentId: data.parentId ?? null, threadRoot,
       // La AUTORIDAD del turno: contra esto resuelve el servidor MCP a nombre de quién
       // ejerce las tools un agente de fuera. Es el mismo `dest` que se firma en el
       // tool-token, ni más ni menos. Ver `inflightAuthority`.
