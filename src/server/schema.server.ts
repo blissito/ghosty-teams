@@ -95,7 +95,9 @@ export async function ensureSchema(): Promise<void> {
         } catch { /* best-effort */ }
         try {
           const { sweepOrphans, armTurnSweep } = await import("./turns.server");
-          await sweepOrphans();
+          // Con `ns`: sin él el barrido de ARRANQUE —justo el de un reinicio— se brincaba la adopción
+          // y daba por muertos los turnos durables que seguían vivos en gs (Brendi, 9-nov).
+          await sweepOrphans(ns);
           // Y se deja armado el barrido PERIÓDICO: el de arranque sólo corre la primera vez
           // que este proceso toca este tenant, así que con despliegues solapados un turno
           // huérfano del proceso anterior se quedaría en "pensando" hasta el siguiente
