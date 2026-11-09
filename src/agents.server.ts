@@ -2496,6 +2496,9 @@ export async function callAgentBackendStream(
     groupId,
     configGroupId: "teams",
     sender: sender || "invitado",
+    // Id de gs de quien escribe: gs lo usa para saber si es miembro (tools de equipo, como las
+    // de imagen) y quién paga con su llave. Sin él todo turno salía `externo` (Brendi, 9-nov).
+    ...(invokerSub ? { senderUserId: invokerSub } : {}),
     text: outText,
     parts,
     // Persona por-agente + guardrail eb-doc, ambos en la capa system. EasyBits los
