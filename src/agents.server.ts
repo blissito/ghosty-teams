@@ -2,6 +2,7 @@
 // wizard (config) + los gc_agents extra (fleet o webhook). Módulo puro server
 // (sin createServerFn) para que lo usen tanto chat.ts como server/agents.ts sin
 // ciclos de import.
+import { isProspTurn } from "./server/prospeccion/turn-kind";
 import { humanAgentError } from "./lib/agent-error";
 import { PERSONA_ALIASES } from "./server/apps/factory-roles";
 import { hasIds, nodeIndex } from "./lib/artifact-ids";
@@ -2545,7 +2546,8 @@ export async function callAgentBackendStream(
       : {}),
     // Fuera de la fábrica, todo agente nativo pide ayudantes (26-oct): forks para seguir el mismo
     // trabajo o perfiles; gs decide si su worker los soporta (claude-worker) y los corre `sync`.
-    ...(native && !factoryTurn ? { nativeSubagents: true } : {}),
+    // Salvo en Prospección (panel y columnas): sin canal, el resultado de un hijo no vuelve.
+    ...(native && !factoryTurn ? { nativeSubagents: !isProspTurn(groupId) } : {}),
   };
   if (native) {
     return await nativeAguiTurn({ agent, rt, base, fleetAgentId, groupId, fields, outText, parts, onChunk, onTool, onTruncated, onModel, onFailure, signal, inject, durableOpts });

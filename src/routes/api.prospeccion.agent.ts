@@ -79,7 +79,7 @@ export const Route = createFileRoute("/api/prospeccion/agent")({
                 agent,
                 // Una conversación por LISTA y por persona: el hilo de Ana sobre la lista 7
                 // no es el de Luis, y el de la lista 7 no es el de la 8.
-                `prosp:drawer:v2:${listId}:${me.sub}`,
+                `prosp:drawer:v3:${listId}:${me.sub}`,
                 me.name ?? "Alguien",
                 `${contexto}\n\n---\n\n${text}`,
                 (chunk) => { respuesta += chunk; send({ t: "delta", v: chunk }); },

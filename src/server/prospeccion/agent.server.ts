@@ -72,6 +72,8 @@ export async function listContext(listId: number, encodedFilter?: string, bySub:
     ``,
     `Puedes filtrar la vista con \`prospect_filter\`, agregar y correr columnas con`,
     `\`prospect_column\`, y leer una muestra con \`prospect_rows\`. Todo aplica a la VISTA.`,
+    `¿Cuántos hay en el directorio? \`prospect_count\` con uno o varios criterios: contesta en este`,
+    `mismo turno, sin crear filas. Aquí no hay ayudantes: todo se resuelve en el turno.`,
     ``,
     await (await import("./sender.server")).outreachBrief(bySub).catch(() => ""),
   ]

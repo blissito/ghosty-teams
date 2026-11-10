@@ -186,7 +186,7 @@ export const clearDrawerFn = createServerFn({ method: "POST" })
     const { resolvedAgents, resetAgentSession } = await import("../agents.server");
     const agents = await resolvedAgents().catch(() => []);
     const agent = data.handle ? agents.find((a) => a.handle === data.handle) : agents[0];
-    if (agent) await resetAgentSession(agent, `prosp:drawer:v2:${Number(data.listId)}:${me.sub}`).catch(() => {});
+    if (agent) await resetAgentSession(agent, `prosp:drawer:v3:${Number(data.listId)}:${me.sub}`).catch(() => {});
     return { ok: true as const };
   });
 

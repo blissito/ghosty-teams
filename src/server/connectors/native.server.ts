@@ -431,6 +431,41 @@ export function nativeTools(
       },
     },
     {
+      name: "prospect_count",
+      description:
+        "Cuántos negocios hay en el directorio para uno o varios criterios («agencias de publicidad " +
+        "en Monterrey»), SIN crear la lista ni agregar filas. Úsala para cualquier pregunta de " +
+        "«¿cuántos hay?»: no busques en la web ni delegues a un ayudante. `lugar` dice qué zona " +
+        "entendió (ciudad, municipio o colonia); dilo tal cual. No hay zona metropolitana: si la " +
+        "piden, cuenta cada municipio por separado.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          criteria: {
+            type: "array",
+            items: { type: "string" },
+            description: "Qué y dónde, uno por criterio: «dentistas en Torreón». Máximo 10.",
+          },
+        },
+        required: ["criteria"],
+      },
+      handler: async (_sub, args) => {
+        const list = (Array.isArray((args as { criteria?: unknown }).criteria) ? (args as { criteria: unknown[] }).criteria : [])
+          .map((c) => String(c ?? "").trim())
+          .filter(Boolean)
+          .slice(0, 10);
+        if (!list.length) return { ok: false, error: "Pasa al menos un criterio, p. ej. «dentistas en Torreón»." };
+        const { contarCriterio } = await import("../prospeccion/sources/directorio");
+        const conteos = await Promise.all(
+          list.map(async (criterio) => {
+            const r = await contarCriterio(criterio).catch((e) => ({ ok: false as const, error: String(e instanceof Error ? e.message : e) }));
+            return r.ok ? { criterio, total: r.total, lugar: r.lugar } : { criterio, error: r.error };
+          }),
+        );
+        return { ok: true, conteos };
+      },
+    },
+    {
       name: "prospect_gaps",
       description:
         "Cuántas filas de la vista les FALTA cada dato. Úsalo para proponer trabajo sin que te lo " +
