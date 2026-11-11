@@ -20,7 +20,7 @@
  * Medido sobre Ciudad de México (462,520 establecimientos cargados): **22.6% traen correo**
  * y **100% traen coordenadas**.
  */
-import { tokenPara } from "../../dbq.server";
+import { sqldFetch, tokenPara } from "../../dbq.server";
 import type { Found } from "./sources/index";
 
 /** Fijo: este namespace no depende del tenant. Es el punto entero. */
@@ -45,7 +45,7 @@ async function query(sql: string, args: unknown[] = []): Promise<Record<string, 
   };
   const token = tokenPara(NAMESPACE);
   if (token) headers.Authorization = `Bearer ${token}`;
-  const res = await fetch(`${SQLD_URL}/v2/pipeline`, {
+  const res = await sqldFetch(`${SQLD_URL}/v2/pipeline`, {
     method: "POST",
     headers,
     body: JSON.stringify({

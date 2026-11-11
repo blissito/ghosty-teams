@@ -50,6 +50,28 @@ const SQLD_JWT_PRIVATE_KEY = process.env.SQLD_JWT_PRIVATE_KEY ?? "";
  * El `id` se construye aquí y nunca se acepta de fuera: sin él, sqld entrega
  * todos los namespaces de la instancia.
  */
+/**
+ * sqld descarga de memoria las bases que pasan de su tope de activas, y la petición que llega durante la
+ * descarga recibe `404 Namespace … doesn't exist` aunque la base exista (bug de sqld, Shopify/libsql
+ * PR #56). Pegaba a los espacios personales `u_*` (11-nov: 77 al día con el tope en 30; ya es 200).
+ * Un 404 así no ejecutó nada, así que reintentar es seguro. Mismo arreglo que gs (`retryOnEviction`).
+ */
+const EVICTION_RETRY_MS = [100, 300, 800];
+export async function retryOnEviction(doFetch: () => Promise<Response>): Promise<Response> {
+  let res = await doFetch();
+  for (const ms of EVICTION_RETRY_MS) {
+    if (res.status !== 404) return res;
+    const text = await (res.clone?.() ?? res).text().catch(() => "");
+    if (!/doesn.t exist/i.test(text)) return res;
+    await new Promise((r) => setTimeout(r, ms));
+    res = await doFetch();
+  }
+  return res;
+}
+
+/** `fetch` a sqld con el reintento de arriba. */
+export const sqldFetch = (url: string, init: RequestInit) => retryOnEviction(() => fetch(url, init));
+
 export function tokenPara(namespace: string): string {
   if (!SQLD_JWT_PRIVATE_KEY) return "";
   if (!namespace) throw new Error("sqld: token sin namespace sería un token maestro");
@@ -118,7 +140,7 @@ export async function dbqRaw(
   };
   const token = tokenPara(namespace);
   if (token) headers.Authorization = `Bearer ${token}`;
-  const res = await fetch(`${SQLD_URL}/v2/pipeline`, {
+  const res = await sqldFetch(`${SQLD_URL}/v2/pipeline`, {
     method: "POST",
     headers,
     body: JSON.stringify({
@@ -165,7 +187,7 @@ export async function dbqMany(
   };
   const token = tokenPara(namespace);
   if (token) headers.Authorization = `Bearer ${token}`;
-  const res = await fetch(`${SQLD_URL}/v2/pipeline`, {
+  const res = await sqldFetch(`${SQLD_URL}/v2/pipeline`, {
     method: "POST",
     headers,
     body: JSON.stringify({
@@ -205,7 +227,7 @@ export async function dbqManySettled(
   };
   const token = tokenPara(namespace);
   if (token) headers.Authorization = `Bearer ${token}`;
-  const res = await fetch(`${SQLD_URL}/v2/pipeline`, {
+  const res = await sqldFetch(`${SQLD_URL}/v2/pipeline`, {
     method: "POST",
     headers,
     body: JSON.stringify({

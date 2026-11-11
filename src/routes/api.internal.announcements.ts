@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { tokenPara } from "../dbq.server";
+import { sqldFetch, tokenPara } from "../dbq.server";
 
 // ── Endpoint interno: analytics de novedades (para el admin de gs) ──────────
 // El estado "visto" vive en Teams per-tenant (gt_announcement_seen). Este endpoint
@@ -44,7 +44,7 @@ async function sqld(ns: string, sql: string, args: { type: string; value?: strin
   const headers: Record<string, string> = { "Content-Type": "application/json", "x-namespace": ns };
   const auth = tokenPara(ns);
   if (auth) headers.Authorization = `Bearer ${auth}`;
-  const res = await fetch(`${url}/v2/pipeline`, {
+  const res = await sqldFetch(`${url}/v2/pipeline`, {
     method: "POST",
     headers,
     body: JSON.stringify({ requests: [{ type: "execute", stmt: { sql, args } }, { type: "close" }] }),
