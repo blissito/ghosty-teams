@@ -275,6 +275,58 @@ async function sweepTenant(ns: string): Promise<void> {
   }
 }
 
+/**
+ * Publica un mensaje YA ESCRITO por el agente (remate de un ayudante que terminó después del
+ * turno) en el DM/canal del despertador, con las tarjetas de sus archivos y push a quien pidió.
+ * Antes ese remate sólo quedaba en gs y en Teams nadie lo veía (descti, 11/12-nov).
+ */
+async function postAgentMessage(
+  ns: string,
+  ref: WakeRef,
+  text: string,
+  who: { handle: string; name: string; avatar: string },
+): Promise<void> {
+  const db = await import("../db.server");
+  const bus = await import("./bus.server");
+  const dest = ref.dest;
+  const body0 = text.trim();
+  if (!body0) return;
+  let id: number;
+  if (dest.dmId != null) {
+    id = (await db.postDmAgent(dest.dmId, body0, "msg", who.handle, who.name, who.avatar)).id;
+  } else if (dest.channelId != null) {
+    id = (await db.postAgent(dest.channelId, dest.parentId ?? null, body0, "msg", who.handle, who.name, dest.topic ?? "general", who.avatar)).id;
+  } else {
+    throw new Error("destino sin dm ni canal");
+  }
+  // ```eb-file``` / ```eb-audio``` → tarjeta adjunta, igual que en un turno normal.
+  const { attachDeliveryFences } = await import("./delivery-fences.server");
+  const delivered = await attachDeliveryFences(id, body0, { ...dest, handle: who.handle, name: who.name, avatar: who.avatar }).catch(() => null);
+  if (delivered?.body && delivered.body !== body0) await db.setMessageBody(id, delivered.body);
+  const msg = await db.getMessage(id);
+  const ev = msg ? { t: "message:new", msg } : { t: "refresh", channelId: dest.channelId ?? null, parentId: dest.parentId ?? null, dmId: dest.dmId ?? null };
+  if (dest.dmId != null) {
+    for (const sub of await db.getDmMembers(dest.dmId)) bus.publish(bus.ch.user(ns, sub), ev as never);
+  } else if (dest.channelId != null) {
+    bus.publish(bus.ch.room(ns, dest.channelId), ev as never);
+  }
+  if (delivered?.attached) {
+    const refresh = { t: "refresh", channelId: dest.channelId ?? null, parentId: dest.parentId ?? null, dmId: dest.dmId ?? null };
+    if (dest.dmId != null) for (const sub of await db.getDmMembers(dest.dmId)) bus.publish(bus.ch.user(ns, sub), refresh as never);
+    else if (dest.channelId != null) bus.publish(bus.ch.room(ns, dest.channelId), refresh as never);
+  }
+  // Push sólo a quien pidió (y `notify` lo salta si está conectado).
+  if (ref.sub) {
+    const { notify } = await import("./notify.server");
+    const plain = body0.replace(/```[\s\S]*?```/g, "").replace(/[*_#>`]/g, "").trim();
+    void notify(
+      { kind: "turn", recipients: [ref.sub], title: `${who.name} terminó`, body: plain.slice(0, 180) || "Terminé.", url: "/", tag: `post:${id}` },
+      ns,
+    ).catch(() => {});
+  }
+  console.log(`[wake] post ${dest.dmId != null ? `dm=${dest.dmId}` : `ch=${dest.channelId}`} id=${id} chars=${body0.length}`);
+}
+
 /** Abre el turno donde se pidió el trabajo, con un mensaje de PLATAFORMA (no de la persona). */
 export async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
   const firedAt = Date.now();
@@ -286,6 +338,14 @@ export async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
   const name = agent?.name ?? ref.dest.name ?? "Ghosty";
   const avatar = agent?.avatar ?? ref.dest.avatar ?? "";
   const dest = ref.dest;
+
+  // `post:` (remate de un ayudante, desde gs): el agente ya escribió su mensaje; se publica tal
+  // cual en el DM/canal, sin abrir turno ni gastar tokens. Pasa por la cola para heredar la
+  // idempotencia y el «si hay turno en vuelo, espera» (queda después de la respuesta del padre).
+  if (w.key.startsWith("post:")) {
+    await postAgentMessage(ns, ref, w.text, { handle, name, avatar });
+    return;
+  }
 
   // Igual que un turno programado en gs: el agente sabe que lo despertó la plataforma y que
   // si no hay nada que entregar contesta `OK` (y un `OK` no genera push).

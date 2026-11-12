@@ -38,7 +38,8 @@ export const Route = createFileRoute("/api/internal/agent-wake")({
           key: String(body.key).slice(0, 200),
           ref: body.ref,
           cause: String(body.cause ?? "evento").slice(0, 60),
-          text: String(body.text).slice(0, 4000),
+          // `post:` = remate de un ayudante que se publica tal cual (con sus ligas): no se corta a 4000.
+          text: String(body.text).slice(0, String(body.key).startsWith("post:") ? 30000 : 4000),
           // `reqOrigin`, no `request.url`: tras el proxy llega en http y el 308 tira el Authorization.
           origin: await (await import("../origin.server")).reqOrigin(),
         });
