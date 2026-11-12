@@ -301,7 +301,7 @@ async function postAgentMessage(
   }
   // ```eb-file``` / ```eb-audio``` → tarjeta adjunta, igual que en un turno normal.
   const { attachDeliveryFences } = await import("./delivery-fences.server");
-  const delivered = await attachDeliveryFences(id, body0, { ...dest, handle: who.handle, name: who.name, avatar: who.avatar }).catch(() => null);
+  const delivered = await attachDeliveryFences(id, body0, dest).catch(() => null);
   if (delivered?.body && delivered.body !== body0) await db.setMessageBody(id, delivered.body);
   const msg = await db.getMessage(id);
   const ev = msg ? { t: "message:new", msg } : { t: "refresh", channelId: dest.channelId ?? null, parentId: dest.parentId ?? null, dmId: dest.dmId ?? null };
