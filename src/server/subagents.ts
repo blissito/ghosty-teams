@@ -47,3 +47,44 @@ export const subagentDetailFn = createServerFn({ method: "POST" })
       resultMd: j.resultMd != null ? String(j.resultMd) : null,
     };
   });
+
+export type SubagentLive = {
+  id: string;
+  status: "running" | "done" | "failed" | "canceled";
+  startedAt: number;
+  ms: number | null;
+  toolUses: number;
+  tokens: number;
+  last: string | null;
+};
+
+/** Estado REAL de los ayudantes de un mensaje (por ids), desde gs. `null` = no se pudo preguntar. */
+export const subagentStatusFn = createServerFn({ method: "POST" })
+  .validator((d: { handle: string; ids: string[] }) => d)
+  .handler(async ({ data }): Promise<SubagentLive[] | null> => {
+    const me = await sessionUser();
+    if (!me) return null;
+    const ids = (data.ids ?? []).filter((x) => typeof x === "string" && x).slice(0, 20);
+    if (!ids.length) return [];
+    const { resolvedAgents } = await import("../agents.server");
+    const agent = (await resolvedAgents()).find((a) => a.handle === data.handle);
+    if (!agent || agent.backend.kind !== "fleet") return null;
+    const { runtimeFor } = await import("./agent-runtime.server");
+    const rt = await runtimeFor(agent.backend);
+    if (rt.transport !== "http" || rt.kind !== "gs-native") return null;
+    const url = `${rt.base}/api/v2/fleet-agents/${agent.backend.id}/subagent-runs?ids=${encodeURIComponent(ids.join(","))}`;
+    const res = await fetch(url, { headers: rt.headers("", agent.backend.token ?? ""), signal: AbortSignal.timeout(10_000) }).catch(() => null);
+    if (!res?.ok) return null;
+    const j = (await res.json().catch(() => null)) as { runs?: Partial<SubagentLive>[] } | null;
+    if (!Array.isArray(j?.runs)) return null;
+    const ok = ["running", "done", "failed", "canceled"];
+    return j.runs.map((r) => ({
+      id: String(r.id),
+      status: (ok.includes(String(r.status)) ? r.status : "done") as SubagentLive["status"],
+      startedAt: Number(r.startedAt ?? 0),
+      ms: typeof r.ms === "number" ? r.ms : null,
+      toolUses: Number(r.toolUses ?? 0),
+      tokens: Number(r.tokens ?? 0),
+      last: r.last ? String(r.last) : null,
+    }));
+  });
