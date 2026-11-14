@@ -17,7 +17,7 @@
  */
 import { currentNamespace } from "../tenant.server";
 import { isOptedOut } from "./optout.server";
-import { COOLDOWN_DAYS, lastTouch, markError, markSent, reserveTouch, touchCount } from "./touches.server";
+import { COOLDOWN_DAYS, contactedElsewhere, elsewhereNote, lastTouch, markError, markSent, reserveTouch, touchCount, type ElsewhereTouch } from "./touches.server";
 import { instrument } from "./track.server";
 import { waLink } from "../../lib/prospeccion-wa";
 import type { InlineImage } from "../ses.server";
@@ -66,6 +66,11 @@ export type SendPlan = {
   enDescanso: number;
   /** Quién los tocó y cuándo, para poder hablarlo en vez de sólo bloquear. */
   descansoNota: string | null;
+  /** Ya les escribió OTRA campaña del espacio en los últimos 90 días (mismo correo, otra lista). */
+  otraCampana: number;
+  otraCampanaNota: string | null;
+  /** Si se pidió incluirlos: cuentan en `irian` y `otraCampana` sólo informa. */
+  incluyeOtras: boolean;
   /** Los primeros, para poder mirar a quién se le va a escribir. */
   muestra: { rowId: number; name: string | null; email: string }[];
 };
@@ -74,8 +79,12 @@ export async function planSend(args: {
   listId: number;
   campaign: string;
   rows: ProspRow[];
+  /** Incluir a quienes ya recibieron otra campaña (apagado por defecto, como en Instantly). */
+  includeOtherCampaigns?: boolean;
 }): Promise<SendPlan> {
   const { optOutSet } = await import("./optout.server");
+  const otras = await contactedElsewhere(args.listId);
+  const otrasHits: ElsewhereTouch[] = [];
   const bajas = await optOutSet("email", args.rows.map((r) => r.email));
   const { normalize } = await import("./optout.server");
 
@@ -88,6 +97,9 @@ export async function planSend(args: {
     yaTocados: 0,
     enDescanso: 0,
     descansoNota: null,
+    otraCampana: 0,
+    otraCampanaNota: null,
+    incluyeOtras: !!args.includeOtherCampaigns,
     muestra: [],
   };
   const quienes = new Map<string, number>();
@@ -113,10 +125,18 @@ export async function planSend(args: {
       continue;
     }
 
+    const otra = n ? otras.get(n) : undefined;
+    if (otra) {
+      plan.otraCampana++;
+      otrasHits.push(otra);
+      if (!args.includeOtherCampaigns) continue;
+    }
+
     plan.irian++;
     if (plan.muestra.length < 5) plan.muestra.push({ rowId: row.id, name: row.name, email: row.email });
   }
 
+  plan.otraCampanaNota = elsewhereNote(otrasHits);
   if (quienes.size) {
     const [quien] = [...quienes.entries()].sort((a, b) => b[1] - a[1])[0];
     plan.descansoNota =
@@ -148,6 +168,8 @@ export async function sendBatch(args: {
   byName?: string | null;
   /** El número al que el prospecto va a escribir, en E.164 sin signos. */
   waPhone?: string | null;
+  /** Mandar también a quien ya recibió otra campaña (la persona lo prendió a propósito). */
+  includeOtherCampaigns?: boolean;
 }): Promise<SendResult> {
   const { sendSesEmail, sesConfigured } = await import("../ses.server");
   const ns = await currentNamespace();
@@ -163,6 +185,7 @@ export async function sendBatch(args: {
 
   const byId = new Map(args.rows.map((r) => [r.id, r]));
   const batch = args.redactados.slice(0, BATCH_MAX);
+  const otras = args.includeOtherCampaigns ? new Map() : await contactedElsewhere(args.listId);
   const { trackingOrigin } = await import("./track.server");
   const base = await trackingOrigin();
 
@@ -182,6 +205,9 @@ export async function sendBatch(args: {
     // haber pasado tiempo (o haber mandado otra persona) entre verlo y confirmar.
     const ultimo = await lastTouch(row.id);
     if (ultimo && ultimo.days < COOLDOWN_DAYS) { out.skippedRepeat++; continue; }
+
+    // Y entre campañas: el mismo correo en otra lista. El plan lo enseñó; aquí se cumple.
+    if (!args.includeOtherCampaigns && otras.has(row.email.trim().toLowerCase())) { out.skippedRepeat++; continue; }
 
     // 3. Reservar. Si devuelve null, otro proceso ya la tomó o ya se mandó.
     const touchId = await reserveTouch({
@@ -402,9 +428,11 @@ export async function sendTestEmail(args: {
   if (!row) return { ok: false, error: "Ninguna fila de la vista tiene mensaje y correo todavía." };
 
   const waPhone = await getConfig("prospeccion_wa_phone");
+  const { fillVars } = await import("../../lib/prospeccion-vars");
+  const asunto = fillVars(args.subject || "(sin asunto)", row, cols);
   const { html, text, inline } = await renderDraft({
-    subject: args.subject || "(sin asunto)",
-    body: esBase ? base : row.data[args.messageKey]!.v!,
+    subject: asunto,
+    body: fillVars(esBase ? base : row.data[args.messageKey]!.v!, row, cols),
     businessName: row.name,
     waPhone,
     bySub: args.bySub,
@@ -414,7 +442,7 @@ export async function sendTestEmail(args: {
   for (const to of destinos) {
     const ok = await sendSesEmail({
       to,
-      subject: `[PRUEBA] ${args.subject || "(sin asunto)"}`,
+      subject: `[PRUEBA] ${asunto}`,
       html,
       text,
       inline,

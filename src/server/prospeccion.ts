@@ -706,6 +706,39 @@ export const getProspBaseFn = createServerFn({ method: "GET" })
   return scoped(data, async () => ({ text: await getMessageBase() }));
 });
 
+/** El mensaje de la campaña (cuerpo + asunto), para el editor. */
+export const getCampaignMessageFn = createServerFn({ method: "GET" })
+  .validator((d: { listId: number }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) return null;
+    const { getMessageBase } = await import("./prospeccion/sender.server");
+    const cc = await import("./prospeccion/campaign-config.server");
+    return cc.withList(Number(data.listId), async () => ({
+      text: await getMessageBase(),
+      subject: (await cc.getConfig("prospeccion_last_subject")) ?? "",
+    }));
+  });
+
+/**
+ * Guarda lo que la persona escribe en el editor. Se llama con debounce mientras escribe:
+ * cada campo es opcional para no pisar el otro, y el texto pasa por la MISMA limpieza que
+ * cuando lo guarda el agente (`setMessageBase`).
+ */
+export const saveCampaignMessageFn = createServerFn({ method: "POST" })
+  .validator((d: { listId: number; text?: string; subject?: string }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) return { ok: false as const };
+    const { setMessageBase } = await import("./prospeccion/sender.server");
+    const cc = await import("./prospeccion/campaign-config.server");
+    return cc.withList(Number(data.listId), async () => {
+      const text = data.text !== undefined ? await setMessageBase(data.text) : undefined;
+      if (data.subject !== undefined) await cc.setConfig("prospeccion_last_subject", data.subject.trim().slice(0, 200));
+      return { ok: true as const, text };
+    });
+  });
+
 /**
  * Todo lo que la barra de campaña necesita, en un viaje: configuración de la campaña, si hay
  * mensaje, si ya hubo prueba y si ya quedó fija (se mandó). Lo demás (filas a la vista) lo
@@ -784,7 +817,7 @@ export const createListFromSheetFn = createServerFn({ method: "POST" })
  * dadas de baja y 60 tienen el correo muerto. El número que de verdad sale es otro.
  */
 export const planSendFn = createServerFn({ method: "GET" })
-  .validator((d: { listId: number; f?: string }) => d)
+  .validator((d: { listId: number; f?: string; includeOtherCampaigns?: boolean }) => d)
   .handler(async ({ data }) => {
     const me = await sessionUser();
     if (!me) return { ok: false as const };
@@ -801,7 +834,7 @@ export const planSendFn = createServerFn({ method: "GET" })
       ? todas.filter((r) => matches(r as unknown as Record<string, unknown>, filtro, fields))
       : todas;
 
-    const plan = await planSend({ listId: Number(data.listId), campaign: "", rows });
+    const plan = await planSend({ listId: Number(data.listId), campaign: "", rows, includeOtherCampaigns: !!data.includeOtherCampaigns });
     /**
      * Qué columnas pueden ser EL MENSAJE.
      *
@@ -834,7 +867,7 @@ export const planSendFn = createServerFn({ method: "GET" })
  * persona vio el plan y confirmó.
  */
 export const sendFn = createServerFn({ method: "POST" })
-  .validator((d: { listId: number; f?: string; messageKey: string; subject: string }) => d)
+  .validator((d: { listId: number; f?: string; messageKey: string; subject: string; includeOtherCampaigns?: boolean }) => d)
   .handler(async ({ data }) => {
     const me = await sessionUser();
     if (!me) return { ok: false as const, error: "sin sesión", sent: 0, skippedOptOut: 0, failed: 0 };
@@ -859,6 +892,7 @@ export const sendFn = createServerFn({ method: "POST" })
     const { decodeFilter, matches } = await import("../lib/prospeccion-filter");
     const { sendBatch } = await import("./prospeccion/send.server");
     const { getConfig } = await import("./prospeccion/campaign-config.server");
+    const { fillVars } = await import("../lib/prospeccion-vars");
 
     const cols = await listColumns(Number(data.listId));
     const fields = [...BASE_FIELD_KEYS, ...cols.map((c) => c.key)];
@@ -884,17 +918,20 @@ export const sendFn = createServerFn({ method: "POST" })
     const redactados = (
       await Promise.all(
         rows.map(async (r) => {
-          const cuerpo = data.messageKey === "__base__" ? baseText : r.data[data.messageKey]?.v?.trim();
-          if (!cuerpo) return null;
+          const crudo = data.messageKey === "__base__" ? baseText : r.data[data.messageKey]?.v?.trim();
+          if (!crudo) return null;
+          // Las variables ({negocio}, {sitio|su sitio}…) se llenan con ESTA fila, igual que en la vista previa.
+          const cuerpo = fillVars(crudo, r, cols);
+          const asunto = fillVars(data.subject, r, cols).trim() || data.subject;
           const { renderDraft } = await import("./prospeccion/send.server");
           const { html, text } = await renderDraft({
-            subject: data.subject,
+            subject: asunto,
             body: cuerpo,
             businessName: r.name,
             waPhone: waPhonePrev,
             bySub: me.sub,
           });
-          return { rowId: r.id, subject: data.subject, html, text };
+          return { rowId: r.id, subject: asunto, html, text };
         })
       )
     ).filter(Boolean) as { rowId: number; subject: string; html: string; text: string }[];
@@ -910,6 +947,7 @@ export const sendFn = createServerFn({ method: "POST" })
       rows,
       redactados,
       waPhone: waPhonePrev,
+      includeOtherCampaigns: !!data.includeOtherCampaigns,
       from: sender.own ? sender.from : undefined,
       // Quién manda: va a la bitácora de cada toque, y es lo que después deja decir
       // «Luis le escribió hace 3 días» en vez de un «bloqueado» que no se puede accionar.
@@ -967,9 +1005,10 @@ export const previewSendFn = createServerFn({ method: "POST" })
     }
 
     const waPhone = await getConfig("prospeccion_wa_phone");
+    const { fillVars } = await import("../lib/prospeccion-vars");
     const { html, text, inline, preview, sinBoton, marca } = await renderDraft({
-      subject: data.subject || "(sin asunto)",
-      body: esBase ? base : row.data[data.messageKey]!.v!,
+      subject: fillVars(data.subject || "(sin asunto)", row, cols),
+      body: fillVars(esBase ? base : row.data[data.messageKey]!.v!, row, cols),
       businessName: row.name,
       waPhone,
       bySub: me.sub,

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { AlertTriangle, Ban, Eye, MailX, Send, Users, X } from "lucide-react";
+import { AlertTriangle, Ban, Eye, MailX, Repeat2, Send, Users, X } from "lucide-react";
+import { Toggle } from "../Toggle";
 import { useT } from "../../i18n";
 import { MailPreview } from "./MailPreview";
 import { getCampaignFn, planSendFn } from "../../server/prospeccion";
@@ -69,21 +70,24 @@ export function SendReview({
   const [sinBoton, setSinBoton] = useState(false);
   const [marca, setMarca] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Apagado por defecto (como Instantly): a quien ya le escribió otra campaña no se le repite.
+  const [incluirOtras, setIncluirOtras] = useState(false);
+  useEffect(() => { if (!open) { setIncluirOtras(false); setMessageKey(""); } }, [open]);
 
   useEffect(() => {
     if (!open) { setData(null); setError(null); return; }
     if (initialSubject) setSubject(initialSubject);
-    planSendFn({ data: { listId, f: filter } })
+    planSendFn({ data: { listId, f: filter, includeOtherCampaigns: incluirOtras } })
       .then((r) => {
         if (!r.ok) return;
         setData(r);
         const pedida = initialMessageKey && r.mensajes.some((m) => m.key === initialMessageKey) ? initialMessageKey : null;
-        if (pedida) setMessageKey(pedida);
-        else if (r.mensajes[0]) setMessageKey(r.mensajes[0].key);
+        // Recalcular (p. ej. al prender «incluirlos») no debe cambiar el mensaje que ya se eligió.
+        setMessageKey((k) => (k && r.mensajes.some((m) => m.key === k) ? k : pedida ?? r.mensajes[0]?.key ?? k));
         if (!initialSubject && r.ultimoAsunto) setSubject((s) => s || r.ultimoAsunto);
       })
       .catch(() => setError(t("No se pudo calcular el envío")));
-  }, [open, listId, filter, initialSubject, initialMessageKey, t]);
+  }, [open, listId, filter, initialSubject, initialMessageKey, incluirOtras, t]);
 
   // La vista previa se pide sola al elegir el mensaje: «Ver el correo» era un clic que
   // todo el mundo tenía que dar, y sin darlo se mandaba a ciegas.
@@ -118,7 +122,7 @@ export function SendReview({
     setSending(true);
     setError(null);
     const { sendFn } = await import("../../server/prospeccion");
-    const r = await sendFn({ data: { listId, f: filter, messageKey, subject: subject.trim() } })
+    const r = await sendFn({ data: { listId, f: filter, messageKey, subject: subject.trim(), includeOtherCampaigns: incluirOtras } })
       .catch(() => ({ ok: false as const, error: t("El envío falló") }));
     setSending(false);
     if (!r.ok) { setError(("error" in r && r.error) || t("El envío falló")); return; }
@@ -132,7 +136,7 @@ export function SendReview({
   };
 
   const p = data?.plan;
-  const saltados = p ? p.optOut + p.sinCorreo + p.correoMuerto + p.yaTocados + p.enDescanso : 0;
+  const saltados = p ? p.optOut + p.sinCorreo + p.correoMuerto + p.yaTocados + p.enDescanso + p.otraCampana : 0;
   const puede = !!p && p.irian > 0 && !!messageKey && !!subject.trim();
 
   return (
@@ -223,6 +227,17 @@ export function SendReview({
                           <span className="text-muted">
                             {p.descansoNota ?? t("ya recibieron correo esta semana")}
                           </span>
+                        </li>
+                      ) : null}
+                      {p.otraCampana ? (
+                        <li className="flex items-center gap-2">
+                          <Repeat2 size={13} className="text-amber-500 shrink-0" />
+                          <span className="tabular-nums font-medium">{p.otraCampana}</span>
+                          <span className="text-muted flex-1">
+                            {p.otraCampanaNota ?? t("ya recibieron otra campaña")}
+                            {" — "}{p.incluyeOtras ? t("van incluidos") : t("se saltan")}
+                          </span>
+                          <Toggle on={incluirOtras} onChange={setIncluirOtras} label={t("Incluirlos de todos modos")} />
                         </li>
                       ) : null}
                       {p.yaTocados ? (

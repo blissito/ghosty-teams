@@ -54,6 +54,8 @@ export function AgentDrawer({
   previewKey,
   previewNonce,
   onSend,
+  ask,
+  onTurnEnd,
 }: {
   open: boolean;
   onClose: () => void;
@@ -69,6 +71,10 @@ export function AgentDrawer({
   previewNonce?: number;
   /** Abre la revisión de envío con esa columna ya elegida. */
   onSend?: (messageKey: string) => void;
+  /** Un pedido que llega de fuera (el editor del mensaje): se manda solo al cambiar `nonce`. */
+  ask?: { text: string; nonce: number } | null;
+  /** Avisa al terminar cada turno: la barra y el editor releen lo que el agente guardó. */
+  onTurnEnd?: () => void;
 }) {
   const t = useT();
   const still = useReducedMotion();
@@ -309,6 +315,20 @@ export function AgentDrawer({
     },
     [listId, filter, running, handle, t, adjuntos]
   );
+
+  // El pedido del editor del mensaje: una vez por `nonce`, y sólo con el panel abierto.
+  const askedRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!open || !ask || askedRef.current === ask.nonce || running) return;
+    askedRef.current = ask.nonce;
+    void send(ask.text);
+  }, [open, ask, running, send]);
+
+  const wasRunning = useRef(false);
+  useEffect(() => {
+    if (wasRunning.current && !running) onTurnEnd?.();
+    wasRunning.current = running;
+  }, [running, onTurnEnd]);
 
   const stop = () => { abortRef.current?.abort(); setRunning(false); };
 

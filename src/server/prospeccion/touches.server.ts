@@ -186,3 +186,57 @@ export async function lastTouch(rowId: number, channel = "email"): Promise<LastT
   const at = num(r[0].sent_at);
   return { at, byName: r[0].by_name ?? null, days: Math.floor((Date.now() / 1000 - at) / 86400) };
 }
+
+/** Ventana en la que «ya le escribió otra campaña» cuenta. Pasado esto, un segundo acercamiento es válido. */
+export const OTHER_CAMPAIGN_DAYS = 90;
+
+export type ElsewhereTouch = { listId: number; listName: string; days: number; byName: string | null };
+
+/**
+ * A quién ya le escribió OTRA campaña del espacio, por correo.
+ *
+ * ⚠️ El tope de intentos y el descanso de `lastTouch` son por FILA: el mismo correo en dos
+ * listas son dos filas, y la segunda campaña le volvía a escribir como si nada. Es lo que
+ * Instantly y Smartlead llaman «skip leads in other campaigns» y lo que Apollo avisa con
+ * «already in another sequence». Un solo viaje a la base: los envíos de la ventana de todas
+ * las demás listas, agrupados por correo (el más reciente gana).
+ */
+export async function contactedElsewhere(listId: number, days = OTHER_CAMPAIGN_DAYS): Promise<Map<string, ElsewhereTouch>> {
+  const rows = await dbq(
+    `SELECT lower(trim(r.email)) AS e, t.list_id AS list_id, l.name AS list_name, t.by_name AS by_name, MAX(t.sent_at) AS at
+       FROM gt_prosp_touches t
+       JOIN gt_prosp_rows r ON r.id = t.row_id
+       JOIN gt_prosp_lists l ON l.id = t.list_id
+      WHERE t.channel = 'email' AND t.sent_at IS NOT NULL
+        AND t.sent_at > unixepoch() - ? * 86400
+        AND t.list_id != ?
+        AND r.email IS NOT NULL AND r.email != ''
+      GROUP BY lower(trim(r.email))`,
+    [days, listId]
+  ).catch(() => []);
+  const now = Date.now() / 1000;
+  const out = new Map<string, ElsewhereTouch>();
+  for (const r of rows) {
+    if (!r.e) continue;
+    out.set(String(r.e), {
+      listId: num(r.list_id),
+      listName: String(r.list_name ?? ""),
+      days: Math.floor((now - num(r.at)) / 86400),
+      byName: r.by_name ?? null,
+    });
+  }
+  return out;
+}
+
+/** La nota que se enseña: «3 ya recibieron "Normi035" hace 5 días». Pura, para probarla. */
+export function elsewhereNote(hits: ElsewhereTouch[]): string | null {
+  if (!hits.length) return null;
+  const porLista = new Map<string, { n: number; days: number }>();
+  for (const h of hits) {
+    const cur = porLista.get(h.listName) ?? { n: 0, days: h.days };
+    porLista.set(h.listName, { n: cur.n + 1, days: Math.min(cur.days, h.days) });
+  }
+  const [nombre, { days }] = [...porLista.entries()].sort((a, b) => b[1].n - a[1].n)[0];
+  const cuando = days === 0 ? "hoy" : days === 1 ? "ayer" : `hace ${days} días`;
+  return porLista.size === 1 ? `ya recibieron «${nombre}» ${cuando}` : `ya recibieron «${nombre}» y otras campañas`;
+}

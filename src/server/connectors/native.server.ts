@@ -282,7 +282,7 @@ export function nativeTools(
       description:
         "PROPONE mandarle correo a la vista actual de una lista. NO manda: abre la pantalla de " +
         "confirmación en el navegador de la persona, con el número real que saldría (descontando " +
-        "bajas, correos muertos y quienes ya recibieron dos intentos) y la previsualización. " +
+        "bajas, correos muertos, quienes ya recibieron dos intentos y a quienes ya les escribió OTRA campaña en 90 días) y la previsualización. " +
         "Ella decide. Úsalo cuando te pidan mandar, escribir o contactar a un grupo de prospectos. " +
         "⚠️ Necesita una columna de mensaje ya escrita (créala con prospect_column) y un asunto.",
       inputSchema: {
@@ -487,7 +487,8 @@ export function nativeTools(
       description:
         "Lee o guarda el MENSAJE BASE del equipo: el texto general del correo de prospección que " +
         "luego se personaliza lead por lead. TEXTO con párrafos — sin HTML ni #títulos; **negritas** y enlaces [texto](https://…) sí se pintan; sin asunto, sin " +
-        "firma, sin placeholders: la plantilla (cierre, firma, pie) la pone la plataforma. " +
+        "firma: la plantilla (cierre, firma, pie) la pone la plataforma. Variables permitidas (se llenan por fila): " +
+        "{negocio}, {sitio}, {giro} o la llave de una columna, con respaldo opcional {sitio|su sitio}; ninguna otra. " +
         "Sin `text` sólo lo lee. Con `text` lo guarda y la persona lo ve renderizado en su panel.",
       inputSchema: {
         type: "object",

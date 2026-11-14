@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ArrowRight, Lock, Megaphone, PenLine, Send, TestTube2 } from "lucide-react";
+import { ArrowRight, FileText, Lock, Megaphone, PenLine, Send, TestTube2 } from "lucide-react";
 import { useT } from "../../i18n";
 import { getCampaignFn } from "../../server/prospeccion";
 import { nextStep } from "../../lib/prospeccion-campaign";
@@ -84,6 +84,16 @@ export function CampaignBar({
         <WaSetting listId={listId} onSaved={load} />
         <SenderSetting listId={listId} onSaved={load} />
         <CtaSetting listId={listId} onSaved={load} />
+        {/* El mensaje, en la misma fila que lo demás: se abre el editor desde aquí. */}
+        <button onClick={onWriteMessage} className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-ink">
+          <FileText size={12} />
+          {t("Mensaje")}{" "}
+          {c.hasBase || hasMessageColumn ? (
+            <span className="text-ink font-medium">{t("listo · editar")}</span>
+          ) : (
+            <span className="text-amber-500 font-medium">{t("falta")}</span>
+          )}
+        </button>
       </div>
       <div className="ml-auto flex items-center gap-2">
         {step.id === "setup" ? (

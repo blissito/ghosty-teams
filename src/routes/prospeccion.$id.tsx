@@ -8,10 +8,12 @@ import { addColumnFn, deleteColumnFn, getListFn, importTableFn, misPermisosFn, p
 import { ProspGrid, aplanar, findLatLon, type GridRow } from "../components/prospeccion/Grid";
 import { FilterBar } from "../components/prospeccion/FilterBar";
 import { CampaignBar } from "../components/prospeccion/CampaignBar";
+import { MessageSheet } from "../components/prospeccion/MessageSheet";
 import { SendReview } from "../components/prospeccion/SendReview";
 import { AgentDrawer } from "../components/prospeccion/AgentDrawer";
 import { Permisos } from "../components/prospeccion/Permisos";
 import { useRtSubscribe } from "../utils/rt-bus";
+import type { VarRow } from "../lib/prospeccion-vars";
 import { bareValue, decodeFilter, encodeFilter, facets, matches, type Condition, type Filter } from "../lib/prospeccion-filter";
 import { pickRows } from "../lib/prospeccion-run";
 import { NewColumnModal, type NewColumn } from "../components/prospeccion/NewColumnModal";
@@ -77,6 +79,13 @@ function ListPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [review, setReview] = useState<{ plan: Plan; fileName: string } | null>(null);
   const [agentOpen, setAgentOpen] = useState(false);
+  // El editor del mensaje. Si desde ahí se le pide algo al agente, el editor se cierra para
+  // dejarle el panel y vuelve a abrirse solo cuando el agente termina, ya con su texto.
+  const [messageOpen, setMessageOpen] = useState(false);
+  const [agentAsk, setAgentAsk] = useState<{ text: string; nonce: number } | null>(null);
+  const [turns, setTurns] = useState(0);
+  const [saves, setSaves] = useState(0);
+  const reopenMessage = useRef(false);
   const [sendOpen, setSendOpen] = useState(false);
   /** La última columna de mensaje escrita: el panel del agente la enseña sin preguntar. */
   const [previewKey, setPreviewKey] = useState<string | null>(null);
@@ -689,8 +698,8 @@ function ListPage() {
         shown={view.length}
         hasMessageColumn={hasMessageColumn}
         sent={list.sent}
-        refreshKey={`${sendOpen}-${agentOpen}-${mensajes.length}`}
-        onWriteMessage={() => setAgentOpen(true)}
+        refreshKey={`${sendOpen}-${agentOpen}-${messageOpen}-${turns}-${saves}-${mensajes.length}`}
+        onWriteMessage={() => setMessageOpen(true)}
         onReview={() => setSendOpen(true)}
       />
 
@@ -828,6 +837,28 @@ function ListPage() {
         previewKey={previewKey}
         previewNonce={previewNonce}
         onSend={(k) => { setSendKey(k); setSendOpen(true); }}
+        ask={agentAsk}
+        onTurnEnd={() => {
+          setTurns((n) => n + 1);
+          if (reopenMessage.current) { reopenMessage.current = false; setMessageOpen(true); }
+        }}
+      />
+
+      <MessageSheet
+        open={messageOpen}
+        onClose={() => setMessageOpen(false)}
+        listId={listId}
+        filter={f}
+        columns={data.columns.map((c) => ({ key: c.key, label: c.label }))}
+        rows={view as unknown as VarRow[]}
+        reloadKey={turns}
+        onSaved={() => setSaves((n) => n + 1)}
+        onAskAgent={(text) => {
+          reopenMessage.current = true;
+          setMessageOpen(false);
+          setAgentOpen(true);
+          setAgentAsk({ text, nonce: Date.now() });
+        }}
       />
 
       <Permisos
