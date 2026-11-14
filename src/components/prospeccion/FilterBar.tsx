@@ -68,6 +68,9 @@ export function FilterBar({
 
   // Debounce: filtrar en cada tecla sobre 10 mil filas repinta la rejilla entera.
   useEffect(() => {
+    // Sin cambio de texto no se toca nada: al montar, este disparo llevaba el filtro vacío de
+    // ese render y borraba la vista guardada que se acababa de aplicar (14-nov).
+    if (q.trim() === (textCond?.value ?? "")) return;
     const id = setTimeout(() => {
       const rest = filter.filter((c) => c.op !== "text");
       onChange(q.trim() ? [{ op: "text", value: q.trim() }, ...rest] : rest);
