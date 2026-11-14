@@ -706,6 +706,40 @@ export const getProspBaseFn = createServerFn({ method: "GET" })
   return scoped(data, async () => ({ text: await getMessageBase() }));
 });
 
+/**
+ * Todo lo que la barra de campaña necesita, en un viaje: configuración de la campaña, si hay
+ * mensaje, si ya hubo prueba y si ya quedó fija (se mandó). Lo demás (filas a la vista) lo
+ * pone la pantalla.
+ */
+export const getCampaignFn = createServerFn({ method: "GET" })
+  .validator((d: { listId: number }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) return null;
+    const cc = await import("./prospeccion/campaign-config.server");
+    const { getSender, getCta, getMessageBase } = await import("./prospeccion/sender.server");
+    const listId = Number(data.listId);
+    return cc.withList(listId, async () => {
+      const [sender, cta, base, wa, test, own] = await Promise.all([
+        getSender(),
+        getCta(),
+        getMessageBase(),
+        cc.getConfig("prospeccion_wa_phone"),
+        cc.getConfig("prospeccion_test_sent_at"),
+        cc.hasOwnSettings(listId),
+      ]);
+      return {
+        waPhone: wa ?? "",
+        senderName: sender.name,
+        from: sender.effectiveFrom,
+        cta,
+        hasBase: !!base.trim(),
+        testSentAt: test ? Number(test) || null : null,
+        own,
+      };
+    });
+  });
+
 /** Las fuentes disponibles, para el selector y para enseñárselas al agente. */
 export const listSourcesFn = createServerFn({ method: "GET" }).handler(async () => {
   const { SOURCES } = await import("./prospeccion/sources/index");
@@ -964,6 +998,8 @@ export const previewSendFn = createServerFn({ method: "POST" })
       inline,
       from: sender.own ? sender.from : undefined,
     });
+    // La barra de campaña no ofrece «Enviar» hasta que hubo una prueba: aquí se anota.
+    if (enviado) await (await import("./prospeccion/campaign-config.server")).setConfig("prospeccion_test_sent_at", String(Date.now())).catch(() => {});
     return { ok: true as const, error: null, html: preview, to: destino, sent: enviado, sinBoton, marca, from: sender.from };
     });
   });

@@ -36,6 +36,8 @@ export const CAMPAIGN_KEYS = [
   "prospeccion_signature_website",
   "prospeccion_signature_logo",
   "prospeccion_accent",
+  /** Cuándo se mandó la última prueba de esta campaña (la barra no ofrece enviar sin una). */
+  "prospeccion_test_sent_at",
 ] as const;
 const IS_CAMPAIGN = new Set<string>(CAMPAIGN_KEYS);
 

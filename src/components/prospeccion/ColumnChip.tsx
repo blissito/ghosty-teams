@@ -31,6 +31,9 @@ export function ColumnChip({
   progress,
   pending = 0,
   failedCount = 0,
+  facets = null,
+  activeValue = null,
+  onFacet,
   onRun,
   onUseAsEmail,
   onPromote,
@@ -71,6 +74,14 @@ export function ColumnChip({
   pending?: number;
   /** Filas cuyo turno falló la última vez (se pinta en rojo junto a la cobertura). */
   failedCount?: number;
+  /**
+   * Sus valores con su conteo («digital 24 · otro 31»), para filtrar en un clic. Null si la
+   * columna tiene demasiados valores distintos (nombres, textos largos): ahí no hay faceta.
+   */
+  facets?: { value: string; n: number }[] | null;
+  /** El valor por el que la vista está filtrada en esta columna, si hay. */
+  activeValue?: string | null;
+  onFacet?: (value: string) => void;
   /**
    * La columna base a la que ESTA columna debería haber ido.
    *
@@ -147,6 +158,11 @@ export function ColumnChip({
       >
         {running ? <Loader2 size={11} className="animate-spin text-brand" /> : null}
         <span className="font-medium">{label}</span>
+        {activeValue !== null ? (
+          <span className="rounded-md bg-brand/15 text-brand px-1.5 text-[10px] font-medium">
+            = {activeValue || t("vacío")}
+          </span>
+        ) : null}
         {/*
           La cobertura, siempre. En ámbar sólo cuando de verdad hay poco que mirar: una
           columna a menos de la mitad es una columna que no sostiene una campaña, y una
@@ -194,6 +210,28 @@ export function ColumnChip({
             transition={{ duration: 0.12 }}
             className="absolute left-0 top-full mt-1 z-30 gt-card rounded-xl py-1 min-w-[220px] shadow-2xl"
           >
+            {facets && onFacet ? (
+              <div className="px-3 pt-2 pb-2.5 border-b border-border">
+                <p className="text-[10px] uppercase tracking-wide text-muted mb-1.5">{t("Filtrar por valor")}</p>
+                <div className="flex flex-wrap gap-1.5 max-w-[320px]">
+                  {facets.map((f) => {
+                    const on = activeValue !== null && activeValue.toLowerCase() === f.value.toLowerCase();
+                    return (
+                      <button
+                        key={f.value || "∅"}
+                        onClick={() => { setOpen(false); onFacet(f.value); }}
+                        className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] transition-colors ${
+                          on ? "border-brand bg-brand text-brand-fg" : "border-border bg-surface-2 hover:bg-surface-3"
+                        }`}
+                      >
+                        <span className={f.value ? "" : "italic"}>{f.value || t("no lo encontró")}</span>
+                        <span className={`tabular-nums ${on ? "" : "text-muted"}`}>{f.n.toLocaleString("es-MX")}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
             {acciones.map((a) => (
               <button
                 key={a.id}

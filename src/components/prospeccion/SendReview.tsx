@@ -3,8 +3,7 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { AlertTriangle, Ban, Eye, MailX, Send, Users, X } from "lucide-react";
 import { useT } from "../../i18n";
 import { MailPreview } from "./MailPreview";
-import { CtaSetting, SenderSetting, WaSetting } from "./SenderSetting";
-import { planSendFn } from "../../server/prospeccion";
+import { getCampaignFn, planSendFn } from "../../server/prospeccion";
 
 type Plan = Extract<Awaited<ReturnType<typeof planSendFn>>, { ok: true }>;
 
@@ -54,6 +53,10 @@ export function SendReview({
   const [preview, setPreview] = useState<string | null>(null);
   const [from, setFrom] = useState<string | null>(null);
   const [armado, setArmado] = useState(false);
+  const [camp, setCamp] = useState<Awaited<ReturnType<typeof getCampaignFn>>>(null);
+  useEffect(() => {
+    if (open) getCampaignFn({ data: { listId } }).then(setCamp).catch(() => {});
+  }, [open, listId]);
   useEffect(() => { setArmado(false); }, [open, messageKey, subject]);
   /** Qué fila se está viendo, de las que tienen mensaje y correo («Quadra · 1 de 17»). */
   const [nth, setNth] = useState(0);
@@ -176,16 +179,18 @@ export function SendReview({
                   </div>
 
                   {/*
-                    La configuración de ESTA campaña, editable aquí mismo antes de lanzar (como en
-                    lemlist/Smartlead): número del botón, remitente y cierre. Lo del espacio es sólo
-                    el valor por defecto; al mandar se congela en la lista.
+                    La campaña se edita en UN lugar: la barra de arriba de la lista. Aquí sólo se
+                    recuerda de quién sale y a dónde lleva el botón, para que nadie mande a ciegas.
                   */}
-                  <div className="mt-4 rounded-xl border border-border px-3 py-2">
-                    <p className="text-[10px] uppercase tracking-wide text-muted">{t("Esta campaña")}</p>
-                    <WaSetting listId={listId} />
-                    <SenderSetting listId={listId} />
-                    <CtaSetting listId={listId} />
-                  </div>
+                  {camp ? (
+                    <p className="mt-4 text-xs text-muted">
+                      {t("Sale de")} <span className="text-ink">{camp.senderName || "—"}</span>
+                      {camp.cta.kind === "wa" ? (
+                        <> · {t("al WhatsApp")} <span className="text-ink tabular-nums">{camp.waPhone || "—"}</span></>
+                      ) : null}
+                      {" · "}{t("se cambia en la barra de la campaña")}
+                    </p>
+                  ) : null}
 
                   {/* Y por qué los demás no van. Cada línea es una decisión que ya se tomó. */}
                   {saltados ? (

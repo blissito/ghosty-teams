@@ -199,7 +199,7 @@ export function nativeTools(
         "Acota la VISTA de una lista y la aplica en la pantalla de la persona, como chips que " +
         "puede editar. Úsalo SIEMPRE antes de enriquecer o mandar sobre un subconjunto: todo lo " +
         "demás opera sobre la vista, no sobre la lista entera. " +
-        "Operadores: `empty` (sin dato en esa columna), `filled` (con dato), `has` (contiene), " +
+        "Operadores: `empty` (sin dato en esa columna), `filled` (con dato), `has` (contiene), `is` (es exactamente ese valor: úsalo para respuestas de una columna de agente, p. ej. «¿Agencia digital?» is «digital»), " +
         "`text` (busca en todas las columnas), `status` (new|sent|opened|clicked|replied|bounced|optout), " +
         "`temp` (frio|tibio|caliente). " +
         "⚠️ La TEMPERATURA es lo que suelen querer decir: frío = nunca ha tenido contacto; tibio = " +
@@ -221,9 +221,9 @@ export function nativeTools(
             items: {
               type: "object",
               properties: {
-                op: { type: "string", enum: ["empty", "filled", "has", "text", "status", "temp"] },
+                op: { type: "string", enum: ["empty", "filled", "has", "is", "text", "status", "temp"] },
                 field: { type: "string", description: "Etiqueta de la columna. No aplica a text, status ni temp" },
-                value: { type: "string", description: "Para has, text, status y temp" },
+                value: { type: "string", description: "Para has, is, text, status y temp" },
               },
               required: ["op"],
             },

@@ -20,6 +20,11 @@ export type Condition =
   | { op: "filled"; field: string }
   /** Una columna contiene esto. */
   | { op: "has"; field: string; value: string }
+  /**
+   * Una columna ES este valor (igualdad sin acentos ni mayúsculas). La usan las facetas del
+   * chip de columna: «digital» no debe atrapar «digitales». `value: ""` = no lo encontró / vacío.
+   */
+  | { op: "is"; field: string; value: string }
   /** Estado en el embudo. */
   | { op: "status"; value: string }
   /** Temperatura: frío · tibio · caliente. Se deriva del estado. */
@@ -104,6 +109,9 @@ export function matches(row: Record<string, unknown>, filter: Filter, fields: st
       case "has":
         if (!norm(valueOf(row, c.field)).includes(norm(c.value))) return false;
         break;
+      case "is":
+        if (norm(valueOf(row, c.field).trim()) !== norm(c.value.trim())) return false;
+        break;
       case "status":
         if (String(row.status ?? "new") !== c.value) return false;
         break;
@@ -128,6 +136,7 @@ export function describe(c: Condition, labelOf: (field: string) => string): stri
     case "empty": return `sin ${labelOf(c.field)}`;
     case "filled": return `con ${labelOf(c.field)}`;
     case "has": return `${labelOf(c.field)}: ${c.value}`;
+    case "is": return `${labelOf(c.field)} = ${c.value || "vacío"}`;
     case "status": return STATUSES.find((s) => s.id === c.value)?.label ?? c.value;
     case "temp": return TEMPS.find((x) => x.id === c.value)?.label ?? c.value;
   }
@@ -182,4 +191,31 @@ export function sameCondition(a: Condition, b: Condition): boolean {
   const va = "value" in a ? norm(a.value) : "";
   const vb = "value" in b ? norm(b.value) : "";
   return fa === fb && va === vb;
+}
+
+/**
+ * Los valores de una columna con cuántas filas tienen cada uno, del más común al menos.
+ *
+ * Es lo que pinta el chip de columna para filtrar en un clic («digital 24 · otro 31»), como
+ * las facetas de Airtable o Clay. Devuelve null si la columna tiene demasiados valores
+ * distintos para ser una faceta (nombres, direcciones): ahí no ayuda, estorba.
+ */
+export function facets(
+  rows: Record<string, unknown>[],
+  field: string,
+  maxDistinct = 12,
+): { value: string; n: number }[] | null {
+  const counts = new Map<string, { value: string; n: number }>();
+  for (const r of rows) {
+    const raw = valueOf(r, field).trim();
+    const k = norm(raw);
+    const cur = counts.get(k);
+    if (cur) cur.n++;
+    else {
+      if (counts.size >= maxDistinct) return null;
+      counts.set(k, { value: raw, n: 1 });
+    }
+  }
+  if (counts.size < 2) return null; // un solo valor no filtra nada
+  return [...counts.values()].sort((a, b) => b.n - a.n || a.value.localeCompare(b.value));
 }

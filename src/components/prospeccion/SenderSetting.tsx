@@ -16,7 +16,7 @@ type Sender = NonNullable<Awaited<ReturnType<typeof getProspSenderFn>>>;
  * El dominio se verifica en SES con 3 CNAME (Easy DKIM). Hasta que resuelven, el envío
  * sigue saliendo del de casa y aquí se dice, con los registros a la vista para copiarlos.
  */
-export function SenderSetting({ listId }: { listId?: number } = {}) {
+export function SenderSetting({ listId, onSaved }: { listId?: number; onSaved?: () => void } = {}) {
   const t = useT();
   const [s, setS] = useState<Sender | null>(null);
   const [editing, setEditing] = useState(false);
@@ -38,6 +38,7 @@ export function SenderSetting({ listId }: { listId?: number } = {}) {
     if ("error" in r && r.error && !("email" in r)) { setError(r.error); return; }
     setS(r as Sender);
     setEditing(false);
+    onSaved?.();
   };
 
   const check = async () => {
@@ -164,7 +165,7 @@ type Cta = NonNullable<Awaited<ReturnType<typeof getProspCtaFn>>>;
  * Con qué cierra el correo. Una sola cosa que pedir, decidida una vez por workspace: el
  * agente la conoce al redactar y no inventa otra, y la plantilla la pinta al final.
  */
-export function CtaSetting({ listId }: { listId?: number } = {}) {
+export function CtaSetting({ listId, onSaved }: { listId?: number; onSaved?: () => void } = {}) {
   const t = useT();
   const [c, setC] = useState<Cta | null>(null);
   const [editing, setEditing] = useState(false);
@@ -186,6 +187,7 @@ export function CtaSetting({ listId }: { listId?: number } = {}) {
     if ("error" in r && r.error) { setError(r.error); return; }
     setC(r as Cta);
     setEditing(false);
+    onSaved?.();
   };
 
   if (!c) return null;
@@ -255,7 +257,7 @@ export function CtaSetting({ listId }: { listId?: number } = {}) {
  * El WhatsApp al que escriben, de la CAMPAÑA (con `listId`) o el del espacio por defecto.
  * Es el número del botón del correo: dos campañas a la vez ya no se pisan el número.
  */
-export function WaSetting({ listId }: { listId?: number } = {}) {
+export function WaSetting({ listId, onSaved }: { listId?: number; onSaved?: () => void } = {}) {
   const t = useT();
   const [phone, setPhone] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
@@ -269,6 +271,7 @@ export function WaSetting({ listId }: { listId?: number } = {}) {
     setPhone(r.phone);
     setError(null);
     setEditing(false);
+    onSaved?.();
   };
 
   if (phone === null) return null;

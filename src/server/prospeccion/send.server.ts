@@ -422,5 +422,6 @@ export async function sendTestEmail(args: {
     });
     if (ok) sent.push(to);
   }
+  if (sent.length) await (await import("./campaign-config.server")).setConfig("prospeccion_test_sent_at", String(Date.now())).catch(() => {});
   return sent.length ? { ok: true, sent, from: sender.from } : { ok: false, error: "SES no aceptó la prueba" };
 }

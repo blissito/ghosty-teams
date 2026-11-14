@@ -127,6 +127,7 @@ export async function applyFilter(args: {
     }
     else if ((c.op === "empty" || c.op === "filled") && resolved) filter.push({ op: c.op, field: resolved.key });
     else if (c.op === "has" && resolved && c.value) filter.push({ op: "has", field: resolved.key, value: c.value });
+    else if (c.op === "is" && resolved) filter.push({ op: "is", field: resolved.key, value: c.value ?? "" });
     else {
       return {
         ok: false,

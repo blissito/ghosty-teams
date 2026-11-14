@@ -7,11 +7,12 @@ import { me } from "../server/auth";
 import { addColumnFn, deleteColumnFn, getListFn, importTableFn, misPermisosFn, promoteEmailFn, runAiColumnFn, runColumnFn, promoteToBaseFn, setCellFn, setColumnOrderFn, setColumnWidthFn, saveViewFn, deleteViewFn, getProspBaseFn } from "../server/prospeccion";
 import { ProspGrid, aplanar, findLatLon, type GridRow } from "../components/prospeccion/Grid";
 import { FilterBar } from "../components/prospeccion/FilterBar";
+import { CampaignBar } from "../components/prospeccion/CampaignBar";
 import { SendReview } from "../components/prospeccion/SendReview";
 import { AgentDrawer } from "../components/prospeccion/AgentDrawer";
 import { Permisos } from "../components/prospeccion/Permisos";
 import { useRtSubscribe } from "../utils/rt-bus";
-import { decodeFilter, encodeFilter, matches, type Condition, type Filter } from "../lib/prospeccion-filter";
+import { decodeFilter, encodeFilter, facets, matches, type Condition, type Filter } from "../lib/prospeccion-filter";
 import { pickRows } from "../lib/prospeccion-run";
 import { NewColumnModal, type NewColumn } from "../components/prospeccion/NewColumnModal";
 import { ColumnChip } from "../components/prospeccion/ColumnChip";
@@ -174,6 +175,34 @@ function ListPage() {
     return data.rows.filter((r) => matches(r as unknown as Record<string, unknown>, filter, keys));
   }, [data, filter, fields]);
 
+  /**
+   * Las FACETAS de cada columna: sus valores con cuántas filas tiene cada uno, para filtrar en
+   * un clic desde su chip («digital 24 · otro 31»). Se cuentan sobre la vista SIN el filtro de
+   * esa misma columna (búsqueda facetada): si no, al elegir «digital» las demás opciones
+   * desaparecerían y no habría cómo cambiar de idea.
+   */
+  const facetsByCol = useMemo(() => {
+    const out: Record<string, { value: string; n: number }[] | null> = {};
+    if (!data) return out;
+    const keys = fields.map((x) => x.key);
+    for (const c of data.columns) {
+      if (c.recipe?.hidden) continue;
+      const rest = filter.filter((x) => !(x.op === "is" && x.field === c.key));
+      const base = rest.length
+        ? data.rows.filter((r) => matches(r as unknown as Record<string, unknown>, rest, keys))
+        : data.rows;
+      out[c.key] = facets(base as unknown as Record<string, unknown>[], c.key);
+    }
+    return out;
+  }, [data, filter, fields]);
+
+  /** Elegir un valor en la faceta de una columna: lo pone, lo cambia o lo quita. */
+  const toggleFacet = (key: string, value: string) => {
+    const cur = filter.find((x) => x.op === "is" && x.field === key);
+    const rest = filter.filter((x) => !(x.op === "is" && x.field === key));
+    setFilter(cur && "value" in cur && cur.value === value ? rest : [...rest, { op: "is", field: key, value }]);
+  };
+
   /** ¿La lista trae coordenadas? Si sí, las dos columnas se colapsan en un enlace a Maps. */
   const latLon = useMemo(() => (data ? findLatLon(fields) : null), [data, fields]);
 
@@ -304,6 +333,8 @@ function ListPage() {
     const sinTel = hueco("phone");
     const listas = view.length;
 
+    // Sin mensaje no hay campaña: la barra manda aquí con «Escribir el mensaje».
+    if (!mensajes.length) out.push("Escribe el mensaje base de esta campaña");
     if (sinCorreo) out.push(`Búscale el correo a las ${sinCorreo.toLocaleString("es-MX")} que no lo tienen`);
     if (sinTel && !sinCorreo) out.push(`Filtra las ${sinTel.toLocaleString("es-MX")} sin teléfono`);
     if (!sinCorreo && listas) out.push(`Escríbeles una primera línea a las ${listas.toLocaleString("es-MX")}`);
@@ -313,7 +344,7 @@ function ListPage() {
     out.push("Enséñame 5 y dime cuáles se ven mejores");
 
     return out.slice(0, 4);
-  }, [data, view]);
+  }, [data, view, mensajes]);
 
   const setFilter = useCallback(
     (next: Filter) => {
@@ -638,6 +669,16 @@ function ListPage() {
         </div>
       </header>
 
+      <CampaignBar
+        listId={listId}
+        shown={view.length}
+        hasMessageColumn={mensajes.some((m) => m.key !== "__base__")}
+        sent={list.sent}
+        refreshKey={`${sendOpen}-${agentOpen}-${mensajes.length}`}
+        onWriteMessage={() => setAgentOpen(true)}
+        onReview={() => setSendOpen(true)}
+      />
+
       <FilterBar
         filter={filter}
         onChange={setFilter}
@@ -678,6 +719,12 @@ function ListPage() {
               progress={progress[c.key] ?? null}
               pending={c.kind === "ai" ? pickRows(view, c.key, { onlyPending: true }).length : 0}
               failedCount={view.filter((r) => !!r.data[c.key]?.err).length}
+              facets={facetsByCol[c.key] ?? null}
+              activeValue={(() => {
+                const x = filter.find((y) => y.op === "is" && y.field === c.key);
+                return x && "value" in x ? x.value : null;
+              })()}
+              onFacet={(v) => toggleFacet(c.key, v)}
               onRun={() =>
                 // Una sola acción: si falta algo, completa lo que falta; si no, la reescribe.
                 c.kind === "ai" && pickRows(view, c.key, { onlyPending: true }).length
