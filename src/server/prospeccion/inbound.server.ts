@@ -62,6 +62,34 @@ export async function matchInbound(phone: string, text: string): Promise<Inbound
 }
 
 /**
+ * ¿Este correo es de un prospecto nuestro? Hermano de `matchInbound` para las respuestas por
+ * CORREO (webhook de MailMask, `api.hooks.mailmask`). Si el correo está en varias listas, gana
+ * la fila a la que se le escribió más recientemente: es la campaña que provocó la respuesta.
+ */
+export async function matchInboundEmail(email: string, text: string): Promise<InboundMatch | null> {
+  const norm = normalize("email", email);
+  if (!norm) return null;
+  const rows = await dbq(
+    `SELECT r.id, r.list_id, r.name, l.name AS list_name,
+            (SELECT MAX(t.sent_at) FROM gt_prosp_touches t WHERE t.row_id = r.id) AS last_sent
+       FROM gt_prosp_rows r JOIN gt_prosp_lists l ON l.id = r.list_id
+      WHERE lower(trim(r.email)) = ?
+      ORDER BY last_sent IS NULL, last_sent DESC
+      LIMIT 1`,
+    [norm]
+  );
+  const hit = rows[0];
+  if (!hit) return null;
+  return {
+    rowId: num(hit.id),
+    listId: num(hit.list_id),
+    listName: hit.list_name ?? "",
+    business: hit.name ?? null,
+    isStopRequest: STOP_WORDS.test(text ?? ""),
+  };
+}
+
+/**
  * Registra la respuesta y devuelve qué pasó, para poder avisarlo en el room.
  *
  * La tocada que se marca es la ÚLTIMA de correo de esa fila: es la que provocó el mensaje.

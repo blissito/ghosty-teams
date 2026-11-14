@@ -160,9 +160,29 @@ export async function setSender(args: { email: string; name: string }): Promise<
 }
 
 /** El `From` que va en el sobre HOY. Barato de llamar: sólo pega a SES si hay dominio propio. */
-export async function effectiveFrom(): Promise<{ from: string; own: boolean }> {
-  const s = await getSender();
-  return { from: s.effectiveFrom, own: s.status === "verified" };
+export async function effectiveFrom(): Promise<{ from: string; own: boolean; replyTo?: string }> {
+  const [s, replyTo] = await Promise.all([getSender(), getReplyTo()]);
+  return { from: s.effectiveFrom, own: s.status === "verified", replyTo: replyTo || undefined };
+}
+
+/**
+ * A dónde llegan las respuestas por CORREO de esta campaña (`Reply-To`).
+ *
+ * Sin esto el correo sale de `noreply@` y quien contesta el correo en vez de tocar el botón de
+ * WhatsApp se pierde. Se pone una dirección de MailMask (p. ej. `experts@ghosty.studio`): su
+ * webhook le pasa la respuesta al agente, que contesta en el mismo hilo, y marca la fila
+ * «Contestó» (`api.hooks.mailmask`). Nunca el correo personal de quien manda: se expondría a
+ * miles de desconocidos.
+ */
+export async function getReplyTo(): Promise<string> {
+  return ((await getConfigMany(["prospeccion_reply_to"])).prospeccion_reply_to ?? "").trim();
+}
+
+export async function setReplyTo(v: string): Promise<{ replyTo: string } | { error: string }> {
+  const e = v.trim().toLowerCase();
+  if (e && !domainOf(e)) return { error: "No parece un correo" };
+  await setConfig("prospeccion_reply_to", e);
+  return { replyTo: e };
 }
 
 // ── El cierre del correo (CTA) ───────────────────────────────────────────────────────────

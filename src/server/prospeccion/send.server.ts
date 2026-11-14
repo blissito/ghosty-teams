@@ -447,6 +447,7 @@ export async function sendTestEmail(args: {
       text,
       inline,
       from: sender.own ? sender.from : undefined,
+      replyTo: sender.replyTo,
     });
     if (ok) sent.push(to);
   }

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { ArrowRight, CheckCircle2, FileText, Lock, Megaphone, PenLine, Send, TestTube2 } from "lucide-react";
+import { ArrowRight, CheckCircle2, FileText, Lock, Megaphone, PenLine, Reply, Send, TestTube2 } from "lucide-react";
 import { useT } from "../../i18n";
-import { getCampaignFn } from "../../server/prospeccion";
+import { getCampaignFn, setCampaignReplyToFn } from "../../server/prospeccion";
 import { nextStep } from "../../lib/prospeccion-campaign";
 import { CtaSetting, SenderSetting, WaSetting } from "./SenderSetting";
 
@@ -90,6 +90,7 @@ export function CampaignBar({
         <WaSetting listId={listId} onSaved={load} />
         <SenderSetting listId={listId} onSaved={load} />
         <CtaSetting listId={listId} onSaved={load} />
+        <ReplyToSetting listId={listId} value={c.replyTo} onSaved={load} />
         {/* El mensaje, en la misma fila que lo demás: se abre el editor desde aquí. */}
         <button onClick={onWriteMessage} className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-ink">
           <FileText size={12} />
@@ -119,5 +120,48 @@ export function CampaignBar({
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * A dónde llegan las respuestas por CORREO. Sin ella, quien contesta el correo en vez de tocar
+ * el botón de WhatsApp se pierde (sale de noreply). Con una dirección de MailMask, el agente
+ * contesta en el hilo y la fila se marca «Contestó».
+ */
+function ReplyToSetting({ listId, value, onSaved }: { listId: number; value: string; onSaved: () => void }) {
+  const t = useT();
+  const [editing, setEditing] = useState(false);
+  const [v, setV] = useState(value);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { setV(value); }, [value]);
+  const save = async () => {
+    const r = await setCampaignReplyToFn({ data: { listId, replyTo: v } }).catch(() => ({ error: t("No se pudo guardar") }));
+    if ("error" in r && r.error) { setError(r.error); return; }
+    setError(null);
+    setEditing(false);
+    onSaved();
+  };
+  if (editing)
+    return (
+      <span className="inline-flex items-center gap-1.5 text-xs">
+        <Reply size={12} className="text-muted" />
+        <input
+          autoFocus
+          value={v}
+          onChange={(e) => setV(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") void save(); if (e.key === "Escape") { setV(value); setEditing(false); } }}
+          onBlur={() => void save()}
+          placeholder="experts@ghosty.studio"
+          className="bg-surface-2 border border-border rounded-md px-2 py-0.5 text-xs w-52 outline-none focus:border-brand"
+        />
+        {error ? <span className="text-red-500">{error}</span> : null}
+      </span>
+    );
+  return (
+    <button onClick={() => setEditing(true)} className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-ink" title={t("Si contestan el correo, la respuesta llega aquí y el agente la atiende")}>
+      <Reply size={12} />
+      {t("Respuestas a")}{" "}
+      {value ? <span className="text-ink font-medium">{value}</span> : <span className="text-amber-500 font-medium">{t("nadie (noreply)")}</span>}
+    </button>
   );
 }

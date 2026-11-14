@@ -36,6 +36,8 @@ export const CAMPAIGN_KEYS = [
   "prospeccion_signature_website",
   "prospeccion_signature_logo",
   "prospeccion_accent",
+  /** A dónde llegan las respuestas por correo (`Reply-To`). Vacío = a nadie (noreply). */
+  "prospeccion_reply_to",
   /** Cuándo se mandó la última prueba de esta campaña (la barra no ofrece enviar sin una). */
   "prospeccion_test_sent_at",
 ] as const;

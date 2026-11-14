@@ -745,6 +745,17 @@ export const setCampaignSignatureFn = createServerFn({ method: "POST" })
     return cc.withList(Number(listId), () => setupOutreach(firma));
   });
 
+/** A dónde llegan las respuestas por correo de ESTA campaña. Vacío = a nadie (noreply). */
+export const setCampaignReplyToFn = createServerFn({ method: "POST" })
+  .validator((d: { listId: number; replyTo: string }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) return { error: "Sin sesión" };
+    const { setReplyTo } = await import("./prospeccion/sender.server");
+    const cc = await import("./prospeccion/campaign-config.server");
+    return cc.withList(Number(data.listId), () => setReplyTo(String(data.replyTo ?? "")));
+  });
+
 /**
  * Guarda lo que la persona escribe en el editor. Se llama con debounce mientras escribe:
  * cada campo es opcional para no pisar el otro, y el texto pasa por la MISMA limpieza que
@@ -778,15 +789,18 @@ export const getCampaignFn = createServerFn({ method: "GET" })
     const { getSender, getCta, getMessageBase } = await import("./prospeccion/sender.server");
     const listId = Number(data.listId);
     return cc.withList(listId, async () => {
-      const [sender, cta, base, wa, test, own] = await Promise.all([
+      const { getReplyTo } = await import("./prospeccion/sender.server");
+      const [sender, cta, base, wa, test, own, replyTo] = await Promise.all([
         getSender(),
         getCta(),
         getMessageBase(),
         cc.getConfig("prospeccion_wa_phone"),
         cc.getConfig("prospeccion_test_sent_at"),
         cc.hasOwnSettings(listId),
+        getReplyTo(),
       ]);
       return {
+        replyTo,
         waPhone: wa ?? "",
         senderName: sender.name,
         from: sender.effectiveFrom,
@@ -978,8 +992,9 @@ export const sendFn = createServerFn({ method: "POST" })
       // «Luis le escribió hace 3 días» en vez de un «bloqueado» que no se puede accionar.
       bySub: me.sub,
       byName: me.name ?? null,
-      // Sin replyTo: el `From` del sobre ya lleva el dominio correcto, y meter el correo
-      // personal de quien manda lo expone a 11 mil desconocidos.
+      // Reply-To: la dirección de MailMask de la campaña (si la hay), nunca el correo personal
+      // de quien manda. Ahí la respuesta le llega al agente y marca la fila «Contestó».
+      replyTo: sender.replyTo,
     });
     return { ok: true as const, error: null, ...r };
     });
