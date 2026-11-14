@@ -1,4 +1,4 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ArrowLeft, Plus, ShieldCheck, Sparkles, Target } from "lucide-react";
@@ -139,14 +139,17 @@ function ListPage() {
   // Al abrir una lista con vistas guardadas se aplica la última (una vez): quien guardó «Agencias
   // digitales (24)» espera volver a ella, no a las 150 filas con un botón de «Enviar a 94».
   // «Quitar todo» la quita y ya no vuelve sola en esta visita.
+  // ⚠️ Se espera a que el router esté quieto: un `replace` durante la carga inicial lo pisa la
+  // propia navegación de entrada y la vista no se aplicaba (14-nov).
+  const routerIdle = useRouterState({ select: (s) => s.status === "idle" && !s.isLoading });
   const viewApplied = useRef<number | null>(null);
   useEffect(() => {
-    if (!data || viewApplied.current === listId) return;
+    if (!data || !routerIdle || viewApplied.current === listId) return;
     viewApplied.current = listId;
     const views = (data.list.views ?? []) as { name: string; f: string }[];
     const last = views[views.length - 1];
     if (f === undefined && last?.f) navigate({ search: (prev) => ({ ...prev, f: last.f }), replace: true });
-  }, [data, listId, f, navigate]);
+  }, [data, routerIdle, listId, f, navigate]);
   // ⚠️ Con la lista: quien la creó manda sobre ella, y sin el `listId` el servidor no
   // puede saberlo — le negaría el permiso a su propio dueño.
   useEffect(() => { misPermisosFn({ data: { listId } }).then(setPermisos).catch(() => {}); }, [listId]);
