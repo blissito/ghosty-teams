@@ -1314,11 +1314,19 @@ export const askAgentAs = createServerOnlyFn(async (me: SessionMe | null, data: 
     // Con sesión propia y ya con turnos, el TEXTO es sólo el de este hilo: las raíces de los
     // otros hilos del room no entran (era parte de «contesta cosas de otro hilo»). Los
     // archivos sí se buscan en todo el hueco: `adjuntosDelHueco` sólo toma los de quien pide.
-    const textGap = perThread && !freshSession ? gap.filter((m) => threadIds.has(m.id)) : gap;
+    //
+    // Y en la siembra (y en los archivos) no entran los mensajes del room con los que alguien
+    // le pidió algo a un agente: cada uno abrió SU hilo y es otra conversación. Medido el
+    // 14-nov en producción: el hilo B contestaba la palabra clave del hilo A porque la raíz
+    // de A venía en la siembra. Lo que sí entra: lo platicado en el room y los archivos
+    // sueltos (el caso del 3-ago: «solté los .docx y luego mencioné»).
+    if (rootId != null) threadIds.add(rootId);
+    const seedGap = perThread ? gap.filter((m) => threadIds.has(m.id) || (m.mentions_ghosty ?? 0) === 0) : gap;
+    const textGap = perThread && !freshSession ? gap.filter((m) => threadIds.has(m.id)) : seedGap;
     // El COUNT sólo se paga si el fetch volvió lleno: si volvió corto ya tenemos la
     // conversación entera y el total es el largo del gap, sin query.
     let totalGap = textGap.length;
-    if (textGap === gap && recent.length >= CATCHUP_FETCH) {
+    if (!perThread && recent.length >= CATCHUP_FETCH) {
       const afterId = recent[recent.length - gap.length - 1]?.id ?? null;
       totalGap = await db.countAfter(scope, afterId).catch(() => gap.length);
     }
@@ -1328,7 +1336,7 @@ export const askAgentAs = createServerOnlyFn(async (me: SessionMe | null, data: 
     // porque es el único punto con el gap ya resuelto; se usan más abajo, y sólo si el
     // turno no trae adjuntos propios ni los del hilo.
     if (!(data.attachments ?? []).length) {
-      const conAtt = await db.attachAttachments(gap as never).catch(() => []);
+      const conAtt = await db.attachAttachments(seedGap as never).catch(() => []);
       huecoAtts = adjuntosDelHueco(conAtt as never, poster?.sub ?? null);
     }
   }
