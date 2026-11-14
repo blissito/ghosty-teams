@@ -71,7 +71,7 @@ async function senderContext(bySub: string | null): Promise<string> {
   try {
     const { getSender, getCta, describeCta } = await import("./sender.server");
     const { getUserName } = await import("./send.server");
-    const { getConfig } = await import("../../config.server");
+    const { getConfig } = await import("./campaign-config.server");
     const { activeBrandKit } = await import("../brand.server");
     const [sender, cta, wa, kit] = await Promise.all([getSender(), getCta(), getConfig("prospeccion_wa_phone"), activeBrandKit().catch(() => null)]);
     const { getMessageBase, getSignatureBusiness } = await import("./sender.server");

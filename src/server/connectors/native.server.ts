@@ -298,7 +298,8 @@ export function nativeTools(
         // Sin asunto no se abre nada: la revisión aparecía en blanco y la persona tenía que
         // repetir lo que ya había acordado en el chat. Y se guarda como asunto de la lista.
         if (!String(a.subject ?? "").trim()) return { ok: false, error: "Falta el asunto: usa el que se acordó en la conversación, o propón uno y pásalo en `subject`." };
-        await (await import("../../config.server")).setConfig("prospeccion_last_subject", String(a.subject).trim().slice(0, 200)).catch(() => {});
+        const cc = await import("../prospeccion/campaign-config.server");
+        await cc.withList(Number(a.listId), () => cc.setConfig("prospeccion_last_subject", String(a.subject).trim().slice(0, 200))).catch(() => {});
         // ⚠️ El agente NO manda. Invariante del spec: «el agente propone, la persona
         // confirma todo lo que sale hacia fuera». Mandar es la única acción del módulo que
         // no se puede deshacer — un archivo se recupera 30 días, un correo enviado nunca.
@@ -490,9 +491,12 @@ export function nativeTools(
         "Sin `text` sólo lo lee. Con `text` lo guarda y la persona lo ve renderizado en su panel.",
       inputSchema: {
         type: "object",
-        properties: { text: { type: "string", description: "El mensaje base, 3-4 párrafos" } },
+        properties: {
+          text: { type: "string", description: "El mensaje base, 3-4 párrafos" },
+          listId: { type: "number", description: "La lista (campaña). Con ella el mensaje es SÓLO de esa campaña; sin ella, el del equipo por defecto" },
+        },
       },
-      handler: async (_sub, args) => {
+      handler: async (_sub, args) => (await import("../prospeccion/campaign-config.server")).withList((args as { listId?: number }).listId, async () => {
         const a = args as { text?: string };
         const { getMessageBase, setMessageBase } = await import("../prospeccion/sender.server");
         if (!a.text?.trim()) return { ok: true, text: await getMessageBase() };
@@ -506,7 +510,7 @@ export function nativeTools(
           text,
           nota: "Guardado y visible en el panel de la persona como correo renderizado. Ofrece ajustarlo o pasar a personalizar con prospect_column (mode pitch, limit 3).",
         };
-      },
+      }),
     },
     {
       name: "prospect_test_send",
@@ -529,14 +533,15 @@ export function nativeTools(
       handler: async (_sub, args) => {
         const a = args as { listId: number; to: string[]; subject?: string; messageKey?: string; f?: string };
         const { sendTestEmail } = await import("../prospeccion/send.server");
-        return sendTestEmail({
+        const cc = await import("../prospeccion/campaign-config.server");
+        return cc.withList(Number(a.listId), () => sendTestEmail({
           listId: Number(a.listId),
           to: a.to ?? [],
           subject: a.subject ?? "",
           messageKey: a.messageKey || "__base__",
           f: a.f,
           bySub: _sub,
-        });
+        }));
       },
     },
     {
@@ -563,17 +568,20 @@ export function nativeTools(
           ctaUrl: { type: "string" },
           ctaWaText: { type: "string", description: "Mensaje prellenado del botón de WhatsApp. {negocio} = nombre de la fila. Vacío = el de siempre" },
           waPhone: { type: "string" },
+          listId: { type: "number", description: "La lista (campaña). Con ella los cambios son SÓLO de esa campaña (cada campaña tiene su remitente, WhatsApp y cierre); sin ella cambias los valores por defecto del equipo" },
         },
       },
       handler: async (_sub, args) => {
         const { setupOutreach } = await import("../prospeccion/sender.server");
-        const r = await setupOutreach(args as Parameters<typeof setupOutreach>[0]);
+        const { listId, ...rest } = args as { listId?: number } & Parameters<typeof setupOutreach>[0];
+        const cc = await import("../prospeccion/campaign-config.server");
+        const r = await cc.withList(listId, () => setupOutreach(rest));
         if (!r.ok) return r;
         const { publish, ch } = await import("../bus.server");
         const { currentNamespace } = await import("../tenant.server");
         const ns = await currentNamespace();
         // El panel vuelve a pedir la vista previa: la firma ya cambió.
-        publish(ch.user(ns, _sub), { t: "prospeccion:base", text: (await (await import("../prospeccion/sender.server")).getMessageBase()) });
+        publish(ch.user(ns, _sub), { t: "prospeccion:base", text: await cc.withList(listId, async () => (await import("../prospeccion/sender.server")).getMessageBase()) });
         return { ok: true, ahora: r.resumen };
       },
     },

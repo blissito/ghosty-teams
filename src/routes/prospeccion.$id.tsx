@@ -83,7 +83,7 @@ function ListPage() {
   const [hasBase, setHasBase] = useState(false);
   /** Sube cuando la firma o el base cambian: la card vuelve a pedir la vista previa. */
   const [previewNonce, setPreviewNonce] = useState(0);
-  useEffect(() => { getProspBaseFn().then((r) => setHasBase(!!r?.text)).catch(() => {}); }, []);
+  useEffect(() => { getProspBaseFn({ data: { listId } }).then((r) => setHasBase(!!r?.text)).catch(() => {}); }, [listId]);
   /** Con qué columna abrir «Mandar» (la eligió el panel del agente). */
   const [sendKey, setSendKey] = useState<string | null>(null);
   const [sendSubject, setSendSubject] = useState("");

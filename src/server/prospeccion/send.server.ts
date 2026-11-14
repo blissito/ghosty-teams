@@ -384,7 +384,7 @@ export async function sendTestEmail(args: {
   const { listRows, listColumns } = await import("./lists.server");
   const { decodeFilter, matches } = await import("../../lib/prospeccion-filter");
   const { getMessageBase, effectiveFrom } = await import("./sender.server");
-  const { getConfig } = await import("../../config.server");
+  const { getConfig } = await import("./campaign-config.server");
   const { sendSesEmail } = await import("../ses.server");
 
   const destinos = [...new Set(args.to.map((t) => t.trim().toLowerCase()).filter((t) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t)))].slice(0, 5);

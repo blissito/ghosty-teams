@@ -2657,6 +2657,8 @@ export const en: Record<string, string> = {
   "Un turno por fila": "One turn per row",
   "Volver a escribirla toda": "Rewrite it all",
   "Avance de la columna": "Column progress",
+  "Esta campaña": "This campaign",
+  "Son los valores por defecto. Cada lista los puede cambiar en «Antes de enviar», y al mandar se quedan fijos en esa campaña.": "These are the defaults. Each list can change them in «Before sending», and they lock into that campaign once it sends.",
   "Mensaje que llega escrito: Hola, me llegó su correo (soy de {negocio}).": "Prefilled message: Hi, I got your email (I'm from {negocio}).",
   "{negocio} se cambia por el nombre de cada fila": "{negocio} becomes each row's name",
   "Sólo las que tienen sitio web": "Only rows with a website",

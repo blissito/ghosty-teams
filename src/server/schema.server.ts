@@ -2149,6 +2149,8 @@ async function migrate(): Promise<void> {
   // Vistas guardadas: `[{name, f}]`, donde `f` es el filtro codificado tal cual va en la URL.
   // Sin esto el filtro sólo vivía en `?f=` y se perdía al volver desde el índice.
   await addColumn("gt_prosp_lists", "views_json", "TEXT");
+  // Remitente, WhatsApp, cierre, firma y mensaje base PROPIOS de la campaña (campaign-config.server.ts).
+  await addColumn("gt_prosp_lists", "settings_json", "TEXT");
 
   /*
     La conversación del drawer con el agente.

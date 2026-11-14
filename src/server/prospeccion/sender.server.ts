@@ -16,7 +16,7 @@ import {
   SESClient,
   VerifyDomainDkimCommand,
 } from "@aws-sdk/client-ses";
-import { getConfigMany, setConfig } from "../../config.server";
+import { getConfigMany, setConfig } from "./campaign-config.server";
 
 const REGION = process.env.SES_REGION || "us-east-1";
 const KEY = process.env.SES_KEY;

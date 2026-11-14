@@ -75,7 +75,9 @@ export async function listContext(listId: number, encodedFilter?: string, bySub:
     `¿Cuántos hay en el directorio? \`prospect_count\` con uno o varios criterios: contesta en este`,
     `mismo turno, sin crear filas. Aquí no hay ayudantes: todo se resuelve en el turno.`,
     ``,
-    await (await import("./sender.server")).outreachBrief(bySub).catch(() => ""),
+    // El brief es el de ESTA campaña (su remitente, su WhatsApp, su cierre, su mensaje base).
+    await (await import("./campaign-config.server")).withList(listId, async () => (await import("./sender.server")).outreachBrief(bySub)).catch(() => ""),
+    `Esta lista es una CAMPAÑA con su propia configuración de envío: pasa \`listId: ${listId}\` a prospect_outreach_setup y prospect_message_base para cambiar SÓLO esta campaña.`,
   ]
     .filter(Boolean)
     .join("\n");

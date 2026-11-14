@@ -338,6 +338,7 @@ function ProspeccionPage() {
 
           <SenderSetting />
           <CtaSetting />
+          <p className="mt-1 text-[11px] text-muted">{t("Son los valores por defecto. Cada lista los puede cambiar en «Antes de enviar», y al mandar se quedan fijos en esa campaña.")}</p>
 
           <button
             onClick={createEmpty}

@@ -3,6 +3,7 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { AlertTriangle, Ban, Eye, MailX, Send, Users, X } from "lucide-react";
 import { useT } from "../../i18n";
 import { MailPreview } from "./MailPreview";
+import { CtaSetting, SenderSetting, WaSetting } from "./SenderSetting";
 import { planSendFn } from "../../server/prospeccion";
 
 type Plan = Extract<Awaited<ReturnType<typeof planSendFn>>, { ok: true }>;
@@ -172,6 +173,18 @@ export function SendReview({
                     <div className="text-xs text-muted mt-1">
                       {t("de")} {p.total.toLocaleString("es-MX")} {t("en la vista")}
                     </div>
+                  </div>
+
+                  {/*
+                    La configuración de ESTA campaña, editable aquí mismo antes de lanzar (como en
+                    lemlist/Smartlead): número del botón, remitente y cierre. Lo del espacio es sólo
+                    el valor por defecto; al mandar se congela en la lista.
+                  */}
+                  <div className="mt-4 rounded-xl border border-border px-3 py-2">
+                    <p className="text-[10px] uppercase tracking-wide text-muted">{t("Esta campaña")}</p>
+                    <WaSetting listId={listId} />
+                    <SenderSetting listId={listId} />
+                    <CtaSetting listId={listId} />
                   </div>
 
                   {/* Y por qué los demás no van. Cada línea es una decisión que ya se tomó. */}

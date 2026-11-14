@@ -457,6 +457,7 @@ export const runAiColumnFn = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const me = await sessionUser();
     if (!me) return { ok: false as const, error: "sin sesión", done: 0, total: 0, filled: 0 };
+    return scoped(data, async () => {
     // El avance va al bus de ESTA persona fila por fila: la petición tarda minutos y la
     // pantalla no puede quedarse en «vacía» hasta la última.
     const { publish, ch } = await import("./bus.server");
@@ -525,6 +526,7 @@ export const runAiColumnFn = createServerFn({ method: "POST" })
     });
     const note = [r.note, notaInv].filter(Boolean).join(" · ") || null;
     return { ok: !r.error, error: r.error ?? null, done: r.done, total: r.total, filled: r.filled, failed: r.failed ?? 0, note };
+    });
   });
 
 /** Los agentes del workspace, para elegir quién escribe la columna. */
@@ -615,24 +617,33 @@ export const listOptOutsFn = createServerFn({ method: "GET" }).handler(async () 
  * permite contestarle con texto libre. Por eso el teléfono del prospecto no hace falta para
  * el loop: el que viaja es éste.
  *
- * Vive en la config del WORKSPACE y no por lista: es el número de la empresa. Si algún día
- * hace falta uno por campaña (agencia que prospecta para varios clientes), la columna se
- * añade a `gt_prosp_lists` y este valor pasa a ser el default.
+ * El del espacio es el default; cada campaña puede tener el suyo (`settings_json` de la
+ * lista, 14-nov-2026): dos campañas a la vez ya no se pisan el número.
  */
-export const getProspWaFn = createServerFn({ method: "GET" }).handler(async () => {
+// Todo lo de envío acepta `listId`: con él lee y escribe la configuración DE ESA CAMPAÑA;
+// sin él, la del espacio (los valores por defecto). Ver campaign-config.server.ts.
+type ListScoped = { listId?: number } | undefined;
+const scoped = async <T,>(d: ListScoped, fn: () => Promise<T>) =>
+  (await import("./prospeccion/campaign-config.server")).withList(d?.listId, fn);
+
+export const getProspWaFn = createServerFn({ method: "GET" })
+  .validator((d: ListScoped) => d ?? {})
+  .handler(async ({ data }) => {
   const me = await sessionUser();
   if (!me) return { phone: "" };
-  const { getConfig } = await import("../config.server");
+  return scoped(data, async () => {
+  const { getConfig } = await import("./prospeccion/campaign-config.server");
   const guardado = await getConfig("prospeccion_wa_phone");
   if (guardado) return { phone: guardado };
   // Si hay un canal de WhatsApp conectado, ése es el número obvio: se propone solo.
   const { dbq } = await import("../dbq.server");
   const r = await dbq(`SELECT phone FROM gt_wa_channels LIMIT 1`).catch(() => []);
   return { phone: r[0]?.phone ? String(r[0].phone) : "" };
+  });
 });
 
 export const setProspWaFn = createServerFn({ method: "POST" })
-  .validator((d: { phone: string }) => d)
+  .validator((d: { phone: string; listId?: number }) => d)
   .handler(async ({ data }) => {
     const me = await sessionUser();
     if (!me) return { ok: false as const, phone: "" };
@@ -641,49 +652,58 @@ export const setProspWaFn = createServerFn({ method: "POST" })
     if (data.phone.trim() && !n) {
       return { ok: false as const, phone: "", error: "No parece un número de WhatsApp" };
     }
-    const { setConfig } = await import("../config.server");
-    await setConfig("prospeccion_wa_phone", n ?? "");
-    return { ok: true as const, phone: n ?? "" };
+    return scoped(data, async () => {
+      const { setConfig } = await import("./prospeccion/campaign-config.server");
+      await setConfig("prospeccion_wa_phone", n ?? "");
+      return { ok: true as const, phone: n ?? "" };
+    });
   });
 
-/** El remitente del workspace y el estado de su dominio en SES. */
-export const getProspSenderFn = createServerFn({ method: "GET" }).handler(async () => {
+/** El remitente (de la campaña si viene `listId`) y el estado de su dominio en SES. */
+export const getProspSenderFn = createServerFn({ method: "GET" })
+  .validator((d: ListScoped) => d ?? {})
+  .handler(async ({ data }) => {
   const me = await sessionUser();
   if (!me) return null;
   const { getSender } = await import("./prospeccion/sender.server");
-  return getSender();
+  return scoped(data, () => getSender());
 });
 
 export const setProspSenderFn = createServerFn({ method: "POST" })
-  .validator((d: { email: string; name: string }) => d)
+  .validator((d: { email: string; name: string; listId?: number }) => d)
   .handler(async ({ data }) => {
     const me = await sessionUser();
     if (!me) return { error: "sin sesión" };
     const { setSender } = await import("./prospeccion/sender.server");
-    return setSender(data);
+    return scoped(data, () => setSender({ email: data.email, name: data.name }));
   });
 
-export const getProspCtaFn = createServerFn({ method: "GET" }).handler(async () => {
+export const getProspCtaFn = createServerFn({ method: "GET" })
+  .validator((d: ListScoped) => d ?? {})
+  .handler(async ({ data }) => {
   const me = await sessionUser();
   if (!me) return null;
   const { getCta } = await import("./prospeccion/sender.server");
-  return getCta();
+  return scoped(data, () => getCta());
 });
 
 export const setProspCtaFn = createServerFn({ method: "POST" })
-  .validator((d: { kind: "wa" | "reply" | "link"; label: string; url: string; waText?: string }) => d)
+  .validator((d: { kind: "wa" | "reply" | "link"; label: string; url: string; waText?: string; listId?: number }) => d)
   .handler(async ({ data }) => {
     const me = await sessionUser();
     if (!me) return { error: "sin sesión" };
     const { setCta } = await import("./prospeccion/sender.server");
-    return setCta(data);
+    const { listId: _l, ...cta } = data;
+    return scoped(data, () => setCta(cta));
   });
 
-export const getProspBaseFn = createServerFn({ method: "GET" }).handler(async () => {
+export const getProspBaseFn = createServerFn({ method: "GET" })
+  .validator((d: ListScoped) => d ?? {})
+  .handler(async ({ data }) => {
   const me = await sessionUser();
   if (!me) return null;
   const { getMessageBase } = await import("./prospeccion/sender.server");
-  return { text: await getMessageBase() };
+  return scoped(data, async () => ({ text: await getMessageBase() }));
 });
 
 /** Las fuentes disponibles, para el selector y para enseñárselas al agente. */
@@ -734,6 +754,7 @@ export const planSendFn = createServerFn({ method: "GET" })
   .handler(async ({ data }) => {
     const me = await sessionUser();
     if (!me) return { ok: false as const };
+    return scoped(data, async () => {
     const { listRows, listColumns } = await import("./prospeccion/lists.server");
     const { decodeFilter, matches } = await import("../lib/prospeccion-filter");
     const { planSend } = await import("./prospeccion/send.server");
@@ -756,7 +777,7 @@ export const planSendFn = createServerFn({ method: "GET" })
      * decía «Alta». Se ofrecen las dos, pero se distinguen, y se propone una `ai`.
      */
     const { getMessageBase } = await import("./prospeccion/sender.server");
-    const { getConfig } = await import("../config.server");
+    const { getConfig } = await import("./prospeccion/campaign-config.server");
     const [base, ultimoAsunto] = await Promise.all([getMessageBase(), getConfig("prospeccion_last_subject")]);
     const mensajes = [
       ...cols
@@ -769,6 +790,7 @@ export const planSendFn = createServerFn({ method: "GET" })
         .map((c) => ({ key: c.key, label: c.label, escrita: false })),
     ];
     return { ok: true as const, plan, mensajes, ultimoAsunto: ultimoAsunto ?? "" };
+    });
   });
 
 /**
@@ -782,6 +804,7 @@ export const sendFn = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const me = await sessionUser();
     if (!me) return { ok: false as const, error: "sin sesión", sent: 0, skippedOptOut: 0, failed: 0 };
+    return scoped(data, async () => {
 
     // ⚠️ Mandar sale a terceros con tu dominio y tu marca, y no se deshace. Se comprueba
     // AQUÍ, en el servidor: esconder el botón no es un permiso.
@@ -801,7 +824,7 @@ export const sendFn = createServerFn({ method: "POST" })
     const { listRows, listColumns } = await import("./prospeccion/lists.server");
     const { decodeFilter, matches } = await import("../lib/prospeccion-filter");
     const { sendBatch } = await import("./prospeccion/send.server");
-    const { getConfig } = await import("../config.server");
+    const { getConfig } = await import("./prospeccion/campaign-config.server");
 
     const cols = await listColumns(Number(data.listId));
     const fields = [...BASE_FIELD_KEYS, ...cols.map((c) => c.key)];
@@ -817,6 +840,13 @@ export const sendFn = createServerFn({ method: "POST" })
     // enseñaría una cosa y saldría otra — que es exactamente el fallo que la previsualización
     // existe para evitar.
     const waPhonePrev = await getConfig("prospeccion_wa_phone");
+    // ⚠️ Antes de redactar: se usaba dentro del map y se declaraba después (TDZ con «Mensaje base»).
+    const { getMessageBase, effectiveFrom } = await import("./prospeccion/sender.server");
+    const baseText = data.messageKey === "__base__" ? await getMessageBase() : "";
+    // El remitente de ESTA campaña (sin él salía siempre el de casa aunque hubiera dominio propio).
+    const sender = await effectiveFrom();
+    // Desde el primer envío la campaña es dueña de su configuración: cambiar la del espacio ya no la mueve.
+    await (await import("./prospeccion/campaign-config.server")).freezeCampaign(Number(data.listId));
     const redactados = (
       await Promise.all(
         rows.map(async (r) => {
@@ -837,10 +867,8 @@ export const sendFn = createServerFn({ method: "POST" })
 
     // La campaña ES la llave de idempotencia: el mismo asunto sobre la misma fila el mismo
     // día no sale dos veces, aunque se apriete el botón dos veces.
-    const { getMessageBase } = await import("./prospeccion/sender.server");
-    const baseText = data.messageKey === "__base__" ? await getMessageBase() : "";
     // El asunto se recuerda: la siguiente tanda casi siempre es la misma campaña.
-    await (await import("../config.server")).setConfig("prospeccion_last_subject", data.subject.slice(0, 200)).catch(() => {});
+    await (await import("./prospeccion/campaign-config.server")).setConfig("prospeccion_last_subject", data.subject.slice(0, 200)).catch(() => {});
     const campaign = `${data.subject.slice(0, 40)}:${new Date().toISOString().slice(0, 10)}`;
     const r = await sendBatch({
       listId: Number(data.listId),
@@ -848,6 +876,7 @@ export const sendFn = createServerFn({ method: "POST" })
       rows,
       redactados,
       waPhone: waPhonePrev,
+      from: sender.own ? sender.from : undefined,
       // Quién manda: va a la bitácora de cada toque, y es lo que después deja decir
       // «Luis le escribió hace 3 días» en vez de un «bloqueado» que no se puede accionar.
       bySub: me.sub,
@@ -856,6 +885,7 @@ export const sendFn = createServerFn({ method: "POST" })
       // personal de quien manda lo expone a 11 mil desconocidos.
     });
     return { ok: true as const, error: null, ...r };
+    });
   });
 
 
@@ -872,11 +902,12 @@ export const previewSendFn = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const me = await sessionUser();
     if (!me) return { ok: false as const, error: "sin sesión", html: "", to: "", sent: false, sinBoton: false, marca: null };
+    return scoped(data, async () => {
 
     const { listRows, listColumns } = await import("./prospeccion/lists.server");
     const { decodeFilter, matches } = await import("../lib/prospeccion-filter");
     const { renderDraft } = await import("./prospeccion/send.server");
-    const { getConfig } = await import("../config.server");
+    const { getConfig } = await import("./prospeccion/campaign-config.server");
 
     const cols = await listColumns(Number(data.listId));
     const fields = [...BASE_FIELD_KEYS, ...cols.map((c) => c.key)];
@@ -934,6 +965,7 @@ export const previewSendFn = createServerFn({ method: "POST" })
       from: sender.own ? sender.from : undefined,
     });
     return { ok: true as const, error: null, html: preview, to: destino, sent: enviado, sinBoton, marca, from: sender.from };
+    });
   });
 
 

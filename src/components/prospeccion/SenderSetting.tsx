@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { Check, Copy, Loader2, Mail, MousePointerClick, RefreshCw } from "lucide-react";
+import { Check, Copy, Loader2, Mail, MessageCircle, MousePointerClick, RefreshCw } from "lucide-react";
 import { useT } from "../../i18n";
-import { getProspCtaFn, getProspSenderFn, setProspCtaFn, setProspSenderFn } from "../../server/prospeccion";
+import { getProspCtaFn, getProspSenderFn, getProspWaFn, setProspCtaFn, setProspSenderFn, setProspWaFn } from "../../server/prospeccion";
+import { prettyWaPhone } from "../../lib/prospeccion-wa-phone";
 
 type Sender = NonNullable<Awaited<ReturnType<typeof getProspSenderFn>>>;
 
@@ -15,7 +16,7 @@ type Sender = NonNullable<Awaited<ReturnType<typeof getProspSenderFn>>>;
  * El dominio se verifica en SES con 3 CNAME (Easy DKIM). Hasta que resuelven, el envío
  * sigue saliendo del de casa y aquí se dice, con los registros a la vista para copiarlos.
  */
-export function SenderSetting() {
+export function SenderSetting({ listId }: { listId?: number } = {}) {
   const t = useT();
   const [s, setS] = useState<Sender | null>(null);
   const [editing, setEditing] = useState(false);
@@ -25,14 +26,14 @@ export function SenderSetting() {
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
 
-  const load = () => getProspSenderFn().then((r) => { if (r) setS(r); }).catch(() => {});
-  useEffect(() => { void load(); }, []);
+  const load = () => getProspSenderFn({ data: { listId } }).then((r) => { if (r) setS(r); }).catch(() => {});
+  useEffect(() => { void load(); }, [listId]);
 
   const save = async () => {
     if (busy) return;
     setBusy(true);
     setError(null);
-    const r = await setProspSenderFn({ data: { email, name } }).catch(() => ({ error: t("No se pudo guardar") }));
+    const r = await setProspSenderFn({ data: { email, name, listId } }).catch(() => ({ error: t("No se pudo guardar") }));
     setBusy(false);
     if ("error" in r && r.error && !("email" in r)) { setError(r.error); return; }
     setS(r as Sender);
@@ -163,7 +164,7 @@ type Cta = NonNullable<Awaited<ReturnType<typeof getProspCtaFn>>>;
  * Con qué cierra el correo. Una sola cosa que pedir, decidida una vez por workspace: el
  * agente la conoce al redactar y no inventa otra, y la plantilla la pinta al final.
  */
-export function CtaSetting() {
+export function CtaSetting({ listId }: { listId?: number } = {}) {
   const t = useT();
   const [c, setC] = useState<Cta | null>(null);
   const [editing, setEditing] = useState(false);
@@ -174,13 +175,13 @@ export function CtaSetting() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => { getProspCtaFn().then((r) => { if (r) setC(r); }).catch(() => {}); }, []);
+  useEffect(() => { getProspCtaFn({ data: { listId } }).then((r) => { if (r) setC(r); }).catch(() => {}); }, [listId]);
 
   const save = async () => {
     if (busy) return;
     setBusy(true);
     setError(null);
-    const r = await setProspCtaFn({ data: { kind, label, url, ...(kind === "wa" ? { waText } : {}) } }).catch(() => ({ error: t("No se pudo guardar") }));
+    const r = await setProspCtaFn({ data: { kind, label, url, listId, ...(kind === "wa" ? { waText } : {}) } }).catch(() => ({ error: t("No se pudo guardar") }));
     setBusy(false);
     if ("error" in r && r.error) { setError(r.error); return; }
     setC(r as Cta);
@@ -243,6 +244,56 @@ export function CtaSetting() {
           <span className="text-ink font-medium">
             {c.kind === "wa" ? t("botón a WhatsApp") : c.kind === "link" ? t("botón a") + " " + c.url : t("«") + c.label + t("»")}
           </span>
+        </button>
+      )}
+      {error ? <span className="text-red-500">{error}</span> : null}
+    </div>
+  );
+}
+
+/**
+ * El WhatsApp al que escriben, de la CAMPAÑA (con `listId`) o el del espacio por defecto.
+ * Es el número del botón del correo: dos campañas a la vez ya no se pisan el número.
+ */
+export function WaSetting({ listId }: { listId?: number } = {}) {
+  const t = useT();
+  const [phone, setPhone] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => { getProspWaFn({ data: { listId } }).then((r) => setPhone(r.phone)).catch(() => setPhone("")); }, [listId]);
+
+  const save = async (valor: string) => {
+    const r = await setProspWaFn({ data: { phone: valor, listId } }).catch(() => ({ ok: false as const, phone: "", error: "" }));
+    if (!r.ok) { setError(("error" in r && r.error) || t("No parece un número de WhatsApp")); return; }
+    setPhone(r.phone);
+    setError(null);
+    setEditing(false);
+  };
+
+  if (phone === null) return null;
+  return (
+    <div className="mt-1.5 flex items-center gap-2 text-xs">
+      <MessageCircle size={13} className="text-muted shrink-0" />
+      {editing ? (
+        <input
+          autoFocus
+          defaultValue={phone}
+          placeholder={t("771 446 0521")}
+          onBlur={(e) => save(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") save(e.currentTarget.value);
+            if (e.key === "Escape") { setEditing(false); setError(null); }
+          }}
+          className="w-44 bg-surface-2 border border-border rounded-lg px-2 py-1 outline-none focus:border-brand"
+        />
+      ) : (
+        <button onClick={() => setEditing(true)} className="text-muted hover:text-ink">
+          {phone ? (
+            <>{t("Te escriben al")} <span className="text-ink font-medium">{prettyWaPhone(phone)}</span></>
+          ) : (
+            <span className="text-brand underline underline-offset-2">{t("Pon el WhatsApp al que quieres que te escriban")}</span>
+          )}
         </button>
       )}
       {error ? <span className="text-red-500">{error}</span> : null}
