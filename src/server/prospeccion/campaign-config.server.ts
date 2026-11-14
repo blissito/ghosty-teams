@@ -49,7 +49,18 @@ const IS_CAMPAIGN = new Set<string>(CAMPAIGN_KEYS);
  * mensaje. Remitente, WhatsApp y cierre sí son buenos valores por defecto; el texto no.
  * Las campañas que ya mandaron antes de existir esto (normi) siguen leyendo el del espacio.
  */
-const OWN_ONLY = new Set<string>(["prospeccion_message_base", "prospeccion_last_subject", "prospeccion_test_sent_at"]);
+const OWN_ONLY = new Set<string>([
+  "prospeccion_message_base",
+  "prospeccion_last_subject",
+  "prospeccion_test_sent_at",
+  // La firma también: la campaña de agencias firmaba «Founder, Normi» con el sitio y el giro
+  // de normi035. La empresa que firma es de cada campaña; el nombre de quien firma sí se hereda.
+  "prospeccion_signature_business",
+  "prospeccion_signature_tagline",
+  "prospeccion_signature_title",
+  "prospeccion_signature_website",
+  "prospeccion_signature_logo",
+]);
 
 const scope = new AsyncLocalStorage<{ listId: number }>();
 

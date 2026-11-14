@@ -720,6 +720,31 @@ export const getCampaignMessageFn = createServerFn({ method: "GET" })
     }));
   });
 
+/** La firma de la campaña (empresa, cargo, una línea, sitio), para el editor del mensaje. */
+export const getCampaignSignatureFn = createServerFn({ method: "GET" })
+  .validator((d: { listId: number }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) return null;
+    const s = await import("./prospeccion/sender.server");
+    const cc = await import("./prospeccion/campaign-config.server");
+    return cc.withList(Number(data.listId), async () => {
+      const [business, tagline, extras] = await Promise.all([s.getSignatureBusiness(), s.getSignatureTagline(), s.getSignatureExtras()]);
+      return { business, tagline, title: extras.title, website: extras.website };
+    });
+  });
+
+export const setCampaignSignatureFn = createServerFn({ method: "POST" })
+  .validator((d: { listId: number; business?: string; tagline?: string; title?: string; website?: string }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) return { ok: false as const };
+    const { setupOutreach } = await import("./prospeccion/sender.server");
+    const cc = await import("./prospeccion/campaign-config.server");
+    const { listId, ...firma } = data;
+    return cc.withList(Number(listId), () => setupOutreach(firma));
+  });
+
 /**
  * Guarda lo que la persona escribe en el editor. Se llama con debounce mientras escribe:
  * cada campo es opcional para no pisar el otro, y el texto pasa por la MISMA limpieza que

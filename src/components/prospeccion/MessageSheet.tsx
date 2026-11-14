@@ -3,7 +3,7 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { Check, ChevronLeft, ChevronRight, Sparkles, TestTube2, X } from "lucide-react";
 import { useT } from "../../i18n";
 import { MailPreview } from "./MailPreview";
-import { getCampaignMessageFn, previewSendFn, saveCampaignMessageFn } from "../../server/prospeccion";
+import { getCampaignMessageFn, getCampaignSignatureFn, previewSendFn, saveCampaignMessageFn, setCampaignSignatureFn } from "../../server/prospeccion";
 import { listVars, missingVars, type VarColumn, type VarRow } from "../../lib/prospeccion-vars";
 
 /**
@@ -57,6 +57,23 @@ export function MessageSheet({
   const lastFocus = useRef<"subject" | "body">("body");
   const subjectRef = useRef<HTMLInputElement>(null);
   const dirty = useRef(false);
+  // La firma de ESTA campaña. Antes heredaba la del espacio y la de agencias firmaba «Normi».
+  type Firma = { business: string; title: string; tagline: string; website: string };
+  const [firma, setFirma] = useState<Firma | null>(null);
+  const [firmaError, setFirmaError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    getCampaignSignatureFn({ data: { listId } }).then((r) => r && setFirma(r)).catch(() => {});
+  }, [open, listId, reloadKey]);
+  const guardarFirma = async (campo: keyof Firma, valor: string) => {
+    if (!firma || firma[campo] === valor.trim()) return;
+    const r = await setCampaignSignatureFn({ data: { listId, [campo]: valor.trim() } }).catch(() => null);
+    if (r && "ok" in r && r.ok === false) { setFirmaError(("error" in r && r.error) || null); return; }
+    setFirmaError(null);
+    setFirma({ ...firma, [campo]: valor.trim() });
+    onSaved?.();
+    void pedirPreview(nth);
+  };
 
   // Cargar (al abrir y cuando el agente terminó un turno), sin pisar lo que se está escribiendo.
   useEffect(() => {
@@ -204,6 +221,32 @@ export function MessageSheet({
                   placeholder={loaded ? t("Hola, equipo de {negocio}: …") : t("Cargando…")}
                   className="flex-1 min-h-[16rem] rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm leading-relaxed outline-none focus:border-brand resize-none"
                 />
+
+                {/* La firma: quién escribe y de qué empresa. Es de la campaña, no del espacio. */}
+                {firma ? (
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wide text-muted mb-1.5">{t("Firma de esta campaña")}</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      {([
+                        ["business", t("Empresa"), "Ghosty Studio"],
+                        ["title", t("Cargo"), "Founder"],
+                        ["website", t("Sitio (con https://)"), "https://ghosty.studio"],
+                        ["tagline", t("Qué hacen, en una línea"), t("Agentes de IA para negocios")],
+                      ] as const).map(([campo, label, ph]) => (
+                        <input
+                          key={`${campo}-${firma[campo]}`}
+                          defaultValue={firma[campo]}
+                          placeholder={`${label}: ${ph}`}
+                          aria-label={label}
+                          onBlur={(e) => guardarFirma(campo, e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                          className="rounded-lg border border-border bg-surface-2 px-3 py-1.5 text-xs outline-none focus:border-brand"
+                        />
+                      ))}
+                    </div>
+                    {firmaError ? <p className="text-[11px] text-red-500 mt-1">{firmaError}</p> : null}
+                  </div>
+                ) : null}
 
                 {/* Variables de un clic: se llenan con cada prospecto al mandar. */}
                 <div>

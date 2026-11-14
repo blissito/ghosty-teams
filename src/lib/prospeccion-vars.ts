@@ -79,7 +79,8 @@ export function fillVars(text: string, row: VarRow, columns: VarColumn[] = []): 
 export function listVars(columns: VarColumn[]): { name: string; label: string }[] {
   return [
     ...BASE_VARS.map((b) => ({ name: b.name, label: b.label })),
-    ...columns.filter((c) => /^[a-z0-9_]+$/i.test(c.key)).map((c) => ({ name: c.key.toLowerCase(), label: c.label })),
+    // Coordenadas no van en un correo: sólo estorban en los chips.
+    ...columns.filter((c) => /^[a-z0-9_]+$/i.test(c.key) && !/^(lat|lon|lng|latitud|longitud)$/i.test(c.key)).map((c) => ({ name: c.key.toLowerCase(), label: c.label })),
   ];
 }
 
