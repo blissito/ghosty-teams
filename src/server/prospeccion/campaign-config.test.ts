@@ -16,4 +16,10 @@ describe("mergeCampaign", () => {
   it("una llave que no es de campaña nunca la pisa la lista", () => {
     expect(mergeCampaign(keys, ws, { prospeccion_permisos: "y" }).prospeccion_permisos).toBe("x");
   });
+  it("el texto no se hereda en una campaña nueva, sí en una que ya mandó", () => {
+    const k = ["prospeccion_message_base", "prospeccion_wa_phone"];
+    const w = { prospeccion_message_base: "texto de normi", prospeccion_wa_phone: "521" };
+    expect(mergeCampaign(k, w, {})).toEqual({ prospeccion_message_base: null, prospeccion_wa_phone: "521" });
+    expect(mergeCampaign(k, w, {}, true).prospeccion_message_base).toBe("texto de normi");
+  });
 });

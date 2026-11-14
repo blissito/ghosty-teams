@@ -41,6 +41,16 @@ export const CAMPAIGN_KEYS = [
 ] as const;
 const IS_CAMPAIGN = new Set<string>(CAMPAIGN_KEYS);
 
+/**
+ * Lo que una campaña NUEVA no hereda del espacio: el texto y su prueba.
+ *
+ * ⚠️ Heredar el mensaje base era peligroso: la lista de agencias salía con el texto de la
+ * campaña de normi035 (Rosalba) y la barra decía «Mándate una prueba» como si ya hubiera
+ * mensaje. Remitente, WhatsApp y cierre sí son buenos valores por defecto; el texto no.
+ * Las campañas que ya mandaron antes de existir esto (normi) siguen leyendo el del espacio.
+ */
+const OWN_ONLY = new Set<string>(["prospeccion_message_base", "prospeccion_last_subject", "prospeccion_test_sent_at"]);
+
 const scope = new AsyncLocalStorage<{ listId: number }>();
 
 export function withList<T>(listId: number | null | undefined, fn: () => Promise<T>): Promise<T> {
@@ -72,16 +82,30 @@ export function mergeCampaign(
   keys: string[],
   workspace: Record<string, string | null>,
   list: Record<string, string>,
+  /** La lista ya mandó correos (campaña de antes de la config por campaña). */
+  legacy = false,
 ): Record<string, string | null> {
   const out: Record<string, string | null> = {};
-  for (const k of keys) out[k] = IS_CAMPAIGN.has(k) && k in list ? list[k] : (workspace[k] ?? null);
+  for (const k of keys) {
+    if (IS_CAMPAIGN.has(k) && k in list) out[k] = list[k];
+    else if (OWN_ONLY.has(k) && !legacy) out[k] = null;
+    else out[k] = workspace[k] ?? null;
+  }
   return out;
+}
+
+async function hasSent(listId: number): Promise<boolean> {
+  const rows = await dbq("SELECT 1 AS x FROM gt_prosp_touches WHERE list_id = ? AND sent_at IS NOT NULL LIMIT 1", [listId]).catch(() => []);
+  return rows.length > 0;
 }
 
 export async function getConfigMany(keys: string[]): Promise<Record<string, string | null>> {
   const ws = await base.getConfigMany(keys);
   const id = currentListId();
-  return id ? mergeCampaign(keys, ws, await listSettings(id)) : ws;
+  if (!id) return ws;
+  const list = await listSettings(id);
+  const legacy = keys.some((k) => OWN_ONLY.has(k) && !(k in list)) ? await hasSent(id) : false;
+  return mergeCampaign(keys, ws, list, legacy);
 }
 
 export async function getConfig(k: string): Promise<string | null> {
@@ -100,7 +124,8 @@ export async function setConfig(k: string, v: string): Promise<void> {
  */
 export async function freezeCampaign(listId: number): Promise<void> {
   const cur = await listSettings(listId);
-  const missing = CAMPAIGN_KEYS.filter((k) => !(k in cur));
+  // El texto no se congela desde el espacio: es de la campaña o no existe (ver OWN_ONLY).
+  const missing = CAMPAIGN_KEYS.filter((k) => !(k in cur) && !OWN_ONLY.has(k));
   if (!missing.length) return;
   const ws = await base.getConfigMany([...missing]);
   const patch: Record<string, string> = {};
