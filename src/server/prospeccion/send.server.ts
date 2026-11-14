@@ -19,6 +19,7 @@ import { currentNamespace } from "../tenant.server";
 import { isOptedOut } from "./optout.server";
 import { COOLDOWN_DAYS, lastTouch, markError, markSent, reserveTouch, touchCount } from "./touches.server";
 import { instrument } from "./track.server";
+import { waLink } from "../../lib/prospeccion-wa";
 import type { InlineImage } from "../ses.server";
 import type { ProspRow } from "./lists.server";
 
@@ -150,6 +151,7 @@ export async function sendBatch(args: {
 }): Promise<SendResult> {
   const { sendSesEmail, sesConfigured } = await import("../ses.server");
   const ns = await currentNamespace();
+  const cta = await (await import("./sender.server")).getCta();
   const out: SendResult = { sent: 0, skippedOptOut: 0, skippedRepeat: 0, skippedNoEmail: 0, failed: 0, errors: [] };
 
   if (!sesConfigured()) {
@@ -195,7 +197,7 @@ export async function sendBatch(args: {
     if (touchId == null) { out.skippedRepeat++; continue; }
 
     // 4. Instrumentar: pixel, enlaces firmados, baja de un clic.
-    const withWa = args.waPhone ? injectWaLink(draft.html, args.waPhone, row.name ?? "") : draft.html;
+    const withWa = args.waPhone ? injectWaLink(draft.html, args.waPhone, cta.waText, row.name ?? "") : draft.html;
     const { html, unsubUrl } = instrument(appendUnsubFooter(withWa, UNSUB_PLACEHOLDER), touchId, ns, base);
     const finalHtml = html.replace(UNSUB_PLACEHOLDER, unsubUrl);
 
@@ -253,10 +255,8 @@ function appendUnsubFooter(html: string, url: string): string {
  * `wa.me` con text prellenado: el prospecto llega al chat con el mensaje ya escrito, sólo
  * le da enviar. Ese envío es lo que abre la ventana de 24 h.
  */
-function injectWaLink(html: string, phone: string, business: string): string {
-  const text = encodeURIComponent(`Hola, me llegó su correo${business ? ` (soy de ${business})` : ""}. Cuéntenme más.`);
-  const url = `https://wa.me/${phone.replace(/\D/g, "")}?text=${text}`;
-  return html.replace(/%%WA%%/g, url);
+function injectWaLink(html: string, phone: string, template: string, business: string): string {
+  return html.replace(/%%WA%%/g, waLink(phone, template, business));
 }
 
 
@@ -298,12 +298,6 @@ export async function renderDraft(args: {
       }
     : null;
 
-  const wa = args.waPhone
-    ? `https://wa.me/${args.waPhone.replace(/\D/g, "")}?text=${encodeURIComponent(
-        `Hola, me llegó su correo${args.businessName ? ` (soy de ${args.businessName})` : ""}.`
-      )}`
-    : "";
-
   /**
    * Quién firma y con qué cierra. Los dos son del WORKSPACE (remitente y CTA), no de la
    * lista: es la misma persona escribiendo a todos sus prospectos.
@@ -313,6 +307,7 @@ export async function renderDraft(args: {
    */
   const { getSender, getCta, getSignatureBusiness, getSignatureTagline, getSignatureExtras } = await import("./sender.server");
   const [sender, cta, empresaPropia, tagline, extras] = await Promise.all([getSender(), getCta(), getSignatureBusiness(), getSignatureTagline(), getSignatureExtras()]);
+  const wa = args.waPhone ? waLink(args.waPhone, cta.waText, args.businessName) : "";
   const empresa = empresaPropia || brand?.name || null;
   const firma = sender.name || (await getUserName(args.bySub ?? null)) || empresa || "El equipo";
   // Si la firma es de OTRA empresa que la marca activa, su logo no le corresponde.

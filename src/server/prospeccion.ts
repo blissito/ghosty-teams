@@ -671,7 +671,7 @@ export const getProspCtaFn = createServerFn({ method: "GET" }).handler(async () 
 });
 
 export const setProspCtaFn = createServerFn({ method: "POST" })
-  .validator((d: { kind: "wa" | "reply" | "link"; label: string; url: string }) => d)
+  .validator((d: { kind: "wa" | "reply" | "link"; label: string; url: string; waText?: string }) => d)
   .handler(async ({ data }) => {
     const me = await sessionUser();
     if (!me) return { error: "sin sesión" };

@@ -171,7 +171,8 @@ export async function effectiveFrom(): Promise<{ from: string; own: boolean }> {
 // `wa` (botón a tu WhatsApp), `reply` (una frase que invita a contestar) o `link` (una URL
 // tuya: agenda, landing, formulario). El agente lo sabe al redactar para no inventar otro.
 export type CtaKind = "wa" | "reply" | "link";
-export type CtaConfig = { kind: CtaKind; label: string; url: string };
+/** `waText`: el mensaje que llega YA escrito al abrir el botón de WhatsApp (`{negocio}` = la fila). Vacío = el de siempre. */
+export type CtaConfig = { kind: CtaKind; label: string; url: string; waText: string };
 
 const CTA_DEFAULT_LABEL: Record<CtaKind, string> = {
   wa: "Escríbenos por WhatsApp",
@@ -180,21 +181,24 @@ const CTA_DEFAULT_LABEL: Record<CtaKind, string> = {
 };
 
 export async function getCta(): Promise<CtaConfig> {
-  const c = await getConfigMany(["prospeccion_cta_kind", "prospeccion_cta_label", "prospeccion_cta_url"]);
+  const c = await getConfigMany(["prospeccion_cta_kind", "prospeccion_cta_label", "prospeccion_cta_url", "prospeccion_cta_wa_text"]);
   const kind = (["wa", "reply", "link"].includes(c.prospeccion_cta_kind ?? "") ? c.prospeccion_cta_kind : "wa") as CtaKind;
   return {
     kind,
     label: (c.prospeccion_cta_label ?? "").trim() || CTA_DEFAULT_LABEL[kind],
     url: (c.prospeccion_cta_url ?? "").trim(),
+    waText: (c.prospeccion_cta_wa_text ?? "").trim(),
   };
 }
 
-export async function setCta(args: { kind: CtaKind; label: string; url: string }): Promise<CtaConfig | { error: string }> {
+export async function setCta(args: { kind: CtaKind; label: string; url: string; waText?: string }): Promise<CtaConfig | { error: string }> {
   const url = args.url.trim();
   if (args.kind === "link" && !/^https?:\/\/\S+$/.test(url)) return { error: "Pon un enlace completo, con https://" };
   await setConfig("prospeccion_cta_kind", args.kind);
   await setConfig("prospeccion_cta_label", args.label.trim().slice(0, 80));
   await setConfig("prospeccion_cta_url", args.kind === "link" ? url : "");
+  // Sólo se toca si viene: quien guarda el CTA sin este campo no borra el texto de la campaña.
+  if (args.waText !== undefined) await setConfig("prospeccion_cta_wa_text", args.waText.trim().slice(0, 300));
   return getCta();
 }
 
@@ -320,6 +324,7 @@ export async function setupOutreach(args: {
   ctaKind?: CtaKind;
   ctaLabel?: string;
   ctaUrl?: string;
+  ctaWaText?: string;
   waPhone?: string;
 }): Promise<{ ok: true; resumen: string } | { ok: false; error: string }> {
   if (args.name !== undefined || args.email !== undefined) {
@@ -353,12 +358,13 @@ export async function setupOutreach(args: {
     if (l && !/^https:\/\/\S+$/i.test(l)) return { ok: false, error: "El logo tiene que ser una URL https a la imagen" };
     await setConfig("prospeccion_signature_logo", l.slice(0, 300));
   }
-  if (args.ctaKind || args.ctaLabel !== undefined || args.ctaUrl !== undefined) {
+  if (args.ctaKind || args.ctaLabel !== undefined || args.ctaUrl !== undefined || args.ctaWaText !== undefined) {
     const cur = await getCta();
     const r = await setCta({
       kind: args.ctaKind ?? cur.kind,
       label: args.ctaLabel ?? (args.ctaKind && args.ctaKind !== cur.kind ? "" : cur.label),
       url: args.ctaUrl ?? cur.url,
+      waText: args.ctaWaText,
     });
     if ("error" in r) return { ok: false, error: r.error };
   }

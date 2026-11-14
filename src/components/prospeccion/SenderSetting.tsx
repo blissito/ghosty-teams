@@ -170,6 +170,7 @@ export function CtaSetting() {
   const [kind, setKind] = useState<Cta["kind"]>("wa");
   const [label, setLabel] = useState("");
   const [url, setUrl] = useState("");
+  const [waText, setWaText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -179,7 +180,7 @@ export function CtaSetting() {
     if (busy) return;
     setBusy(true);
     setError(null);
-    const r = await setProspCtaFn({ data: { kind, label, url } }).catch(() => ({ error: t("No se pudo guardar") }));
+    const r = await setProspCtaFn({ data: { kind, label, url, ...(kind === "wa" ? { waText } : {}) } }).catch(() => ({ error: t("No se pudo guardar") }));
     setBusy(false);
     if ("error" in r && r.error) { setError(r.error); return; }
     setC(r as Cta);
@@ -217,6 +218,17 @@ export function CtaSetting() {
               className="w-56 bg-surface-2 border border-border rounded-lg px-2 py-1 outline-none focus:border-brand"
             />
           ) : null}
+          {kind === "wa" ? (
+            // Lo que llega escrito al abrir el chat: es lo que le dice al agente de qué campaña viene.
+            <input
+              value={waText}
+              onChange={(e) => setWaText(e.target.value)}
+              placeholder={t("Mensaje que llega escrito: Hola, me llegó su correo (soy de {negocio}).")}
+              title={t("{negocio} se cambia por el nombre de cada fila")}
+              onKeyDown={(e) => { if (e.key === "Enter") void save(); if (e.key === "Escape") setEditing(false); }}
+              className="w-80 bg-surface-2 border border-border rounded-lg px-2 py-1 outline-none focus:border-brand"
+            />
+          ) : null}
           <button onClick={() => void save()} disabled={busy} className="font-medium text-brand disabled:opacity-50">
             {busy ? <Loader2 size={12} className="animate-spin" /> : t("Guardar")}
           </button>
@@ -224,7 +236,7 @@ export function CtaSetting() {
         </>
       ) : (
         <button
-          onClick={() => { setKind(c.kind); setLabel(c.label); setUrl(c.url); setEditing(true); }}
+          onClick={() => { setKind(c.kind); setLabel(c.label); setUrl(c.url); setWaText(c.waText); setEditing(true); }}
           className="text-muted hover:text-ink text-left"
         >
           {t("El correo cierra con")}{" "}
