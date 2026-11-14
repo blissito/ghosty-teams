@@ -561,6 +561,21 @@ body {
   block-size: 100%;
 }
 
+/* Temperatura de la fila (`rowTone` en Grid.tsx). Se pisa la VARIABLE del fondo y no el
+   `background-color`: así la toman también las celdas congeladas (que heredan) y el hover. */
+.gt-prosp .rdg .gt-row-hot {
+  --rdg-background-color: color-mix(in oklab, #10b981 14%, var(--color-card));
+  --rdg-row-hover-background-color: color-mix(in oklab, #10b981 22%, var(--color-card));
+}
+.gt-prosp .rdg .gt-row-warm {
+  --rdg-background-color: color-mix(in oklab, #f59e0b 10%, var(--color-card));
+  --rdg-row-hover-background-color: color-mix(in oklab, #f59e0b 18%, var(--color-card));
+}
+/* No le llega nada (sin correo, baja, rebote): se apaga, sin desaparecer. */
+.gt-prosp .rdg .gt-row-dim {
+  color: color-mix(in oklab, var(--color-ink) 45%, transparent);
+}
+
 /* La cabecera manda: es la que dice qué columna estás mirando cuando te desplazas.
 
    ⚠️ Se selecciona por ROL, no por `.rdg-header-row`: react-data-grid v7 hashea sus clases

@@ -38,6 +38,16 @@ function useNarrow() {
   );
 }
 
+/** La clase de una fila según su estado (ver `.gt-row-*` en styles.css). */
+export function rowTone(r: { __status?: string; email?: unknown }): string {
+  const st = r.__status || "new";
+  if (st === "replied") return "gt-row-hot";
+  if (st === "opened" || st === "clicked") return "gt-row-warm";
+  if (st === "optout" || st === "bounced") return "gt-row-dim";
+  if (st === "new" && !String(r.email ?? "").includes("@")) return "gt-row-dim";
+  return "";
+}
+
 export function aplanar(
   rows: RowData[],
   busy: Record<number, Set<string>> = {},
@@ -273,7 +283,14 @@ export function ProspGrid({
         resizable: false,
         renderCell: ({ row }) => {
           const st = row.__status || "new";
-          if (st === "new") return <span className="text-faint text-xs">·</span>;
+          // Antes de enviar también dice algo: a quién le va a llegar y a quién no. Era un «·»
+          // para todos, y el «Enviar a 18» de la barra no cuadraba con las 24 filas a la vista.
+          if (st === "new")
+            return String(row.email ?? "").includes("@") ? (
+              <span className="inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] font-medium bg-brand/10 text-brand">{t("Por enviar")}</span>
+            ) : (
+              <span className="text-faint text-[11px]" title={t("Sin correo: no le llega nada. Enriquécela o búscalo a mano.")}>{t("Sin correo")}</span>
+            );
           const label = STATUSES.find((x) => x.id === st)?.label ?? st;
           const tone =
             st === "sent" ? "bg-surface-3 text-ink"
@@ -509,6 +526,10 @@ export function ProspGrid({
         }}
         rows={rows}
         rowKeyGetter={(r: GridRow) => r.id}
+        /* La fila entera dice su temperatura, como lemlist o Instantly: las que contestaron
+           o dieron clic resaltan para contestarles primero; las que no van a recibir nada
+           (sin correo, baja, rebote) se apagan. */
+        rowClass={(r: GridRow) => rowTone(r)}
         onCellClick={({ row, column }: CellMouseArgs<GridRow>) => {
           const idx = rows.findIndex((r) => r.id === row.id);
           setSel({ rowIdx: idx, colKey: column.key });
