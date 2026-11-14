@@ -12,7 +12,7 @@ import { SendReview } from "../components/prospeccion/SendReview";
 import { AgentDrawer } from "../components/prospeccion/AgentDrawer";
 import { Permisos } from "../components/prospeccion/Permisos";
 import { useRtSubscribe } from "../utils/rt-bus";
-import { decodeFilter, encodeFilter, facets, matches, type Condition, type Filter } from "../lib/prospeccion-filter";
+import { bareValue, decodeFilter, encodeFilter, facets, matches, type Condition, type Filter } from "../lib/prospeccion-filter";
 import { pickRows } from "../lib/prospeccion-run";
 import { NewColumnModal, type NewColumn } from "../components/prospeccion/NewColumnModal";
 import { ColumnChip } from "../components/prospeccion/ColumnChip";
@@ -159,6 +159,21 @@ function ListPage() {
       ...(hasBase ? [{ key: "__base__", label: t("Mensaje base (sin personalizar)") }] : []),
     ],
     [data, hasBase, t]
+  );
+
+  /**
+   * ¿Ya hay un mensaje escrito por fila? Una columna del agente no basta: «¿Agencia digital?»
+   * también es del agente y contesta «digital». Un mensaje se reconoce porque es TEXTO de
+   * correo: más de 80 caracteres sin contar URLs.
+   */
+  const hasMessageColumn = useMemo(
+    () =>
+      mensajes.some(
+        (m) =>
+          m.key !== "__base__" &&
+          (data?.rows ?? []).some((r) => bareValue(String(r.data[m.key]?.v ?? "")).length > 80)
+      ),
+    [mensajes, data]
   );
 
   /**
@@ -672,7 +687,7 @@ function ListPage() {
       <CampaignBar
         listId={listId}
         shown={view.length}
-        hasMessageColumn={mensajes.some((m) => m.key !== "__base__")}
+        hasMessageColumn={hasMessageColumn}
         sent={list.sent}
         refreshKey={`${sendOpen}-${agentOpen}-${mensajes.length}`}
         onWriteMessage={() => setAgentOpen(true)}

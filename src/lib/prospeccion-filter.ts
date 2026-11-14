@@ -86,6 +86,15 @@ export function valueOf(row: Record<string, unknown>, field: string): string {
   return String(data?.[field]?.v ?? "");
 }
 
+/**
+ * El valor de una celda SIN la evidencia: el agente que clasifica suele escribir
+ * «digital https://www.duplimedios.com». La URL dice de dónde lo sacó; el valor es «digital».
+ * Sin esto cada fila es un valor distinto y no hay facetas ni filtro por valor.
+ */
+export function bareValue(s: string): string {
+  return s.replace(/\s*https?:\/\/\S+/gi, "").trim();
+}
+
 function norm(s: string): string {
   return s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 }
@@ -110,7 +119,7 @@ export function matches(row: Record<string, unknown>, filter: Filter, fields: st
         if (!norm(valueOf(row, c.field)).includes(norm(c.value))) return false;
         break;
       case "is":
-        if (norm(valueOf(row, c.field).trim()) !== norm(c.value.trim())) return false;
+        if (norm(bareValue(valueOf(row, c.field))) !== norm(bareValue(c.value))) return false;
         break;
       case "status":
         if (String(row.status ?? "new") !== c.value) return false;
@@ -207,7 +216,7 @@ export function facets(
 ): { value: string; n: number }[] | null {
   const counts = new Map<string, { value: string; n: number }>();
   for (const r of rows) {
-    const raw = valueOf(r, field).trim();
+    const raw = bareValue(valueOf(r, field));
     const k = norm(raw);
     const cur = counts.get(k);
     if (cur) cur.n++;

@@ -31,3 +31,15 @@ describe("facets", () => {
     expect(facets([row("a"), row("a")], "k")).toBeNull();
   });
 });
+
+describe("valor con evidencia", () => {
+  it("la URL que deja el agente no cuenta como valor", () => {
+    const rows = [
+      { data: { ag: { v: "digital https://www.duplimedios.com" } } },
+      { data: { ag: { v: "digital https://kode.mx" } } },
+      { data: { ag: { v: "otro https://aseprom.com" } } },
+    ];
+    expect(facets(rows, "ag")).toEqual([{ value: "digital", n: 2 }, { value: "otro", n: 1 }]);
+    expect(rows.filter((r) => matches(r, [{ op: "is", field: "ag", value: "digital" }], ["ag"])).length).toBe(2);
+  });
+});
