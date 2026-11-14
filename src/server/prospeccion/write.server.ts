@@ -297,6 +297,12 @@ export function stripNarration(v: string): string {
 
 export type WriteProgress = { done: number; total: number; filled: number };
 
+/** Lo que `onProgress` recibe: el conteo y, si la hubo, la celda que acaba de cerrar. */
+export type WriteTick = WriteProgress & {
+  failed: number;
+  cell?: { rowId: number; key: string; v: string | null; status: "done" | "empty" | "failed" };
+};
+
 export async function runAiColumn(args: {
   listId: number;
   key: string;
@@ -317,11 +323,15 @@ export async function runAiColumn(args: {
   readsKey?: string;
   /** Saltar las filas que ya tienen valor en `key`. */
   onlyEmpty?: boolean;
+  /** Sólo las filas cuyo turno FALLÓ la vez pasada (`err` en la celda). «No lo encontró» no se repite. */
+  onlyFailed?: boolean;
+  /** Sólo las filas que esta columna NUNCA corrió: «Seguir con el resto» tras probar en 5. */
+  onlyUntried?: boolean;
   invokerSub: string;
   origin?: string;
   concurrency?: number;
-  onProgress?: (p: WriteProgress) => void;
-}): Promise<WriteProgress & { error?: string; note?: string | null }> {
+  onProgress?: (p: WriteTick) => void;
+}): Promise<WriteProgress & { failed?: number; error?: string; note?: string | null }> {
   const { resolvedAgents, callAgentBackendStream } = await import("../../agents.server");
   const { listColumns } = await import("./lists.server");
 
@@ -343,7 +353,9 @@ export async function runAiColumn(args: {
   const filtradas = args.filter?.length
     ? todas.filter((r) => matches(r as unknown as Record<string, unknown>, args.filter!, args.fields ?? []))
     : todas;
-  const rows = args.limit && args.limit > 0 ? filtradas.slice(0, args.limit) : filtradas;
+  const { pickRows } = await import("../../lib/prospeccion-run");
+  // Se descartan ANTES de contar: «Seguir con el resto» tiene que decir «0/95», no «5/100».
+  const rows = pickRows(filtradas, args.writesTo || args.key, args);
   const queue = [...rows];
   let done = 0;
   let filled = 0;
@@ -362,10 +374,17 @@ export async function runAiColumn(args: {
 
       const existing = row.data[args.key];
       // Lo escrito a mano no se pisa, igual que en el enriquecimiento.
-      if (existing?.src === "manual" && existing.v) { done++; args.onProgress?.({ done, total: rows.length, filled }); continue; }
-      if (args.onlyEmpty && existing?.v) { done++; filled++; args.onProgress?.({ done, total: rows.length, filled }); continue; }
+      if (existing?.src === "manual" && existing.v) { done++; args.onProgress?.({ done, total: rows.length, filled, failed }); continue; }
+      if (args.onlyEmpty && existing?.v) { done++; filled++; args.onProgress?.({ done, total: rows.length, filled, failed }); continue; }
 
       let out = "";
+      let rowFailed = false;
+      // Un intento y UN reintento: el fallo típico es de arranque (la microVM despertando
+      // para otra fila) y a los segundos ya contesta. Más reintentos = más turnos pagados.
+      for (let intento = 0; intento < 2; intento++) {
+      out = "";
+      rowFailed = false;
+      if (intento) await new Promise((r) => setTimeout(r, 8000));
       try {
         await callAgentBackendStream(
           agent,
@@ -393,17 +412,20 @@ export async function runAiColumn(args: {
         );
       } catch (e) {
         out = "";
-        failed++;
-        console.warn("[prospeccion] fila", row.id, String(e).slice(0, 120));
+        rowFailed = true;
+        console.warn("[prospeccion] fila", row.id, `intento ${intento + 1}:`, String(e).slice(0, 120));
       }
       // El transporte NO lanza cuando el worker muere: escribe «⚠️ No pude contactar a @…»
       // como si fuera texto. En un chat eso es un aviso; en una celda es un correo que dice
       // eso. Se trata como el fallo que es, y la celda queda vacía para volver a correrla.
       if (/⚠️ No pude contactar a @/.test(out)) {
-        console.warn("[prospeccion] fila", row.id, "el turno del agente murió:", out.slice(0, 120));
+        console.warn("[prospeccion] fila", row.id, `intento ${intento + 1}: el turno del agente murió:`, out.slice(0, 120));
         out = "";
-        failed++;
+        rowFailed = true;
       }
+      if (!rowFailed) break;
+      }
+      if (rowFailed) failed++;
 
       // Un pitch investigado es un correo entero: varios párrafos y más de 600 letras.
       // El pitch viene marcado: se toma el ÚLTIMO <correo>…</correo> y nada más. Si el
@@ -428,11 +450,19 @@ export async function runAiColumn(args: {
       await setCell(row.id, args.writesTo || args.key, value, {
         src: `agente:${agent.handle}`,
         verified: false,
+        // La celda vacía dice POR QUÉ: «falló» se vuelve a correr; «no lo encontró» no.
+        ...(rowFailed ? { err: "el turno del agente falló" } : {}),
       });
       if (value) filled++;
-      else if ((!failed || out) && !(estructurado && !value && sinBloque)) blank++;
+      else if (!rowFailed && !(estructurado && sinBloque)) blank++;
       done++;
-      args.onProgress?.({ done, total: rows.length, filled });
+      args.onProgress?.({
+        done,
+        total: rows.length,
+        filled,
+        failed,
+        cell: { rowId: row.id, key: args.writesTo || args.key, v: value, status: value ? "done" : rowFailed ? "failed" : "empty" },
+      });
     }
   });
 
@@ -447,5 +477,5 @@ export async function runAiColumn(args: {
   if (blank) partes.push(`${blank} el agente no encontró el dato`);
   if (sinBloque) partes.push(`${sinBloque} contestó sin el formato pedido`);
   const note = filled < rows.length && partes.length ? partes.join(" · ") : null;
-  return { done, total: rows.length, filled, note };
+  return { done, total: rows.length, filled, failed, note };
 }

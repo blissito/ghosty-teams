@@ -16,7 +16,13 @@ import { BASE_COLUMNS, columnKey } from "../../lib/prospeccion-mapping";
 export { BASE_COLUMNS, columnKey };
 
 /** Una celda dinámica: el valor, de dónde salió, y si se verificó. */
-export type Cell = { v: string | null; src?: string; verified?: boolean };
+export type Cell = {
+  v: string | null;
+  src?: string;
+  verified?: boolean;
+  /** Celda vacía porque el turno REVENTÓ (no porque no existiera el dato): se reintenta. */
+  err?: string;
+};
 
 export type ProspRow = {
   id: number;
@@ -605,7 +611,7 @@ export async function setCell(
   rowId: number,
   key: string,
   value: string | null,
-  meta?: { src?: string; verified?: boolean }
+  meta?: { src?: string; verified?: boolean; err?: string }
 ): Promise<void> {
   if (BASE_KEYS.has(key)) {
     await dbq(`UPDATE gt_prosp_rows SET ${key} = ? WHERE id = ?`, [value, rowId]);
@@ -613,7 +619,10 @@ export async function setCell(
   }
   const row = await getRow(rowId);
   if (!row) return;
-  const data = { ...row.data, [key]: { v: value, src: meta?.src ?? "manual", verified: meta?.verified ?? false } };
+  const data = {
+    ...row.data,
+    [key]: { v: value, src: meta?.src ?? "manual", verified: meta?.verified ?? false, ...(meta?.err ? { err: meta.err } : {}) },
+  };
   await dbq(`UPDATE gt_prosp_rows SET data_json = ? WHERE id = ?`, [JSON.stringify(data), rowId]);
 }
 

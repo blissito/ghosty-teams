@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ArrowLeftToLine, AtSign, ChevronDown, Loader2, Play, Sparkles, Trash2 } from "lucide-react";
+import { ArrowLeftToLine, AtSign, ChevronDown, Loader2, Play, RotateCcw, Sparkles, Trash2 } from "lucide-react";
 import { useT } from "../../i18n";
 
 /**
@@ -28,6 +28,11 @@ export function ColumnChip({
   total,
   duplicada,
   running,
+  progress,
+  untried = 0,
+  failedCount = 0,
+  onContinue,
+  onRetryFailed,
   onRun,
   onUseAsEmail,
   onPromote,
@@ -60,6 +65,17 @@ export function ColumnChip({
   duplicada?: boolean;
   running: boolean;
   /**
+   * Avance EN VIVO de la corrida (llega fila por fila por el bus). Mientras exista, el chip
+   * enseña «12/100 · 2 fallaron» en vez de la cobertura: antes decía «vacía» media hora.
+   */
+  progress?: { done: number; total: number; filled: number; failed: number } | null;
+  /** Filas a la vista que esta columna nunca corrió (tras «Probar en 5»). */
+  untried?: number;
+  /** Filas cuyo turno falló la última vez. */
+  failedCount?: number;
+  onContinue?: () => void;
+  onRetryFailed?: () => void;
+  /**
    * La columna base a la que ESTA columna debería haber ido.
    *
    * ⚠️ Sale de que su etiqueta es la de una base. Es el rescate de una duplicada con datos
@@ -88,7 +104,21 @@ export function ColumnChip({
 
   const acciones = [
     kind === "enrich" && { id: "run", icon: Play, label: t("Volver a buscarlo"), hint: t("En todas las filas"), run: onRun },
-    kind === "ai" && { id: "run", icon: Sparkles, label: t("Que el agente la escriba"), hint: t("Un turno por fila: cuesta"), run: onRun },
+    kind === "ai" && untried > 0 && onContinue && {
+      id: "continue",
+      icon: Play,
+      label: `${t("Seguir con las")} ${untried.toLocaleString("es-MX")} ${t("que faltan")}`,
+      hint: t("Un turno por fila: cuesta. Las que ya corrieron no se repiten"),
+      run: onContinue,
+    },
+    kind === "ai" && failedCount > 0 && onRetryFailed && {
+      id: "retry",
+      icon: RotateCcw,
+      label: `${t("Reintentar las")} ${failedCount} ${t("que fallaron")}`,
+      hint: t("Sólo las que reventaron; «no lo encontró» no se repite"),
+      run: onRetryFailed,
+    },
+    kind === "ai" && { id: "run", icon: Sparkles, label: t("Volver a escribirla toda"), hint: t("Un turno por fila: cuesta"), run: onRun },
     promoteTo && {
       id: "promote",
       icon: ArrowLeftToLine,
@@ -130,7 +160,18 @@ export function ColumnChip({
           columna a menos de la mitad es una columna que no sostiene una campaña, y una
           vacía con nombre repetido es la que sobra.
         */}
-        {total ? (
+        {running && progress ? (
+          <span className="flex items-center gap-1.5 text-[10px] tabular-nums text-brand" title={t("Avance de la columna")}>
+            {progress.done}/{progress.total}
+            {progress.failed ? <span className="text-red-500">· {progress.failed} {t("fallaron")}</span> : null}
+            <span className="relative w-12 h-1 rounded-full bg-surface-3 overflow-hidden">
+              <span
+                className="absolute inset-y-0 left-0 bg-brand rounded-full transition-[width] duration-300"
+                style={{ width: `${progress.total ? (progress.done / progress.total) * 100 : 0}%` }}
+              />
+            </span>
+          </span>
+        ) : total ? (
           <span
             className={`text-[10px] tabular-nums ${
               !filled ? "text-amber-500" : filled < total / 2 ? "text-amber-500/80" : "text-muted"
@@ -145,6 +186,9 @@ export function ColumnChip({
           >
             {filled ? `${filled.toLocaleString("es-MX")}/${total.toLocaleString("es-MX")}` : t("vacía")}
           </span>
+        ) : null}
+        {!running && failedCount > 0 ? (
+          <span className="text-[10px] tabular-nums text-red-500">· {failedCount} {t("fallaron")}</span>
         ) : null}
         <ChevronDown size={12} className={`text-muted transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
@@ -162,7 +206,7 @@ export function ColumnChip({
               <button
                 key={a.id}
                 onClick={() => { setOpen(false); a.run(); }}
-                disabled={running && a.id === "run"}
+                disabled={running && (a.id === "run" || a.id === "continue" || a.id === "retry")}
                 className={`w-full text-left px-3 py-2 flex items-start gap-2.5 hover:bg-surface-3 disabled:opacity-40 ${
                   a.danger ? "text-red-500" : ""
                 }`}

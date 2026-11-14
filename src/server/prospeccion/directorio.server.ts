@@ -125,6 +125,11 @@ export type DirectorioQuery = {
   limit: number;
   /** Sólo los que traen correo. Es el filtro que más cambia el rendimiento de una lista. */
   soloConCorreo?: boolean;
+  /**
+   * Clases SCIAN (por prefijo). Si viene, manda sobre las palabras: «agencias de
+   * publicidad» por texto traía imprentas llamadas «Publicidad X» (ver `lib/scian-giros.ts`).
+   */
+  scian?: string[];
 };
 
 /**
@@ -141,7 +146,8 @@ export async function buscarDirectorio(q: DirectorioQuery): Promise<Found[]> {
   const pool = Math.min(Math.max(q.limit * 6, 300), 3000);
 
   const terms = q.what.trim();
-  const conTexto = terms.length > 1;
+  const porClase = !!q.scian?.length;
+  const conTexto = !porClase && terms.length > 1;
   // `fts5` con prefijo: "dentista" encuentra "dentistas". Las comillas evitan que un
   // apóstrofo o un guión del criterio se lea como sintaxis de consulta.
   const match = terms.split(/\s+/).map((t) => `"${t.replace(/"/g, "")}"*`).join(" ");
@@ -150,7 +156,9 @@ export async function buscarDirectorio(q: DirectorioQuery): Promise<Found[]> {
     "n.lat BETWEEN ? AND ?",
     "n.lon BETWEEN ? AND ?",
     q.soloConCorreo ? "n.email IS NOT NULL" : null,
+    porClase ? `(${q.scian!.map(() => "n.scian LIKE ?").join(" OR ")})` : null,
   ].filter(Boolean).join(" AND ");
+  const clases = porClase ? q.scian!.map((c) => `${c}%`) : [];
 
   const sql = conTexto
     ? `SELECT n.* FROM negocios_fts f JOIN negocios n ON n.rowid = f.rowid
@@ -158,7 +166,7 @@ export async function buscarDirectorio(q: DirectorioQuery): Promise<Found[]> {
     : `SELECT n.* FROM negocios n WHERE ${where} LIMIT ?`;
   const args = conTexto
     ? [match, b.minLat, b.maxLat, b.minLng, b.maxLng, pool]
-    : [b.minLat, b.maxLat, b.minLng, b.maxLng, pool];
+    : [b.minLat, b.maxLat, b.minLng, b.maxLng, ...clases, pool];
 
   const rows = await query(sql, args);
 
@@ -174,17 +182,20 @@ export async function buscarDirectorio(q: DirectorioQuery): Promise<Found[]> {
 export async function contarDirectorio(q: Omit<DirectorioQuery, "limit">): Promise<number> {
   const b = box(q.lat, q.lng, q.radius);
   const terms = q.what.trim();
-  const conTexto = terms.length > 1;
+  const porClase = !!q.scian?.length;
+  const conTexto = !porClase && terms.length > 1;
   const match = terms.split(/\s+/).map((t) => `"${t.replace(/"/g, "")}"*`).join(" ");
   const where = [
     "n.lat BETWEEN ? AND ?",
     "n.lon BETWEEN ? AND ?",
     q.soloConCorreo ? "n.email IS NOT NULL" : null,
+    porClase ? `(${q.scian!.map(() => "n.scian LIKE ?").join(" OR ")})` : null,
   ].filter(Boolean).join(" AND ");
+  const clases = porClase ? q.scian!.map((c) => `${c}%`) : [];
   const sql = conTexto
     ? `SELECT COUNT(*) AS n FROM negocios_fts f JOIN negocios n ON n.rowid = f.rowid WHERE negocios_fts MATCH ? AND ${where}`
     : `SELECT COUNT(*) AS n FROM negocios n WHERE ${where}`;
-  const args = conTexto ? [match, b.minLat, b.maxLat, b.minLng, b.maxLng] : [b.minLat, b.maxLat, b.minLng, b.maxLng];
+  const args = conTexto ? [match, b.minLat, b.maxLat, b.minLng, b.maxLng] : [b.minLat, b.maxLat, b.minLng, b.maxLng, ...clases];
   const r = await query(sql, args);
   return Number(r[0]?.n ?? 0);
 }

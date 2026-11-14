@@ -2652,4 +2652,18 @@ export const en: Record<string, string> = {
   "Tus repos de": "Your repos from",
   "todavía no están en Ghosty.": "aren't in Ghosty yet.",
   "Ghosty todavía no ve tus repos.": "Ghosty can't see your repos yet.",
+  // Prospección: columnas de agente con avance, prueba y reintento (14-nov-2026)
+  "Seguir con las": "Continue with the",
+  "que faltan": "remaining",
+  "Un turno por fila: cuesta. Las que ya corrieron no se repiten": "One turn per row: it costs. Rows already run are not repeated",
+  "Reintentar las": "Retry the",
+  "que fallaron": "that failed",
+  "Sólo las que reventaron; «no lo encontró» no se repite": "Only the ones that crashed; “not found” is not repeated",
+  "Volver a escribirla toda": "Rewrite it all",
+  "Avance de la columna": "Column progress",
+  "Sólo las que tienen sitio web": "Only rows with a website",
+  "Todas": "All",
+  "Probar en": "Try on",
+  "faltan": "remaining",
+  "menú de la columna → Seguir": "column menu → Continue",
 };

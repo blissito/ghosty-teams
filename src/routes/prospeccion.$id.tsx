@@ -12,12 +12,16 @@ import { AgentDrawer } from "../components/prospeccion/AgentDrawer";
 import { Permisos } from "../components/prospeccion/Permisos";
 import { useRtSubscribe } from "../utils/rt-bus";
 import { decodeFilter, encodeFilter, matches, type Condition, type Filter } from "../lib/prospeccion-filter";
+import { pickRows } from "../lib/prospeccion-run";
 import { NewColumnModal, type NewColumn } from "../components/prospeccion/NewColumnModal";
 import { ColumnChip } from "../components/prospeccion/ColumnChip";
 import { DropZone, type Sheet } from "../components/prospeccion/DropZone";
 import { ImportReview } from "../components/prospeccion/ImportReview";
 import { planImport, type Plan, type Target as ImportTarget } from "../lib/prospeccion-mapping";
 import "react-data-grid/lib/styles.css";
+
+/** Alcance de una corrida: sólo las que nunca corrieron, sólo las que fallaron, y un filtro extra. */
+type RunOpts = { only?: "untried" | "failed"; extra?: Condition[] };
 
 /**
  * ¿Esta columna lleva el nombre de una base?
@@ -63,6 +67,12 @@ function ListPage() {
   const [busy, setBusy] = useState<Record<number, Set<string>>>({});
   const [columnModal, setColumnModal] = useState(false);
   const [running, setRunning] = useState<string | null>(null);
+  /** Avance en vivo por columna (llega por el bus fila por fila). */
+  const [progress, setProgress] = useState<Record<string, { done: number; total: number; filled: number; failed: number }>>({});
+  /** Columna recién creada: la rejilla se desplaza hasta ella. */
+  const [focusKey, setFocusKey] = useState<string | null>(null);
+  /** Corridas que llegaron mientras otra corría: antes se descartaban sin aviso. */
+  const queueRef = useRef<{ key: string; kind?: string; limit?: number; onlyEmpty?: boolean; opts?: RunOpts }[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [review, setReview] = useState<{ plan: Plan; fileName: string } | null>(null);
   const [agentOpen, setAgentOpen] = useState(false);
@@ -203,6 +213,39 @@ function ListPage() {
         setSendOpen(true);
         return;
       }
+      // Avance fila por fila: la celda aparece en cuanto se escribe y el chip cuenta.
+      if (ev.t === "prospeccion:progress" && ev.listId === listId) {
+        setProgress((p) => ({ ...p, [ev.key]: { done: ev.done, total: ev.total, filled: ev.filled, failed: ev.failed } }));
+        const cell = ev.cell;
+        if (cell) {
+          setBusy((b) => {
+            if (!b[cell.rowId]) return b;
+            const next = { ...b };
+            delete next[cell.rowId];
+            return next;
+          });
+          setData((prev) => {
+            if (!prev) return prev;
+            return {
+              ...prev,
+              rows: prev.rows.map((r) => {
+                if (r.id !== cell.rowId) return r;
+                if (["name", "phone", "email", "website", "address", "category"].includes(cell.key)) {
+                  return { ...r, [cell.key]: cell.v } as typeof r;
+                }
+                return {
+                  ...r,
+                  data: {
+                    ...r.data,
+                    [cell.key]: { v: cell.v, src: "agente", verified: false, ...(cell.status === "failed" ? { err: "el turno del agente falló" } : {}) },
+                  },
+                };
+              }),
+            };
+          });
+        }
+        return;
+      }
       // El agente pidió volver a correr una columna que ya existe.
       if (ev.t === "prospeccion:run" && ev.listId === listId) {
         // El agente repite una columna que ya existe: sólo los huecos.
@@ -327,24 +370,37 @@ function ListPage() {
   );
 
   const runColumn_ = useCallback(
-    async (key: string, kind?: string, limit?: number, onlyEmpty?: boolean) => {
-      if (running) return;
+    async (key: string, kind?: string, limit?: number, onlyEmpty?: boolean, opts?: RunOpts) => {
+      // Otra columna corriendo: se forma, no se tira (antes se perdía sin aviso).
+      if (running) { queueRef.current.push({ key, kind, limit, onlyEmpty, opts }); return; }
       const tipo = kind ?? data?.columns.find((c) => c.key === key)?.kind;
       setRunning(key);
-      // El pulso sólo en las filas de la VISTA: son las que van a cambiar.
-      // El pulso, sólo en las filas que de verdad van a correr.
-      setBusy(Object.fromEntries(view.slice(0, limit && limit > 0 ? limit : undefined).map((r) => [r.id, new Set([key])])));
+      setProgress((p) => { const n = { ...p }; delete n[key]; return n; });
+      // El filtro de la URL más el alcance elegido («sólo con sitio web»).
+      const fx = opts?.extra?.length ? encodeFilter([...filter, ...opts.extra]) : f;
+      // El pulso, sólo en las filas que de verdad van a correr (mismo criterio que el servidor).
+      const keys = fields.map((x) => x.key);
+      const candidatas = opts?.extra?.length
+        ? view.filter((r) => matches(r as unknown as Record<string, unknown>, opts.extra!, keys))
+        : view;
+      const vanACorrer = pickRows(candidatas, key, { onlyFailed: opts?.only === "failed", onlyUntried: opts?.only === "untried", onlyEmpty, limit });
+      setBusy(Object.fromEntries(vanACorrer.map((r) => [r.id, new Set([key])])));
       try {
         // ⚠️ Va el MISMO filtro que está en la URL. Lo que se ve es lo que se enriquece.
         const r = tipo === "ai"
-          ? await runAiColumnFn({ data: { listId, key, f, limit, onlyEmpty } })
-          : await runColumnFn({ data: { listId, key, f, limit } });
+          ? await runAiColumnFn({
+              data: { listId, key, f: fx, limit, onlyEmpty, onlyFailed: opts?.only === "failed", onlyUntried: opts?.only === "untried" },
+            })
+          : await runColumnFn({ data: { listId, key, f: fx, limit } });
         if (r.ok) {
           // El motivo va JUNTO al número: «0 de 4 llenadas» sin explicación se lee como
           // que la herramienta está rota. «0 de 4 · ninguna fila tenía un valor en la
           // columna Correo» se lee como qué hacer a continuación.
           const nota = "note" in r && r.note ? ` · ${r.note}` : "";
-          setNotice(`${r.filled} de ${r.total} llenadas${nota}`);
+          // Tras una prueba: cuánto falta, para decidir si vale la pena seguir.
+          const resto = tipo === "ai" && limit ? pickRows(candidatas, key, { onlyUntried: true }).length - r.total : 0;
+          const sigue = resto > 0 ? ` · ${t("faltan")} ${resto.toLocaleString("es-MX")}: ${t("menú de la columna → Seguir")}` : "";
+          setNotice(`${r.filled} de ${r.total} llenadas${nota}${sigue}`);
           // Se acaba de escribir un mensaje: el panel del agente lo enseña como correo.
           const col = data?.columns.find((c) => c.key === key);
           if (tipo === "ai" && col?.recipe?.mode !== "research" && r.filled > 0) setPreviewKey(key);
@@ -353,10 +409,13 @@ function ListPage() {
       } finally {
         setBusy({});
         setRunning(null);
+        setProgress((p) => { const n = { ...p }; delete n[key]; return n; });
         await reload();
+        const next = queueRef.current.shift();
+        if (next) setTimeout(() => void runColumnRef.current?.(next.key, next.kind, next.limit, next.onlyEmpty, next.opts), 0);
       }
     },
-    [listId, reload, running, data, view, f]
+    [listId, reload, running, data, view, f, filter, fields, t]
   );
 
   /*
@@ -364,12 +423,12 @@ function ListPage() {
     del suscriptor lo re-suscribiría en cada render. Una ref lo resuelve sin ninguna de las
     dos cosas.
   */
-  const crearColumnaRef = useRef<((c: NewColumn, limit?: number) => void) | null>(null);
-  const runColumnRef = useRef<((key: string, kind?: string, limit?: number, onlyEmpty?: boolean) => Promise<void>) | null>(null);
+  const crearColumnaRef = useRef<((c: NewColumn, limit?: number, opts?: RunOpts) => void) | null>(null);
+  const runColumnRef = useRef<((key: string, kind?: string, limit?: number, onlyEmpty?: boolean, opts?: RunOpts) => Promise<void>) | null>(null);
   useEffect(() => { runColumnRef.current = runColumn_; }, [runColumn_]);
 
   const createColumn = useCallback(
-    async (c: NewColumn, limit?: number) => {
+    async (c: NewColumn, limit?: number, opts?: RunOpts) => {
       const r = await addColumnFn({ data: { listId, ...c, f } });
       // ⚠️ Callarse aquí era el bug: el agente decía «ya la lancé», el guard la rechazaba
       // («ninguna de las N filas tiene…») y en pantalla no pasaba nada de nada.
@@ -378,8 +437,9 @@ function ListPage() {
         return;
       }
       await reload();
+      if (r.column) setFocusKey(r.column.key);
       // Una columna de búsqueda sin correr no sirve de nada: se dispara sola al crearla.
-      if (r.column && (c.kind === "enrich" || c.kind === "ai")) runColumn_(r.column.key, c.kind, limit);
+      if (r.column && (c.kind === "enrich" || c.kind === "ai")) runColumn_(r.column.key, c.kind, limit, undefined, opts);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [listId, reload]
@@ -615,6 +675,11 @@ function ListPage() {
               promoteTo={baseGemela(c.label, data.base)}
               onPromote={() => promote_(c.key, baseGemela(c.label, data.base))}
               running={running === c.key}
+              progress={progress[c.key] ?? null}
+              untried={c.kind === "ai" ? view.filter((r) => !r.data[c.key]).length : 0}
+              failedCount={view.filter((r) => !!r.data[c.key]?.err).length}
+              onContinue={() => runColumn_(c.key, c.kind, undefined, undefined, { only: "untried" })}
+              onRetryFailed={() => runColumn_(c.key, c.kind, undefined, undefined, { only: "failed" })}
               onRun={() => runColumn_(c.key, c.kind)}
               onUseAsEmail={() => promote(c.key)}
               onRemove={() => removeColumn(c.key)}
@@ -664,6 +729,7 @@ function ListPage() {
             latLon={latLon}
             onCellChange={onCellChange}
             onPasteBlock={onPasteBlock}
+            focusKey={focusKey}
           />
         </DropZone>
       </motion.div>
@@ -707,7 +773,13 @@ function ListPage() {
         creadorSub={data?.list.createdBy}
       />
 
-      <NewColumnModal open={columnModal} onClose={() => setColumnModal(false)} onCreate={createColumn} />
+      <NewColumnModal
+        open={columnModal}
+        onClose={() => setColumnModal(false)}
+        onCreate={createColumn}
+        shown={view.length}
+        withWebsite={view.filter((r) => (r.website ?? "").trim()).length}
+      />
     </div>
   );
 }

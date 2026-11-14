@@ -45,7 +45,15 @@ function stripAccents(s: string): string {
  * un municipio de Guanajuato y también una colonia en otras tres entidades.
  */
 export async function resolveCriteria(criteria: string): Promise<
-  | { ok: true; what: string; place: { nombre: string; tipo: string; entidad: string | null; lat: number; lon: number }; radius: number }
+  | {
+      ok: true;
+      what: string;
+      place: { nombre: string; tipo: string; entidad: string | null; lat: number; lon: number };
+      radius: number;
+      /** Clases SCIAN si el giro se reconoce: se busca por clase, no por palabras. */
+      scian?: string[];
+      giro: string | null;
+    }
   | { ok: false; error: string }
 > {
   const { buscarZona } = await import("../directorio.server");
@@ -64,7 +72,9 @@ export async function resolveCriteria(criteria: string): Promise<
   const sinLugar = clean.replace(new RegExp(`\\b${stripAccents(place.nombre).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "g"), " ");
   const what = sinLugar.replace(STOPWORDS, " ").replace(/\b\d+\b/g, " ").replace(/\s+/g, " ").trim();
 
-  return { ok: true, what, place, radius: RADIUS[place.tipo] ?? 12_000 };
+  const { giroScian } = await import("../../../lib/scian-giros");
+  const giro = giroScian(what);
+  return { ok: true, what, place, radius: RADIUS[place.tipo] ?? 12_000, scian: giro?.scian, giro: giro?.label ?? null };
 }
 
 export const directorio: SearchSource = {
@@ -93,6 +103,7 @@ export const directorio: SearchSource = {
       lat: r.place.lat,
       lng: r.place.lon,
       radius: r.radius,
+      scian: r.scian,
       limit,
     });
   },
@@ -102,6 +113,6 @@ export const directorio: SearchSource = {
 export async function contarCriterio(criteria: string): Promise<{ ok: true; total: number; lugar: string } | { ok: false; error: string }> {
   const r = await resolveCriteria(criteria);
   if (!r.ok) return r;
-  const total = await contarDirectorio({ what: r.what, lat: r.place.lat, lng: r.place.lon, radius: r.radius });
+  const total = await contarDirectorio({ what: r.what, lat: r.place.lat, lng: r.place.lon, radius: r.radius, scian: r.scian });
   return { ok: true, total, lugar: r.place.entidad && r.place.entidad !== r.place.nombre ? `${r.place.nombre}, ${r.place.entidad}` : r.place.nombre };
 }

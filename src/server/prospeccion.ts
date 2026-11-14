@@ -49,9 +49,12 @@ export const createListFn = createServerFn({ method: "POST" })
     const { sourceById } = await import("./prospeccion/sources/index");
 
     const src = sourceById(data.source ?? "directorio");
+    // «500 agencias…» trae 500: antes el número se tiraba como palabra de relleno y llegaban 100.
+    const { cuantosPide } = await import("../lib/scian-giros");
+    const cuantos = Math.min(data.limit ?? cuantosPide(criteria) ?? 100, 500);
     let found;
     try {
-      found = await src.search(criteria, Math.min(data.limit ?? 100, 500));
+      found = await src.search(criteria, cuantos);
     } catch (e) {
       return { ok: false as const, error: String(e instanceof Error ? e.message : e) };
     }
@@ -77,7 +80,7 @@ export const createListFn = createServerFn({ method: "POST" })
         for (let k = terms.length - 1; k >= 1 && found.length === 0; k--) {
           const what = terms.slice(0, k).join(" ");
           searched = `${what} en ${r.place.nombre}`;
-          found = await src.search(searched, Math.min(data.limit ?? 100, 500)).catch(() => []);
+          found = await src.search(searched, cuantos).catch(() => []);
         }
       }
     }
@@ -450,10 +453,15 @@ export const runColumnFn = createServerFn({ method: "POST" })
  * pensar una columna de 500 filas.
  */
 export const runAiColumnFn = createServerFn({ method: "POST" })
-  .validator((d: { listId: number; key: string; agentHandle?: string; f?: string; limit?: number; onlyEmpty?: boolean }) => d)
+  .validator((d: { listId: number; key: string; agentHandle?: string; f?: string; limit?: number; onlyEmpty?: boolean; onlyFailed?: boolean; onlyUntried?: boolean }) => d)
   .handler(async ({ data }) => {
     const me = await sessionUser();
     if (!me) return { ok: false as const, error: "sin sesión", done: 0, total: 0, filled: 0 };
+    // El avance va al bus de ESTA persona fila por fila: la petición tarda minutos y la
+    // pantalla no puede quedarse en «vacía» hasta la última.
+    const { publish, ch } = await import("./bus.server");
+    const { currentNamespace } = await import("./tenant.server");
+    const ns = await currentNamespace();
 
     const { listColumns } = await import("./prospeccion/lists.server");
     const col = (await listColumns(Number(data.listId))).find((c) => c.key === data.key);
@@ -509,9 +517,13 @@ export const runAiColumnFn = createServerFn({ method: "POST" })
       readsKey: col.recipe.reads,
       // Repetir una columna llena sólo los huecos: lo bueno no se reescribe (ni se paga).
       onlyEmpty: data.onlyEmpty,
+      onlyFailed: data.onlyFailed,
+      onlyUntried: data.onlyUntried,
+      onProgress: (p) =>
+        publish(ch.user(ns, me.sub), { t: "prospeccion:progress", listId: Number(data.listId), key: col.key, ...p }),
     });
     const note = [r.note, notaInv].filter(Boolean).join(" · ") || null;
-    return { ok: !r.error, error: r.error ?? null, done: r.done, total: r.total, filled: r.filled, note };
+    return { ok: !r.error, error: r.error ?? null, done: r.done, total: r.total, filled: r.filled, failed: r.failed ?? 0, note };
   });
 
 /** Los agentes del workspace, para elegir quién escribe la columna. */

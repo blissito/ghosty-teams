@@ -3,6 +3,11 @@ import { motion, AnimatePresence, useReducedMotion } from "motion/react";
 import { AtSign, Globe, PenLine, Search, ShieldCheck, Sparkles, Wifi, X } from "lucide-react";
 import { useT } from "../../i18n";
 import { listEnrichersFn } from "../../server/prospeccion";
+import { Toggle } from "../Toggle";
+import type { Condition } from "../../lib/prospeccion-filter";
+
+/** Primera corrida de una columna de agente: una muestra chica antes de pagar la lista entera. */
+export const TRY_ROWS = 5;
 
 export type NewColumn = {
   label: string;
@@ -44,10 +49,17 @@ export function NewColumnModal({
   open,
   onClose,
   onCreate,
+  shown = 0,
+  withWebsite = 0,
 }: {
   open: boolean;
   onClose: () => void;
-  onCreate: (c: NewColumn) => Promise<void>;
+  /** `limit`: cuántas filas correr de entrada; `opts.extra`: filtro de alcance («con sitio web»). */
+  onCreate: (c: NewColumn, limit?: number, opts?: { extra?: Condition[] }) => Promise<void>;
+  /** Filas a la vista: la columna corre sobre éstas. */
+  shown?: number;
+  /** De ésas, cuántas tienen sitio web. */
+  withWebsite?: number;
 }) {
   const t = useT();
   const still = useReducedMotion();
@@ -56,10 +68,12 @@ export function NewColumnModal({
   const [choice, setChoice] = useState<string | null>(null);
   const [label, setLabel] = useState("");
   const [prompt, setPrompt] = useState("");
+  /** Correr sólo donde hay de dónde sacar el dato: buscar en la web de un negocio sin web es un turno tirado. */
+  const [soloConSitio, setSoloConSitio] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => { if (open) listEnrichersFn().then(setEnrichers).catch(() => {}); }, [open]);
-  useEffect(() => { if (!open) { setChoice(null); setLabel(""); setPrompt(""); } }, [open]);
+  useEffect(() => { if (!open) { setChoice(null); setLabel(""); setPrompt(""); setSoloConSitio(false); } }, [open]);
 
   // El nombre se propone desde lo elegido, y se puede cambiar. Nunca se pide en blanco.
   useEffect(() => {
@@ -73,7 +87,8 @@ export function NewColumnModal({
   const esPitch = choice === "__pitch__";
   const canCreate = !!choice && !!label.trim() && (!isAi || !!prompt.trim());
 
-  const create = async () => {
+  const alcance = soloConSitio ? withWebsite : shown;
+  const create = async (limit?: number) => {
     if (!canCreate || saving) return;
     setSaving(true);
     await onCreate({
@@ -82,7 +97,7 @@ export function NewColumnModal({
       waterfall: isAi || choice === "__manual__" ? [] : [choice!],
       prompt: isAi ? prompt.trim() : undefined,
       mode: isAi ? (esBusqueda ? "research" : esPitch ? "pitch" : "write") : undefined,
-    });
+    }, limit, soloConSitio ? { extra: [{ op: "filled", field: "website" }] } : undefined);
     setSaving(false);
     onClose();
   };
@@ -259,17 +274,50 @@ export function NewColumnModal({
               </AnimatePresence>
             </div>
 
-            <footer className="shrink-0 flex justify-end gap-2 px-5 py-4 border-t border-border">
+            {/*
+              Columna de agente: cada fila es un turno que se paga. Se prueba en 5 y se mira
+              antes de correr la lista entera (lo que Clay llama «run 10 rows»). Correr todo
+              sigue a un clic, pero ya no es lo que pasa por default.
+            */}
+            {isAi ? (
+              <div className="shrink-0 px-5 pt-3 flex items-center justify-between gap-3 text-xs">
+                <span className="text-muted">
+                  {t("Sólo las que tienen sitio web")} <span className="tabular-nums">({withWebsite.toLocaleString("es-MX")})</span>
+                </span>
+                <Toggle on={soloConSitio} onChange={setSoloConSitio} label={t("Sólo las que tienen sitio web")} />
+              </div>
+            ) : null}
+            <footer className="shrink-0 flex justify-end items-center gap-2 px-5 py-4 border-t border-border mt-3">
               <button onClick={onClose} className="text-sm px-3 py-2 rounded-lg text-muted hover:bg-surface-3">
                 {t("Cancelar")}
               </button>
-              <button
-                onClick={create}
-                disabled={!canCreate || saving}
-                className="bg-brand text-brand-fg font-semibold text-sm rounded-lg px-4 py-2 hover:brightness-110 disabled:opacity-50"
-              >
-                {saving ? t("Creando…") : t("Agregar columna")}
-              </button>
+              {isAi ? (
+                <>
+                  <button
+                    onClick={() => create()}
+                    disabled={!canCreate || saving || !alcance}
+                    className="text-sm px-3 py-2 rounded-lg border border-border hover:bg-surface-3 disabled:opacity-50"
+                    title={t("Un turno por fila: cuesta")}
+                  >
+                    {t("Todas")} ({alcance.toLocaleString("es-MX")})
+                  </button>
+                  <button
+                    onClick={() => create(TRY_ROWS)}
+                    disabled={!canCreate || saving || !alcance}
+                    className="bg-brand text-brand-fg font-semibold text-sm rounded-lg px-4 py-2 hover:brightness-110 disabled:opacity-50"
+                  >
+                    {saving ? t("Creando…") : `${t("Probar en")} ${Math.min(TRY_ROWS, alcance)}`}
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={() => create()}
+                  disabled={!canCreate || saving}
+                  className="bg-brand text-brand-fg font-semibold text-sm rounded-lg px-4 py-2 hover:brightness-110 disabled:opacity-50"
+                >
+                  {saving ? t("Creando…") : t("Agregar columna")}
+                </button>
+              )}
             </footer>
           </motion.div>
         </motion.div>

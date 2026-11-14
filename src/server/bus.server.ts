@@ -78,6 +78,19 @@ export type RtEvent =
   | { t: "prospeccion:send"; listId: number; subject: string }
   // Volver a correr una columna que ya existe (mismo camino que el botón «correr» del chip).
   | { t: "prospeccion:run"; listId: number; key: string; limit: number | null }
+  // Avance de una columna de agente, fila por fila. Sin esto el chip decía «vacía» hasta
+  // que terminaba la última fila (o hasta recargar): 30 minutos a ciegas con 100 turnos.
+  | {
+      t: "prospeccion:progress";
+      listId: number;
+      key: string;
+      done: number;
+      total: number;
+      filled: number;
+      failed: number;
+      /** La celda que acaba de cerrar. `empty` = corrió y no lo encontró; `failed` = el turno reventó. */
+      cell?: { rowId: number; key: string; v: string | null; status: "done" | "empty" | "failed" };
+    }
   // El agente escribió o cambió el mensaje base: el panel lo enseña renderizado.
   | { t: "prospeccion:base"; text: string }
   // La pantalla la crea y la corre: el turno del agente no vive los minutos que tarda.

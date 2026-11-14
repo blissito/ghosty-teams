@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { DataGrid, type CellMouseArgs, type Column, type RenderCellProps, type RenderEditCellProps, type RowsChangeData } from "react-data-grid";
 import { motion, useReducedMotion } from "motion/react";
 import { Ban, Check, Loader2, MapPin, X } from "lucide-react";
@@ -46,7 +46,12 @@ export function aplanar(
   return rows.map((r) => {
     const o: GridRow = { id: r.id, __status: r.status, __busy: busy[r.id] ?? new Set() };
     for (const k of BASE_KEYS) o[k] = (r as unknown as Record<string, unknown>)[k] ?? "";
-    for (const [k, cell] of Object.entries(r.data ?? {})) o[k] = cell?.v ?? "";
+    for (const [k, cell] of Object.entries(r.data ?? {})) {
+      o[k] = cell?.v ?? "";
+      // Vacía NO es una sola cosa: «nunca corrió», «corrió y no lo encontró» y «el turno
+      // falló» piden cosas distintas (correrla, buscar en otra fuente, reintentar).
+      if (cell && !cell.v) o[`__st:${k}`] = cell.err ? `failed:${cell.err}` : cell.src && cell.src !== "manual" ? "empty" : "";
+    }
     if (latLon) {
       const la = String(o[latLon.lat] ?? "").trim();
       const lo = String(o[latLon.lon] ?? "").trim();
@@ -105,7 +110,14 @@ function CellView({ row, column }: RenderCellProps<GridRow>) {
     );
   }
 
-  if (!text) return <span className="text-faint">·</span>;
+  if (!text) {
+    const st = String(row[`__st:${key}`] ?? "");
+    if (st.startsWith("failed")) {
+      return <span className="text-red-500 text-xs" title={st.slice(7) || "falló"}>{"✕ falló"}</span>;
+    }
+    if (st === "empty") return <span className="text-faint text-xs italic">{"no lo encontró"}</span>;
+    return <span className="text-faint">·</span>;
+  }
 
   // Hallazgos de la investigación (JSON): ángulo en negritas y los hechos detrás. Es la
   // celda que la persona revisa antes de escribir; un JSON crudo no se revisa.
@@ -200,6 +212,7 @@ export function ProspGrid({
   onCellChange,
   onPasteBlock,
   onColumnHeaderClick,
+  focusKey,
 }: {
   rows: GridRow[];
   base: Base[];
@@ -217,6 +230,8 @@ export function ProspGrid({
   /** Pegado multi-celda: (filaInicial, colInicial, matriz). */
   onPasteBlock: (rowIdx: number, colKey: string, matrix: string[][]) => void;
   onColumnHeaderClick?: (key: string) => void;
+  /** Columna recién creada: la rejilla se desplaza hasta ella y la marca un momento. */
+  focusKey?: string | null;
 }) {
   const t = useT();
   const [sel, setSel] = useState<{ rowIdx: number; colKey: string } | null>(null);
@@ -315,7 +330,7 @@ export function ProspGrid({
         renderHeaderCell: () => (
           <button
             onClick={() => onColumnHeaderClick?.(c.key)}
-            className="w-full text-left truncate hover:text-brand"
+            className={`w-full text-left truncate hover:text-brand ${focusKey === c.key ? "text-brand font-semibold" : ""}`}
             title={c.kind === "ai" ? t("Columna del agente") : c.kind === "enrich" ? t("Columna de enriquecimiento") : undefined}
           >
             {c.label}
@@ -348,7 +363,21 @@ export function ProspGrid({
       });
     }
     return built;
-  }, [base, columns, latLon, colOrder, colWidths, onColumnHeaderClick, narrow, t]);
+  }, [base, columns, latLon, colOrder, colWidths, onColumnHeaderClick, narrow, t, focusKey]);
+
+  // La columna nueva nacía a la derecha, fuera de la pantalla: se agregaba y «no pasaba
+  // nada». Se desplaza hasta ella sumando los anchos de las no congeladas que la preceden.
+  useEffect(() => {
+    if (!focusKey) return;
+    const grid = wrapRef.current?.querySelector("[role='grid']") as HTMLElement | null;
+    if (!grid) return;
+    let left = 0;
+    for (const c of cols) {
+      if (c.key === focusKey) break;
+      if (!c.frozen) left += typeof c.width === "number" ? c.width : 170;
+    }
+    grid.scrollTo({ left: Math.max(0, left - 200), behavior: "smooth" });
+  }, [focusKey, cols]);
 
   /**
    * Pegado from Excel.

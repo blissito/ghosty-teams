@@ -2862,7 +2862,10 @@ function esFalloDeTransporte(e: unknown): boolean {
   const m = String((e as Error)?.message ?? e);
   return (
     /\bterminated\b|fetch failed|ECONNRESET|ECONNREFUSED|socket hang up|other side closed|UND_ERR/i.test(m) ||
-    /^fleet-stream 50[234]\b/.test(m)
+    /^fleet-stream 50[234]\b/.test(m) ||
+    // La microVM del agente estaba despertando para otro turno (prospección corre 3 filas
+    // en paralelo): «resume 500 … microvm is already running». Esperar y repetir basta.
+    /ResumeFailed|microvm is already running/i.test(m)
   );
 }
 
