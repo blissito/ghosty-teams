@@ -26,12 +26,25 @@ describe("fleetSuffixFor", () => {
   it("rol de la fábrica en un hilo sin pedido: una por hilo", async () => {
     expect(await fleetSuffixFor("plan", ch, 4140)).toBe("factory-thread-4140");
   });
-  it("cualquier otro agente sigue en la del room", async () => {
-    expect(await fleetSuffixFor("ghosty", ch, 4140)).toBe("mailmask-flow");
+  it("cualquier otro agente: una conversación por hilo, keyada por su raíz", async () => {
+    expect(await fleetSuffixFor("ghosty", ch, 4140)).toBe("mailmask-t4140");
+    expect(await fleetSuffixFor("ghosty", ch, 4141)).toBe("mailmask-t4141");
+  });
+  it("sin raíz de hilo queda la del room", async () => {
+    expect(await fleetSuffixFor("ghosty", ch, null)).toBe("mailmask-flow");
   });
   it("sin la fábrica instalada, @plan es un agente más", async () => {
     installed = false;
-    expect(await fleetSuffixFor("plan", ch, 4140)).toBe("mailmask-flow");
+    expect(await fleetSuffixFor("plan", ch, 4140)).toBe("mailmask-t4140");
+  });
+  it("TEAMS_SESSION_PER_THREAD=0 regresa a una por room", async () => {
+    process.env.TEAMS_SESSION_PER_THREAD = "0";
+    try {
+      expect(await fleetSuffixFor("ghosty", ch, 4140)).toBe("mailmask-flow");
+      expect(await fleetSuffixFor("plan", ch, 4140)).toBe("factory-thread-4140");
+    } finally {
+      delete process.env.TEAMS_SESSION_PER_THREAD;
+    }
   });
 });
 

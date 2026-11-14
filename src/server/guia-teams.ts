@@ -20,6 +20,7 @@ export const GUIA_TEAMS_NOTE = `Guía de uso de Ghosty Teams. Léela completa cu
 
 ## Canales, hilos y llamadas
 - Rooms (canales) agrupan conversaciones; los hilos cuelgan de un mensaje; se puede citar un mensaje.
+- Cada hilo es una conversación aparte para el agente: recuerda lo de ese hilo y no lo de los otros. Para seguir un tema, contesta en su hilo; un mensaje nuevo en el room empieza de cero. Lo que deba saber en todo el room se le pide guardar («anótalo», «de ahora en adelante…»).
 - Llamadas de audio/video desde el botón "Llamada" del encabezado del room; se pueden grabar y la grabación queda en el room.
 
 ## Tareas

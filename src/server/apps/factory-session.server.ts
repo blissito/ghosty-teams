@@ -1,10 +1,19 @@
-// Clave de conversación (sufijo del groupId) de un turno en un room.
+// Clave de conversación (sufijo del groupId) de un turno en un room. ÚNICO sitio que la decide.
 //
-// Los roles de la fábrica (@plan/@build/@check) NO usan la conversación única del room
-// (`<slug>-flow`): su estado vive en la DB (pedidos, notas, sprints) y les llega como foto en
-// cada turno. Una sesión por room creció a ~200k tokens y compactaba un minuto para contestar
-// una línea (MailMask, 4-oct). Ahora: la del pedido del hilo (`factory-<runId>`, la misma que
-// usan los relevos) o una por hilo. El resto de los agentes sigue igual.
+// Regla (14-nov-2026): **una conversación por HILO**, keyada por la raíz del intercambio (como
+// Slack con `thread_ts ?? ts`). Antes era una por room y todos los hilos compartían memoria: el
+// agente contestaba en un hilo cosas de otro (Brendi) y la sesión del room llegó a 255 MB.
+// La sesión por hilo ya existió y se quitó el 3-ago porque un archivo soltado en el room no
+// llegaba al hilo; hoy la respuesta nace SIEMPRE en el hilo del mensaje que la pidió y el turno
+// re-entrega los adjuntos y el texto de la raíz, así que el hilo se basta solo. Lo que debe
+// valer en todo el room vive en las notas del agente (`gt_agent_notes`, por room).
+//
+// Los roles de la fábrica (@plan/@build/@check) van por pedido (`factory-<runId>`, la misma de
+// los relevos) o por hilo: su estado vive en la DB y les llega como foto en cada turno.
+//
+// Sin raíz (caminos que no tienen hilo) queda la del room, `<slug>-flow`. Ese literal no se
+// toca: el runtime keya por `(fleetAgentId, groupId)` y cambiarlo dejaría esas sesiones sin dueño.
+// `TEAMS_SESSION_PER_THREAD=0` regresa a una por room sin desplegar código.
 import { FACTORY_HANDLES } from "./factory-roles";
 
 export async function fleetSuffixFor(
@@ -21,7 +30,13 @@ export async function fleetSuffixFor(
       return run ? `factory-${run.id}` : `factory-thread-${rootId}`;
     }
   }
+  if (rootId && sessionPerThread()) return `${channel.slug}-t${rootId}`;
   return `${channel.slug}-${fleetThread}`;
+}
+
+/** ¿La conversación de un agente normal es por hilo? (default sí). */
+export function sessionPerThread(): boolean {
+  return process.env.TEAMS_SESSION_PER_THREAD !== "0";
 }
 
 /**

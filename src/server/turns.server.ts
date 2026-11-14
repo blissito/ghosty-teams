@@ -599,6 +599,16 @@ export function turnOwnedByOther(ns: string, messageId: number, bySub?: string |
 }
 
 /**
+ * ¿Ya corrió algún turno con esta clave de conversación? Sirve para saber si la sesión del
+ * agente está en blanco (sesión por hilo: un hilo viejo estrena clave) y hay que sembrarla.
+ */
+export async function sessionHasTurns(groupId: string): Promise<boolean> {
+  const { dbq } = await import("../dbq.server");
+  const [f] = await dbq(`SELECT 1 AS x FROM gt_turns WHERE group_id = ? LIMIT 1`, [groupId]);
+  return !!f;
+}
+
+/**
  * ¿Tengo YO un turno corriendo en este flow? Es la condición del STEER: mi mensaje nuevo
  * se mete al turno vivo (el worker lo empuja a la misma sesión del SDK) en vez de matarlo.
  * El de otra persona no cuenta: el canal es compartido, ese trabajo no es mío.

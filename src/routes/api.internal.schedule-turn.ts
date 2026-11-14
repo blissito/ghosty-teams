@@ -105,8 +105,8 @@ export const Route = createFileRoute("/api/internal/schedule-turn")({
           ref: mintWakeRef({
             sub,
             ns,
-            // La misma memoria de room que una mención (`agent-handoff`): el agente recuerda el hilo.
-            groupId: await agentGroupId(agent, `${ch.slug}-flow`),
+            // La misma conversación que una mención en ese hilo: el agente recuerda de qué iba.
+            groupId: await agentGroupId(agent, await (await import("../server/apps/factory-session.server")).fleetSuffixFor(agent.handle, { id: ch.id, slug: ch.slug }, parentId)),
             dest: { channelId: ch.id, ...(parentId ? { parentId } : {}), topic, handle: agent.handle, name: agent.name, avatar: agent.avatar },
           }),
           cause: String(body.by ?? "programado").slice(0, 60),

@@ -638,7 +638,7 @@ async function migrate(): Promise<void> {
   // equivocada, que en un flujo legal acaba saliendo dentro de un escrito.
   //
   // `scope_key` = 'ch:<channelId>' | 'dm:<dmId>'. Por ROOM, NO por hilo: la sesión del agente
-  // sí es por hilo (`slug-flow` vs `slug-<parentId>`, ver agentGroupId), así que una memoria
+  // sí es por hilo (`slug-t<raíz>`, ver `fleetSuffixFor`), así que una memoria
   // por hilo se perdería al abrir el siguiente — justo lo contrario de lo que se pidió. Ojo:
   // esa granularidad NO coincide con la del groupId, y es deliberado.
   //

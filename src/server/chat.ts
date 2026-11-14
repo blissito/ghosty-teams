@@ -22,18 +22,13 @@ export async function sessionUser(): Promise<SessionMe | null> {
 
 
 /**
- * Clave de conversación de la FLOTA para un canal. **Una por room, siempre.**
+ * Sufijo de la conversación de un room SIN hilo. Desde el 14-nov-2026 la memoria del agente es
+ * una por HILO; quién decide la clave es `fleetSuffixFor` (apps/factory-session.server.ts), y
+ * este literal sólo queda para los caminos sin raíz de hilo y para el interruptor
+ * `TEAMS_SESSION_PER_THREAD=0`.
  *
- * El room es UNA conversación y los hilos son presentación: el agente responde dentro de
- * un hilo (ver `postMessage`), pero su memoria no se parte por hilo.
- *
- * ⚠️ Vive aquí, en un solo sitio, porque estaba repetida en cuatro —tres ramas de
- * `postMessage` y el fallback de `askAgent`— y ésa es exactamente la forma en que dos
- * caminos empiezan a discrepar. Mismo criterio que `agentGroupId` en agents.server.ts.
- *
- * ⚠️ El valor literal NO se toca: cambiarlo le borra la memoria a todas las conversaciones
- * vivas, porque el runtime keya por `(fleetAgentId, groupId)` y no hay migración posible
- * desde esta app — el estado está del otro lado.
+ * ⚠️ El valor literal NO se toca: el runtime keya por `(fleetAgentId, groupId)` y cambiarlo
+ * dejaría sin dueño las sesiones por room que ya existen.
  */
 const FLEET_THREAD = "flow";
 
@@ -1036,29 +1031,23 @@ export const postMessageAs = createServerOnlyFn(async (me: SessionMe | null, dat
   // bug de hoy:
   //
   //   · `parent`      = DÓNDE SE PINTA. Ahora `data.parentId ?? id` → nace en hilo.
-  //   · `fleetThread` = CLAVE DE MEMORIA de la flota. Ahora **siempre "flow"**.
+  //   · la CLAVE DE MEMORIA de la flota: la decide `fleetSuffixFor` con ese mismo `parent`.
   //
-  // Antes `fleetThread` valía `String(parentId)` dentro de un hilo, así que seguir la
-  // conversación en el hilo abría una sesión NUEVA del agente: workspace distinto, sin
-  // los adjuntos y sin memoria del turno anterior. Comprobado en vivo el 2026-08-03 —
-  // le pasaron 5 .docx en el room, contestó bien, y en el hilo respondió que no
-  // encontraba los datos. No los perdió: nunca los tuvo.
+  // Historia, porque ya se fue y volvió:
+  //   · Antes del 3-ago la clave era `String(parentId)` SÓLO dentro de un hilo, y la respuesta
+  //     nacía en el room: seguir la conversación en el hilo abría una sesión nueva, sin los
+  //     adjuntos ni el turno anterior (5 .docx en el room; en el hilo «no encuentro los datos»).
+  //   · 3-ago → 14-nov: una sola sesión por room. Arregló aquello, pero dos hilos del mismo
+  //     room compartían memoria: el agente contestaba en un hilo cosas de otro (Brendi) y la
+  //     sesión de su room llegó a 255 MB con 19 compactaciones.
+  //   · 14-nov: una sesión por hilo, keyada por la RAÍZ del intercambio (`parent`), igual que
+  //     Slack (`thread_ts ?? ts`), OpenClaw (`:thread:<ts>`) y Claude en Slack. No repite el
+  //     bug del 3-ago porque el primer turno y los siguientes usan la misma raíz, y porque la
+  //     sesión nueva arranca sembrada con lo reciente del room y sus archivos (ver el catch-up
+  //     de `askAgent`).
   //
-  // El room es UNA conversación y los hilos son presentación. Por eso la clave no
-  // depende del hilo: así no hay dos claves que puedan divergir, no se paga un agente
-  // por mensaje ni arranque en frío por turno (que es lo que "flow" vino a evitar), y
-  // los rooms existentes conservan su memoria sin migración.
-  //
-  // Contrapartida asumida: dos hilos del mismo room comparten memoria.
-  //
-  // Referencia: Slack keya por `thread_ts ?? ts` (la raíz del intercambio) y sus bots
-  // responden siempre en hilo; Zulip mete todo mensaje en un topic y el problema no
-  // puede ocurrir. Nosotros teníamos flujo-continuo + hilos-aislados sin regla que los
-  // uniera, que es la peor de las tres.
-  //
-  // "Nacer en hilo" ya existió y se quitó en b3f9530 por UX ("el agente conversa en el
-  // room"). Aquel commit movió `parentFor` y dejó `fleetThread` quieto; éste mueve las
-  // dos, que es lo que permite la UX sin pagar la sesión por mensaje.
+  // Contrapartida asumida: un mensaje nuevo en el room abre conversación nueva; para seguir
+  // la anterior se contesta en su hilo. Lo que vale para todo el room va a las notas del agente.
   const respondents: { handle: string; parent: number | null; fleetThread: string; shellId: number; steered?: boolean }[] = [];
   let threadAgent: string | null = null;
   if (mentionedList.length) {
@@ -1221,10 +1210,8 @@ export const askAgentAs = createServerOnlyFn(async (me: SessionMe | null, data: 
   // Continuidad de contexto en hilos: sembramos el mensaje RAÍZ en el PRIMER turno de
   // agente del hilo, para que referencias como "esa db" tengan referente.
   //
-  // ⚠️ Ya NO es la red que era. Se escribió porque un hilo abría groupId nuevo y el
-  // worker arrancaba con memoria VACÍA; desde que la clave es una por room (FLEET_THREAD)
-  // eso no pasa. Se conserva porque sigue sirviendo cuando el hilo cuelga de un mensaje
-  // viejo que quedó fuera del contexto del worker.
+  // Con la sesión por hilo (14-nov) vuelve a ser necesaria: un hilo abre groupId nuevo y el
+  // worker arranca con memoria vacía.
   //
   // ⚠️ Y el guard del root PROPIO es nuevo y necesario: con el modelo Zulip el agente
   // nace colgado del mensaje que lo invocó, así que en su primer turno el root ES este
@@ -1274,11 +1261,10 @@ export const askAgentAs = createServerOnlyFn(async (me: SessionMe | null, data: 
   // propio. Se llena dentro del bloque y se consume en la sección de media.
   let huecoAtts: { fileId: string; mime: string | null; size: number | null; name: string | null }[] = [];
   {
-    // ⚠️ Scope del ROOM, no del hilo. Con el modelo Zulip toda respuesta del agente vive
-    // en un hilo, así que acotar el gap a `parentId` lo calcularía sobre un hilo casi
-    // vacío y el agente perdería lo que se dijo en el room entre menciones — que es
-    // justo lo que este bloque existe para recuperar. La memoria es una por room
-    // (FLEET_THREAD), así que el gap tiene que mirar lo mismo.
+    // Se trae el ROOM y el hilo. Qué parte se usa depende de la sesión (más abajo):
+    //   · sesión NUEVA (primer turno del hilo): todo lo reciente, room incluido. Es la
+    //     siembra: lo que se dijo y los archivos que se soltaron en el room antes de la mención.
+    //   · sesión con turnos: sólo lo nuevo de ESE hilo. Lo de otros hilos no entra.
     const scope = { channelId: channel.id };
     // Se traen 40 y NO 8: el render sigue acotado por presupuesto, pero traer de más es
     // lo que hace el hueco OBSERVABLE. Sin esto no hay forma de saber si detrás quedaron
@@ -1287,11 +1273,13 @@ export const askAgentAs = createServerOnlyFn(async (me: SessionMe | null, data: 
     // En un HILO, además del room, lo dicho en ESE hilo: su raíz y sus respuestas. Sin esto
     // la respuesta de otro agente justo arriba (p. ej. @check pidiendo cambios) nunca le
     // llegaba al agente que mencionas después — el room sólo trae mensajes de primer nivel.
+    const threadIds = new Set<number>();
     const recentRaw = data.parentId != null
       ? await (async () => {
           const hilo = await db.recentContext({ channelId: channel.id, parentId: data.parentId }, CATCHUP_FETCH).catch(() => []);
           const raiz = await db.getMessage(data.parentId!).catch(() => null);
           const todos = new Map<number, (typeof roomRecent)[number]>();
+          for (const m of [...(raiz ? [raiz] : []), ...hilo]) threadIds.add(m.id);
           for (const m of [...roomRecent, ...(raiz ? [raiz] : []), ...hilo]) todos.set(m.id, m);
           return [...todos.values()].sort((a, b) => (a.created_at === b.created_at ? a.id - b.id : a.created_at - b.created_at)).slice(-CATCHUP_FETCH);
         })()
@@ -1309,22 +1297,32 @@ export const askAgentAs = createServerOnlyFn(async (me: SessionMe | null, data: 
     //
     // El dato lo aprende el propio turno (`AcpResult.retains`); no se deduce de
     // `loadSession`, porque un agente puede no saber retomar y aun así conservar su sesión.
-    // La MISMA clave con la que el turno guardará su sesión más abajo: la conversación es
-    // por room, no por hilo (ver el comentario de `fleetThread`).
+    // La MISMA clave con la que el turno guardará su sesión más abajo (`fleetSuffixFor`).
     const { fleetSuffixFor } = await import("./apps/factory-session.server");
-    const gidCatchup = await agentGroupId(agent ?? { handle: data.handle }, await fleetSuffixFor(data.handle, channel, data.parentId, data.fleetThread ?? FLEET_THREAD));
+    const rootId = data.parentId ?? data.invokerMessageId ?? null;
+    const suffix = await fleetSuffixFor(data.handle, channel, rootId, data.fleetThread ?? FLEET_THREAD);
+    const gidCatchup = await agentGroupId(agent ?? { handle: data.handle }, suffix);
     const retiene =
       agent?.backend.kind !== "acp" ||
       (await db.acpRetains(agent.handle, gidCatchup).catch(() => true));
-    const gap = retiene ? gapDesdeUltimaRespuesta(recent, esRecordatorio, data.handle) : recent;
+    // Sesión por hilo: ¿ya corrió algún turno con esta clave? Si no, la sesión está en blanco
+    // aunque el hilo tenga respuestas viejas del agente (las dio la sesión del room, antes del
+    // 14-nov) y hay que sembrarla con todo lo reciente. Ante la duda, sembrar.
+    const perThread = rootId != null && suffix === `${channel.slug}-t${rootId}`;
+    const freshSession = perThread && !(await (await import("./turns.server")).sessionHasTurns(gidCatchup).catch(() => false));
+    const gap = retiene && !freshSession ? gapDesdeUltimaRespuesta(recent, esRecordatorio, data.handle) : recent;
+    // Con sesión propia y ya con turnos, el TEXTO es sólo el de este hilo: las raíces de los
+    // otros hilos del room no entran (era parte de «contesta cosas de otro hilo»). Los
+    // archivos sí se buscan en todo el hueco: `adjuntosDelHueco` sólo toma los de quien pide.
+    const textGap = perThread && !freshSession ? gap.filter((m) => threadIds.has(m.id)) : gap;
     // El COUNT sólo se paga si el fetch volvió lleno: si volvió corto ya tenemos la
     // conversación entera y el total es el largo del gap, sin query.
-    let totalGap = gap.length;
-    if (recent.length >= CATCHUP_FETCH) {
+    let totalGap = textGap.length;
+    if (textGap === gap && recent.length >= CATCHUP_FETCH) {
       const afterId = recent[recent.length - gap.length - 1]?.id ?? null;
       totalGap = await db.countAfter(scope, afterId).catch(() => gap.length);
     }
-    const history = historyContext(gap, data.body, { totalGap, sender: data.sender });
+    const history = historyContext(textGap, data.body, { totalGap, sender: data.sender });
     if (history) text = history + text;
     // Los ARCHIVOS del hueco, no sólo su texto — ver `adjuntosDelHueco`. Se cargan aquí
     // porque es el único punto con el gap ya resuelto; se usan más abajo, y sólo si el
@@ -1392,7 +1390,7 @@ export const askAgentAs = createServerOnlyFn(async (me: SessionMe | null, data: 
   const fleetThread = data.fleetThread ?? FLEET_THREAD;
   // Los roles de la fábrica van por pedido o por hilo (factory-session.server.ts).
   const { fleetSuffixFor } = await import("./apps/factory-session.server");
-  const groupId = await agentGroupId(agent ?? { handle: data.handle }, await fleetSuffixFor(data.handle, channel, data.parentId, fleetThread));
+  const groupId = await agentGroupId(agent ?? { handle: data.handle }, await fleetSuffixFor(data.handle, channel, data.parentId ?? data.invokerMessageId, fleetThread));
   // Identidad conversacional durable: el documentId (local) del artefacto ACTUAL de este
   // hilo + su contenido fuente (doc=markdown | sheet=csv). El contenido se re-inyecta al
   // turno → al modificar, el agente re-emite el artefacto COMPLETO (misma vía de streaming
