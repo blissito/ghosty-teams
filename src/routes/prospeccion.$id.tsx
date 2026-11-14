@@ -135,6 +135,18 @@ function ListPage() {
   );
 
   useEffect(() => { reload(); }, [reload]);
+
+  // Al abrir una lista con vistas guardadas se aplica la última (una vez): quien guardó «Agencias
+  // digitales (24)» espera volver a ella, no a las 150 filas con un botón de «Enviar a 94».
+  // «Quitar todo» la quita y ya no vuelve sola en esta visita.
+  const viewApplied = useRef<number | null>(null);
+  useEffect(() => {
+    if (!data || viewApplied.current === listId) return;
+    viewApplied.current = listId;
+    const views = (data.list.views ?? []) as { name: string; f: string }[];
+    const last = views[views.length - 1];
+    if (f === undefined && last?.f) navigate({ search: (prev) => ({ ...prev, f: last.f }), replace: true });
+  }, [data, listId, f, navigate]);
   // ⚠️ Con la lista: quien la creó manda sobre ella, y sin el `listId` el servidor no
   // puede saberlo — le negaría el permiso a su propio dueño.
   useEffect(() => { misPermisosFn({ data: { listId } }).then(setPermisos).catch(() => {}); }, [listId]);
@@ -684,6 +696,7 @@ function ListPage() {
         // la revisión decía 18 (6 sin correo): el número del botón tiene que ser el que pasa.
         shown={view.filter((r) => !!r.email && (r.status ?? "new") === "new").length}
         canSend={permisos?.mandar !== false}
+        unfiltered={!filter.length && (data.list.views?.length ?? 0) > 0}
         hasMessageColumn={hasMessageColumn}
         sent={list.sent}
         refreshKey={`${sendOpen}-${agentOpen}-${messageOpen}-${turns}-${saves}-${mensajes.length}`}

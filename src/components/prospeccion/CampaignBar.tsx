@@ -23,6 +23,7 @@ export function CampaignBar({
   hasMessageColumn,
   sent,
   canSend = true,
+  unfiltered = false,
   refreshKey,
   onWriteMessage,
   onReview,
@@ -36,6 +37,9 @@ export function CampaignBar({
   sent: number;
   /** Puede mandar en esta lista (permisos). Si no, el botón de enviar no se ofrece. */
   canSend?: boolean;
+  /** La lista tiene vistas guardadas y no hay ninguna aplicada: el envío iría a TODAS las filas.
+   *  El 14-nov el botón decía «Enviar a 94» cuando la campaña era para la vista de 18. */
+  unfiltered?: boolean;
   /** Cambia cuando algo de fuera (el agente, una prueba) pudo mover el estado. */
   refreshKey?: unknown;
   onWriteMessage: () => void;
@@ -69,9 +73,9 @@ export function CampaignBar({
         : step.id === "test"
           ? { label: t("Mándate una prueba"), icon: TestTube2, run: onReview }
           : step.id === "send"
-            ? { label: `${t("Enviar a")} ${step.n.toLocaleString("es-MX")}`, icon: Send, run: canSend ? onReview : null }
+            ? { label: `${t("Enviar a")} ${step.n.toLocaleString("es-MX")}${unfiltered ? ` · ${t("sin filtro")}` : ""}`, icon: Send, run: canSend ? onReview : null }
             : step.id === "done"
-              ? { label: t("Ya salió a todos los de la vista · las respuestas llegan a tu WhatsApp"), icon: CheckCircle2, run: null }
+              ? { label: c.replyTo ? `${t("Ya salió a todos los de la vista · las respuestas llegan a tu WhatsApp y por correo a")} ${c.replyTo}` : t("Ya salió a todos los de la vista · las respuestas llegan a tu WhatsApp"), icon: CheckCircle2, run: null }
               : { label: t("Nadie con correo en la vista"), icon: ArrowRight, run: null };
 
   return (
@@ -108,8 +112,11 @@ export function CampaignBar({
         ) : cta.run ? (
           <button
             onClick={cta.run}
+            title={step.id === "send" && unfiltered ? t("No hay vista aplicada: saldría a todas las filas con correo. Aplica una vista guardada si la campaña es para un grupo.") : undefined}
             className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
-              step.id === "send" ? "bg-brand text-brand-fg hover:brightness-110" : "border border-brand text-brand hover:bg-brand/10"
+              step.id === "send" && unfiltered
+                ? "border border-amber-500 text-amber-500 hover:bg-amber-500/10"
+                : step.id === "send" ? "bg-brand text-brand-fg hover:brightness-110" : "border border-brand text-brand hover:bg-brand/10"
             }`}
           >
             <cta.icon size={13} />
