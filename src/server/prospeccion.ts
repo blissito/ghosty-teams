@@ -453,7 +453,7 @@ export const runColumnFn = createServerFn({ method: "POST" })
  * pensar una columna de 500 filas.
  */
 export const runAiColumnFn = createServerFn({ method: "POST" })
-  .validator((d: { listId: number; key: string; agentHandle?: string; f?: string; limit?: number; onlyEmpty?: boolean; onlyFailed?: boolean; onlyUntried?: boolean }) => d)
+  .validator((d: { listId: number; key: string; agentHandle?: string; f?: string; limit?: number; onlyEmpty?: boolean; onlyFailed?: boolean; onlyUntried?: boolean; onlyPending?: boolean }) => d)
   .handler(async ({ data }) => {
     const me = await sessionUser();
     if (!me) return { ok: false as const, error: "sin sesión", done: 0, total: 0, filled: 0 };
@@ -519,6 +519,7 @@ export const runAiColumnFn = createServerFn({ method: "POST" })
       onlyEmpty: data.onlyEmpty,
       onlyFailed: data.onlyFailed,
       onlyUntried: data.onlyUntried,
+      onlyPending: data.onlyPending,
       onProgress: (p) =>
         publish(ch.user(ns, me.sub), { t: "prospeccion:progress", listId: Number(data.listId), key: col.key, ...p }),
     });

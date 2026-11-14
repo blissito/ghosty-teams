@@ -154,7 +154,7 @@ export function NewColumnModal({
             <header className="shrink-0 flex items-start justify-between px-5 py-4 border-b border-border">
               <div>
                 <h2 className="font-bold text-[15px]">{t("Qué quieres saber de cada negocio")}</h2>
-                <p className="text-xs text-muted mt-0.5">{t("Se llena sobre todas las filas de la lista.")}</p>
+                <p className="text-xs text-muted mt-0.5">{t("Corre sobre las filas a la vista. Las de agente se prueban primero en 5.")}</p>
               </div>
               <button onClick={onClose} className="p-1.5 rounded-lg text-muted hover:bg-surface-3">
                 <X size={16} />

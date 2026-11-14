@@ -8,6 +8,8 @@ export type RunScope = {
   onlyFailed?: boolean;
   /** Sólo las que esta columna nunca corrió: «Seguir con el resto» tras «Probar en 5». */
   onlyUntried?: boolean;
+  /** Lo que falta: nunca corrió O falló. Es la ÚNICA acción del chip («Completar»). */
+  onlyPending?: boolean;
   /** Sólo las que no tienen valor (incluye «no lo encontró»: sí se vuelve a pagar). */
   onlyEmpty?: boolean;
   /** Las primeras N de lo que quede. */
@@ -17,7 +19,9 @@ export type RunScope = {
 type RowLike = { data: Record<string, { v: string | null; err?: string } | undefined> };
 
 export function pickRows<R extends RowLike>(rows: R[], key: string, s: RunScope): R[] {
-  const out = s.onlyFailed
+  const out = s.onlyPending
+    ? rows.filter((r) => !r.data[key] || !!r.data[key]?.err)
+    : s.onlyFailed
     ? rows.filter((r) => !!r.data[key]?.err)
     : s.onlyUntried
       ? rows.filter((r) => !r.data[key])

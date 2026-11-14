@@ -21,7 +21,7 @@ import { planImport, type Plan, type Target as ImportTarget } from "../lib/prosp
 import "react-data-grid/lib/styles.css";
 
 /** Alcance de una corrida: sólo las que nunca corrieron, sólo las que fallaron, y un filtro extra. */
-type RunOpts = { only?: "untried" | "failed"; extra?: Condition[] };
+type RunOpts = { only?: "pending"; extra?: Condition[] };
 
 /**
  * ¿Esta columna lleva el nombre de una base?
@@ -383,13 +383,13 @@ function ListPage() {
       const candidatas = opts?.extra?.length
         ? view.filter((r) => matches(r as unknown as Record<string, unknown>, opts.extra!, keys))
         : view;
-      const vanACorrer = pickRows(candidatas, key, { onlyFailed: opts?.only === "failed", onlyUntried: opts?.only === "untried", onlyEmpty, limit });
+      const vanACorrer = pickRows(candidatas, key, { onlyPending: opts?.only === "pending", onlyEmpty, limit });
       setBusy(Object.fromEntries(vanACorrer.map((r) => [r.id, new Set([key])])));
       try {
         // ⚠️ Va el MISMO filtro que está en la URL. Lo que se ve es lo que se enriquece.
         const r = tipo === "ai"
           ? await runAiColumnFn({
-              data: { listId, key, f: fx, limit, onlyEmpty, onlyFailed: opts?.only === "failed", onlyUntried: opts?.only === "untried" },
+              data: { listId, key, f: fx, limit, onlyEmpty, onlyPending: opts?.only === "pending" },
             })
           : await runColumnFn({ data: { listId, key, f: fx, limit } });
         if (r.ok) {
@@ -398,8 +398,8 @@ function ListPage() {
           // columna Correo» se lee como qué hacer a continuación.
           const nota = "note" in r && r.note ? ` · ${r.note}` : "";
           // Tras una prueba: cuánto falta, para decidir si vale la pena seguir.
-          const resto = tipo === "ai" && limit ? pickRows(candidatas, key, { onlyUntried: true }).length - r.total : 0;
-          const sigue = resto > 0 ? ` · ${t("faltan")} ${resto.toLocaleString("es-MX")}: ${t("menú de la columna → Seguir")}` : "";
+          const resto = tipo === "ai" && limit ? pickRows(candidatas, key, { onlyPending: true }).length - r.total : 0;
+          const sigue = resto > 0 ? ` · ${t("faltan")} ${resto.toLocaleString("es-MX")}: ${t("menú de la columna → Completar")}` : "";
           setNotice(`${r.filled} de ${r.total} llenadas${nota}${sigue}`);
           // Se acaba de escribir un mensaje: el panel del agente lo enseña como correo.
           const col = data?.columns.find((c) => c.key === key);
@@ -676,11 +676,14 @@ function ListPage() {
               onPromote={() => promote_(c.key, baseGemela(c.label, data.base))}
               running={running === c.key}
               progress={progress[c.key] ?? null}
-              untried={c.kind === "ai" ? view.filter((r) => !r.data[c.key]).length : 0}
+              pending={c.kind === "ai" ? pickRows(view, c.key, { onlyPending: true }).length : 0}
               failedCount={view.filter((r) => !!r.data[c.key]?.err).length}
-              onContinue={() => runColumn_(c.key, c.kind, undefined, undefined, { only: "untried" })}
-              onRetryFailed={() => runColumn_(c.key, c.kind, undefined, undefined, { only: "failed" })}
-              onRun={() => runColumn_(c.key, c.kind)}
+              onRun={() =>
+                // Una sola acción: si falta algo, completa lo que falta; si no, la reescribe.
+                c.kind === "ai" && pickRows(view, c.key, { onlyPending: true }).length
+                  ? runColumn_(c.key, c.kind, undefined, undefined, { only: "pending" })
+                  : runColumn_(c.key, c.kind)
+              }
               onUseAsEmail={() => promote(c.key)}
               onRemove={() => removeColumn(c.key)}
             />

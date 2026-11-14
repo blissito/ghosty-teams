@@ -327,6 +327,8 @@ export async function runAiColumn(args: {
   onlyFailed?: boolean;
   /** Sólo las filas que esta columna NUNCA corrió: «Seguir con el resto» tras probar en 5. */
   onlyUntried?: boolean;
+  /** Nunca corrió o falló: «Completar» del chip. */
+  onlyPending?: boolean;
   invokerSub: string;
   origin?: string;
   concurrency?: number;

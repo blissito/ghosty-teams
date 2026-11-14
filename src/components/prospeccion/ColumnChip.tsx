@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ArrowLeftToLine, AtSign, ChevronDown, Loader2, Play, RotateCcw, Sparkles, Trash2 } from "lucide-react";
+import { ArrowLeftToLine, AtSign, ChevronDown, Loader2, Play, Sparkles, Trash2 } from "lucide-react";
 import { useT } from "../../i18n";
 
 /**
@@ -29,10 +29,8 @@ export function ColumnChip({
   duplicada,
   running,
   progress,
-  untried = 0,
+  pending = 0,
   failedCount = 0,
-  onContinue,
-  onRetryFailed,
   onRun,
   onUseAsEmail,
   onPromote,
@@ -69,12 +67,10 @@ export function ColumnChip({
    * enseña «12/100 · 2 fallaron» en vez de la cobertura: antes decía «vacía» media hora.
    */
   progress?: { done: number; total: number; filled: number; failed: number } | null;
-  /** Filas a la vista que esta columna nunca corrió (tras «Probar en 5»). */
-  untried?: number;
-  /** Filas cuyo turno falló la última vez. */
+  /** Filas a la vista que faltan: nunca corrieron o fallaron. Cambia la acción a «Completar». */
+  pending?: number;
+  /** Filas cuyo turno falló la última vez (se pinta en rojo junto a la cobertura). */
   failedCount?: number;
-  onContinue?: () => void;
-  onRetryFailed?: () => void;
   /**
    * La columna base a la que ESTA columna debería haber ido.
    *
@@ -104,21 +100,17 @@ export function ColumnChip({
 
   const acciones = [
     kind === "enrich" && { id: "run", icon: Play, label: t("Volver a buscarlo"), hint: t("En todas las filas"), run: onRun },
-    kind === "ai" && untried > 0 && onContinue && {
-      id: "continue",
-      icon: Play,
-      label: `${t("Seguir con las")} ${untried.toLocaleString("es-MX")} ${t("que faltan")}`,
-      hint: t("Un turno por fila: cuesta. Las que ya corrieron no se repiten"),
-      run: onContinue,
+    // UNA acción de agente, no tres: completa lo que falta (nunca corrió o falló) y sólo
+    // cuando no falta nada ofrece reescribirla. «No lo encontró» no se vuelve a pagar.
+    kind === "ai" && {
+      id: "run",
+      icon: pending ? Play : Sparkles,
+      label: pending ? `${t("Completar")} ${pending.toLocaleString("es-MX")}` : t("Volver a escribirla toda"),
+      hint: pending && failedCount
+        ? `${t("Un turno por fila")} · ${failedCount} ${t("fallaron")}`
+        : t("Un turno por fila: cuesta"),
+      run: onRun,
     },
-    kind === "ai" && failedCount > 0 && onRetryFailed && {
-      id: "retry",
-      icon: RotateCcw,
-      label: `${t("Reintentar las")} ${failedCount} ${t("que fallaron")}`,
-      hint: t("Sólo las que reventaron; «no lo encontró» no se repite"),
-      run: onRetryFailed,
-    },
-    kind === "ai" && { id: "run", icon: Sparkles, label: t("Volver a escribirla toda"), hint: t("Un turno por fila: cuesta"), run: onRun },
     promoteTo && {
       id: "promote",
       icon: ArrowLeftToLine,
@@ -206,7 +198,7 @@ export function ColumnChip({
               <button
                 key={a.id}
                 onClick={() => { setOpen(false); a.run(); }}
-                disabled={running && (a.id === "run" || a.id === "continue" || a.id === "retry")}
+                disabled={running && a.id === "run"}
                 className={`w-full text-left px-3 py-2 flex items-start gap-2.5 hover:bg-surface-3 disabled:opacity-40 ${
                   a.danger ? "text-red-500" : ""
                 }`}

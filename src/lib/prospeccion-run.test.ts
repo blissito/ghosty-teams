@@ -21,6 +21,9 @@ describe("pickRows", () => {
   it("Reintentar: sólo las que fallaron", () => {
     expect(ids(pickRows(rows, "k", { onlyFailed: true }))).toEqual([3]);
   });
+  it("Completar: nunca corrió o falló (no repite «no lo encontró»)", () => {
+    expect(ids(pickRows(rows, "k", { onlyPending: true }))).toEqual([3, 4, 5]);
+  });
   it("Huecos: todo lo que no tiene valor", () => {
     expect(ids(pickRows(rows, "k", { onlyEmpty: true }))).toEqual([2, 3, 4, 5]);
   });
