@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ArrowRight, FileText, Lock, Megaphone, PenLine, Send, TestTube2 } from "lucide-react";
+import { ArrowRight, CheckCircle2, FileText, Lock, Megaphone, PenLine, Send, TestTube2 } from "lucide-react";
 import { useT } from "../../i18n";
 import { getCampaignFn } from "../../server/prospeccion";
 import { nextStep } from "../../lib/prospeccion-campaign";
@@ -22,17 +22,20 @@ export function CampaignBar({
   shown,
   hasMessageColumn,
   sent,
+  canSend = true,
   refreshKey,
   onWriteMessage,
   onReview,
 }: {
   listId: number;
-  /** Filas a la vista: a quienes saldría. */
+  /** Filas a la vista con correo y sin enviar: a quienes de verdad saldría. */
   shown: number;
   /** Hay alguna columna de mensaje escrita por el agente. */
   hasMessageColumn: boolean;
   /** Correos ya enviados de esta lista. */
   sent: number;
+  /** Puede mandar en esta lista (permisos). Si no, el botón de enviar no se ofrece. */
+  canSend?: boolean;
   /** Cambia cuando algo de fuera (el agente, una prueba) pudo mover el estado. */
   refreshKey?: unknown;
   onWriteMessage: () => void;
@@ -55,6 +58,7 @@ export function CampaignBar({
     hasMessage: c.hasBase || hasMessageColumn,
     testSent: !!c.testSentAt,
     shown,
+    sent,
   });
 
   const cta =
@@ -65,8 +69,10 @@ export function CampaignBar({
         : step.id === "test"
           ? { label: t("Mándate una prueba"), icon: TestTube2, run: onReview }
           : step.id === "send"
-            ? { label: `${t("Enviar a")} ${step.n.toLocaleString("es-MX")}`, icon: Send, run: onReview }
-            : { label: t("No hay filas a la vista"), icon: ArrowRight, run: null };
+            ? { label: `${t("Enviar a")} ${step.n.toLocaleString("es-MX")}`, icon: Send, run: canSend ? onReview : null }
+            : step.id === "done"
+              ? { label: t("Ya salió a todos los de la vista · las respuestas llegan a tu WhatsApp"), icon: CheckCircle2, run: null }
+              : { label: t("Nadie con correo en la vista"), icon: ArrowRight, run: null };
 
   return (
     <div className="shrink-0 border-b border-border px-5 py-1.5 flex items-center gap-x-4 gap-y-1 flex-wrap bg-surface-2/40">
@@ -109,7 +115,7 @@ export function CampaignBar({
             {cta.label}
           </button>
         ) : (
-          <span className="text-xs text-muted">{cta.label}</span>
+          <span className="inline-flex items-center gap-1.5 text-xs text-muted"><cta.icon size={13} />{cta.label}</span>
         )}
       </div>
     </div>

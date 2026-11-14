@@ -19,4 +19,7 @@ describe("waLink", () => {
       "https://wa.me/5217712412825?text=" + encodeURIComponent("Hola A&B"),
     );
   });
+  it("el negocio del directorio no va en MAYÚSCULAS en el texto que manda el prospecto", () => {
+    expect(waText("Vengo por Ghosty Experts (soy de {negocio}).", "DUPLIMEDIOS")).toBe("Vengo por Ghosty Experts (soy de Duplimedios).");
+  });
 });

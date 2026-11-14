@@ -44,14 +44,14 @@ function prettySite(v: string): string {
 }
 
 /** Los negocios del directorio vienen en MAYÚSCULAS: «DUPLIMEDIOS» se lee como grito. */
-function prettyName(v: string): string {
+export function prettyName(v: string): string {
   const s = v.trim();
   if (s !== s.toUpperCase() || !/[A-ZÁÉÍÓÚÑ]/.test(s)) return s;
   const keep = new Set(["SA", "CV", "SC", "S.A.", "C.V.", "IT", "TI", "MX"]);
   return s
     .toLowerCase()
     .split(/(\s+)/)
-    .map((w) => (keep.has(w.toUpperCase()) ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1)))
+    .map((w) => (keep.has(w.toUpperCase()) || w.includes("&") ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1)))
     .join("");
 }
 

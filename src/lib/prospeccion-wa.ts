@@ -1,3 +1,4 @@
+import { prettyName } from "./prospeccion-vars";
 /**
  * El enlace `wa.me` del botón del correo, con el mensaje que llega YA escrito.
  *
@@ -13,7 +14,8 @@ export const DEFAULT_WA_TEXT = "Hola, me llegó su correo (soy de {negocio}).";
 
 export function waText(template: string | null | undefined, business: string | null | undefined): string {
   const tpl = (template ?? "").trim() || DEFAULT_WA_TEXT;
-  const name = (business ?? "").trim();
+  // «Hola, vengo por… (soy de Duplimedios)», no «(soy de DUPLIMEDIOS)»: lo manda el prospecto.
+  const name = prettyName(business ?? "");
   // Sin nombre se quita el paréntesis entero que lo envuelve, no sólo la palabra.
   const out = name
     ? tpl.replace(/\{negocio\}/g, name)

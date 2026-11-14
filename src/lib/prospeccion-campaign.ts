@@ -14,8 +14,10 @@ export type CampaignState = {
   hasMessage: boolean;
   /** Ya se mandó al menos una prueba en esta campaña. */
   testSent: boolean;
-  /** Filas a la vista (a quienes saldría). */
+  /** Filas a la vista con correo y sin correo enviado todavía: a quienes de verdad saldría. */
   shown: number;
+  /** Correos ya enviados de esta campaña. */
+  sent?: number;
 };
 
 export type NextStep =
@@ -23,6 +25,7 @@ export type NextStep =
   | { id: "message" }
   | { id: "test" }
   | { id: "send"; n: number }
+  | { id: "done"; sent: number }
   | { id: "empty" };
 
 export function nextStep(s: CampaignState): NextStep {
@@ -32,6 +35,7 @@ export function nextStep(s: CampaignState): NextStep {
   if (missing.length) return { id: "setup", missing };
   if (!s.hasMessage) return { id: "message" };
   if (!s.testSent) return { id: "test" };
-  if (!s.shown) return { id: "empty" };
+  // Ya salió a todos los de la vista: no se ofrece «Enviar a 0», se dice que ya salió.
+  if (!s.shown) return s.sent ? { id: "done", sent: s.sent } : { id: "empty" };
   return { id: "send", n: s.shown };
 }

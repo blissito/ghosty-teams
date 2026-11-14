@@ -258,14 +258,19 @@ export function SendReview({
                   <input
                     value={subject}
                     onChange={(e) => setSubject(e.target.value)}
-                    placeholder={t("Una idea para su salón")}
+                    placeholder={t("El asunto del correo")}
                     className="w-full bg-surface-2 border border-border rounded-xl px-3 py-2.5 text-sm outline-none focus:border-brand"
                   />
 
                   <label className="block text-xs font-semibold uppercase tracking-wide text-muted mt-4 mb-1.5">
                     {t("Qué columna es el mensaje")}
                   </label>
-                  {data.mensajes.length ? (
+                  {/* Con un solo mensaje escrito no hay nada que elegir: se dice cuál va. Las
+                      columnas que no son mensajes (Sector, Latitud…) sólo se ofrecen si no hay
+                      ninguno escrito, porque elegirlas manda «Alta» como cuerpo del correo. */}
+                  {data.mensajes.filter((m) => m.escrita).length === 1 && messageKey === data.mensajes.find((m) => m.escrita)?.key ? (
+                    <p className="text-sm text-ink">{data.mensajes.find((m) => m.escrita)?.label}</p>
+                  ) : data.mensajes.length ? (
                     <select
                       value={messageKey}
                       onChange={(e) => setMessageKey(e.target.value)}

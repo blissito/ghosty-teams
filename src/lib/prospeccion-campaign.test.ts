@@ -17,4 +17,7 @@ describe("nextStep", () => {
   it("sin filas a la vista no ofrece enviar", () => {
     expect(nextStep({ ...ok, shown: 0 })).toEqual({ id: "empty" });
   });
+  it("ya salió a todos los de la vista: dice «enviada», no «Enviar a 0»", () => {
+    expect(nextStep({ ctaKind: "wa", waPhone: "5217712412825", senderName: "Héctor", hasMessage: true, testSent: true, shown: 0, sent: 18 })).toEqual({ id: "done", sent: 18 });
+  });
 });

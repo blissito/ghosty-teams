@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ArrowLeft, Plus, Send, ShieldCheck, Sparkles, Target } from "lucide-react";
+import { ArrowLeft, Plus, ShieldCheck, Sparkles, Target } from "lucide-react";
 import { useT } from "../i18n";
 import { me } from "../server/auth";
 import { addColumnFn, deleteColumnFn, getListFn, importTableFn, misPermisosFn, promoteEmailFn, runAiColumnFn, runColumnFn, promoteToBaseFn, setCellFn, setColumnOrderFn, setColumnWidthFn, saveViewFn, deleteViewFn, getProspBaseFn } from "../server/prospeccion";
@@ -644,24 +644,9 @@ function ListPage() {
               </button>
             ))}
             </div>
-            {/*
-              ⚠️ El botón dice el NÚMERO, nunca sólo el verbo. Del spec: «Mandar» sobre una
-              vista de 312 y sobre una lista de 10,728 es la misma palabra y dos
-              consecuencias muy distintas.
-            */}
-            {/* Se esconde si no puede, en vez de dejarlo y fallar al apretar: ofrecer algo
-                que va a ser rechazado es peor que no ofrecerlo. El servidor lo comprueba
-                igual — esconder un botón NO es un permiso. */}
-            {permisos?.mandar !== false ? (
-            <button
-              onClick={() => setSendOpen(true)}
-              disabled={!view.length}
-              className="inline-flex items-center gap-1.5 text-xs font-semibold border border-border rounded-lg px-3 py-2 hover:bg-surface-3 disabled:opacity-40"
-              title={t("Mandarles correo a las filas que estás viendo")}
-            >
-              <Send size={13} /> {t("Enviar a")} {view.length.toLocaleString("es-MX")}
-            </button>
-            ) : null}
+            {/* El botón de enviar vive SÓLO en la barra de campaña (con el número real y el
+                permiso). Aquí había otro «Enviar a 24» que contaba la vista entera, incluidas
+                las filas sin correo: dos botones con números distintos para lo mismo. */}
             {/* Sólo lo ve quien puede repartir: el dueño del espacio, o quien creó la lista. */}
             {permisos?.puedeConceder ? (
               <button
@@ -695,7 +680,10 @@ function ListPage() {
 
       <CampaignBar
         listId={listId}
-        shown={view.length}
+        // A quienes de verdad saldría: con correo y sin correo enviado. Decía «Enviar a 24» y
+        // la revisión decía 18 (6 sin correo): el número del botón tiene que ser el que pasa.
+        shown={view.filter((r) => !!r.email && (r.status ?? "new") === "new").length}
+        canSend={permisos?.mandar !== false}
         hasMessageColumn={hasMessageColumn}
         sent={list.sent}
         refreshKey={`${sendOpen}-${agentOpen}-${messageOpen}-${turns}-${saves}-${mensajes.length}`}
