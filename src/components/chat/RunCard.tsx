@@ -802,7 +802,7 @@ function RunCardBody({ card, channelId, inPanel, msgId }: { card: RunCardData; c
           )}
           {st.preview?.state === "ready" && st.preview.url && (
             <a
-              href={st.preview.url}
+              href={st.preview.open ?? st.preview.url}
               target="_blank"
               rel="noreferrer"
               title={st.preview.provider ?? undefined}

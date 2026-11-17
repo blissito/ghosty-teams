@@ -6,6 +6,7 @@
 // Best-effort y en segundo plano: si la preview no está lista o la captura falla, la tarjeta
 // queda como antes. Nunca detiene el veredicto.
 import { dbq } from "../../dbq.server";
+import { stripPreviewKey } from "./preview-link";
 
 export type Shot = { label: "desktop" | "mobile"; key: string };
 
@@ -64,9 +65,10 @@ export async function captureVerdictShots(runId: number, path?: string | null): 
     if (preview.state !== "ready" || !preview.url) return;
     const storage = await import("../storage.server");
     if (!storage.storageConfigured()) return;
-    const url = shotUrl(preview.url, path);
+    // La liga guardada ya no trae llave: la preview privada se pide a gs en el momento (no se guarda ni se loguea).
+    const url = shotUrl((await R.resolvePreviewUrl(runId)) ?? preview.url, path);
     if (!(await pageAnswers(url))) {
-      console.warn(`[factory] capturas #${runId}: ${url} no contesta (4xx/5xx), no se adjuntan`);
+      console.warn(`[factory] capturas #${runId}: ${stripPreviewKey(url)} no contesta (4xx/5xx), no se adjuntan`);
       return;
     }
     const shots: Shot[] = [];

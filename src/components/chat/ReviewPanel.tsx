@@ -303,7 +303,7 @@ export function ReviewPanel({ runId, channelId }: { runId: number; channelId: nu
             sub={st.preview.url ? t("Pruébala en vivo antes del merge") : t("Capturas de @check")}
             action={
               st.preview.url ? (
-                <a href={st.preview.url} target="_blank" rel="noreferrer" className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90">
+                <a href={st.preview.open ?? st.preview.url} target="_blank" rel="noreferrer" className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90">
                   {t("Abrir")} <ArrowUpRight size={13} />
                 </a>
               ) : null
