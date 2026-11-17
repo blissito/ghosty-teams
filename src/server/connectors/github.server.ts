@@ -557,37 +557,75 @@ async function tarballUrl(token: string, p: string, ref: string): Promise<string
  * Va como el bot si la App tiene permiso de deployments; si no, como el usuario.
  */
 export async function publishPreviewDeployment(sub: string, repo: string, sha: string, url: string): Promise<{ ok: true } | { error: string }> {
+  return setPreviewDeployment(sub, repo, sha, { state: "success", url, description: "Preview lista" });
+}
+
+/** Los estados que GitHub enseña en el PR: en fila → construyéndose → lista/falló → apagada. */
+export type PreviewDeployState = "queued" | "in_progress" | "success" | "failure" | "inactive";
+
+/**
+ * El Deployment `preview` del commit, desde que nace (17-nov): antes sólo existía al quedar lista, y el PR no
+ * enseñaba que se estaba construyendo ni que falló. Busca el deployment del commit (o lo crea) y le agrega el
+ * estado. `url` va SIN llave: es la liga estable de Teams (`/preview/<id>`), que pide la llave a gs al abrirla.
+ */
+export async function setPreviewDeployment(
+  sub: string,
+  repo: string,
+  sha: string,
+  c: { state: PreviewDeployState; url?: string | null; description?: string },
+): Promise<{ ok: true } | { error: string }> {
   const auth = await writeToken(sub, repo);
   if ("error" in auth) return auth;
   const userToken = auth.bot ? await getValidToken(sub, "github") : null;
   const tokens = [auth.token, ...(userToken ? [userToken] : [])];
   let last = "sin token";
   for (const token of tokens) {
-    const dep = await apiWith(token, `/repos/${repo}/deployments`, {
+    const found = await apiWith(token, `/repos/${repo}/deployments?ref=${encodeURIComponent(sha)}&environment=preview&per_page=5`);
+    let id: number | null = Array.isArray(found) && found[0]?.id ? Number(found[0].id) : null;
+    if (!id) {
+      // Apagar lo que nunca existió no crea un deployment sólo para marcarlo inactivo.
+      if (c.state === "inactive") return { ok: true };
+      const dep = await apiWith(token, `/repos/${repo}/deployments`, {
+        method: "POST",
+        body: JSON.stringify({
+          ref: sha,
+          environment: "preview",
+          transient_environment: true,
+          production_environment: false,
+          required_contexts: [],
+          auto_merge: false,
+          description: "Preview de Ghosty",
+        }),
+      });
+      if (dep?.error || !dep?.id) {
+        last = dep?.error ?? "sin id";
+        continue;
+      }
+      id = Number(dep.id);
+    }
+    const url = c.url ?? undefined;
+    const st = await apiWith(token, `/repos/${repo}/deployments/${id}/statuses`, {
       method: "POST",
       body: JSON.stringify({
-        ref: sha,
-        environment: "preview",
-        transient_environment: true,
-        production_environment: false,
-        required_contexts: [],
-        auto_merge: false,
-        description: "Preview de Ghosty",
+        state: c.state,
+        ...(url ? { environment_url: url, log_url: url } : {}),
+        auto_inactive: c.state === "success",
+        description: (c.description ?? PREVIEW_DEPLOY_NOTE[c.state]).slice(0, 140),
       }),
-    });
-    if (dep?.error || !dep?.id) {
-      last = dep?.error ?? "sin id";
-      continue;
-    }
-    const st = await apiWith(token, `/repos/${repo}/deployments/${dep.id}/statuses`, {
-      method: "POST",
-      body: JSON.stringify({ state: "success", environment_url: url, log_url: url, auto_inactive: true, description: "Preview lista" }),
     });
     if (st?.error) return { error: st.error };
     return { ok: true };
   }
   return { error: last };
 }
+
+const PREVIEW_DEPLOY_NOTE: Record<PreviewDeployState, string> = {
+  queued: "La preview espera lugar",
+  in_progress: "La preview se está construyendo",
+  success: "Preview lista",
+  failure: "La preview no arrancó",
+  inactive: "Preview apagada",
+};
 
 // ── Check runs de la App («Ghosty · Preview») ────────────────────────────────
 // La Checks API sólo la escribe una GitHub App: va siempre con el token de instalación, sin

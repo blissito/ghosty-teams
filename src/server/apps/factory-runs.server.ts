@@ -7,6 +7,7 @@
 import { parseKindMeta } from "../../lib/factory-kinds";
 import { GITHUB_REPLY_FORMAT } from "./factory-roles";
 import { dbq } from "../../dbq.server";
+import { previewOpenPath, stripPreviewKey } from "./preview-link";
 import type { FactoryPushTarget } from "../notify.server";
 import {
   ESCALATION_ACTIONS,
@@ -173,6 +174,8 @@ export async function applyEvent(
   if ((updated.status === "done" || updated.status === "cancelled") && updated.prUrl) {
     const pr = parsePrUrl(updated.prUrl);
     if (pr) void import("./preview.server").then((P) => P.gsPreview("down", { repo: pr.repo, pr: pr.number })).catch(() => {});
+    // El PR deja de ofrecer la preview: su Deployment pasa a `inactive`.
+    if (pr) void dbq("SELECT preview_sha FROM gt_factory_runs WHERE id = ?", [updated.id]).then((r) => deactivatePreviewDeployment(updated, pr.repo, r[0]?.preview_sha ? String(r[0].preview_sha) : null)).catch(() => {});
     // Y se olvida la liga: @plan la leía del pedido cerrado y la daba como «lista» (MailMask #11, 5-oct).
     void dbq("UPDATE gt_factory_runs SET preview_state = NULL, preview_url = NULL WHERE id = ?", [updated.id]).catch(() => {});
   }
@@ -3026,7 +3029,7 @@ async function announceRunPreview(row: Record<string, any>, P: typeof import("./
   const changed = await dbq(
     `UPDATE gt_factory_runs SET preview_state = ?, preview_url = ?, preview_sha = ?, preview_error = ?, preview_since = unixepoch(), preview_phase = ?
      WHERE id = ? AND NOT (COALESCE(preview_state,'') = ? AND COALESCE(preview_sha,'') = ?) RETURNING id`,
-    [next.state, next.url, head.sha, next.error, phase, run.id, next.state, head.sha],
+    [next.state, stripPreviewKey(next.url), head.sha, next.error, phase, run.id, next.state, head.sha],
   );
   if (!changed.length) {
     // Sigue esperando lugar: el motivo puede cambiar (otros pedidos en curso) aunque el estado no.
@@ -3035,6 +3038,10 @@ async function announceRunPreview(row: Record<string, any>, P: typeof import("./
     return;
   }
   void refreshRoom(run.channelId);
+  // El Deployment del PR sigue la preview desde que nace: en fila → construyéndose → lista/falló. Una preview de
+  // hosting externo (Vercel…) ya la registró su proveedor. La liga es la estable de Teams, sin llave.
+  if (!next.provider && next.state !== "needs_env")
+    void publishDeployState(run, pr.repo, head.sha, next.state, next.state === "failed" ? next.error : null);
   if (next.state === "ready")
     // Mientras Build sigue empujando commits no se anuncia cada uno (sería ruido): la tarjeta
     // ya muestra la liga vigente. Se anuncia al llegar a revisión, escalado o PR listo.
@@ -3043,17 +3050,13 @@ async function announceRunPreview(row: Record<string, any>, P: typeof import("./
       // En el PR de GitHub también (Deployment `preview` del commit), una vez por commit: el
       // UPDATE de arriba sólo pasa cuando cambian estado o sha. Una preview de hosting externo
       // (Vercel…) ya la registró su proveedor.
-      if (!next.provider && url)
-        void import("../connectors/github.server")
-          .then((G) => G.publishPreviewDeployment(sub, pr.repo, head.sha, url))
-          .then((r) => { if ("error" in r) console.warn(`[factory] preview #${run.id} en el PR: ${r.error}`); })
-          .catch(() => {});
+      // (el Deployment ya se publicó arriba con `publishDeployState`)
       if (run.status !== "building") {
         // Con variables de producción se dice en el mismo aviso: probarla escribe en lo real (#96).
         const risks = next.provider ? [] : await P.gsPreview("env-keys", { repo: pr.repo }).then((r) => (Array.isArray(r?.risks) ? r.risks : [])).catch(() => []);
         const { envRisksText } = await import("./factory-preview-gate");
         const prod = risks.length ? ` · ⚠ usa prod: ${envRisksText(risks, 3)}` : "";
-        await postInThread(run, "build", `🔎 **Preview ${row.preview_sha && !sameSha ? "actualizada" : "lista"}**${next.provider ? ` (${next.provider})` : ""} · [Abrir](${url})${prod}`);
+        await postInThread(run, "build", `🔎 **Preview ${row.preview_sha && !sameSha ? "actualizada" : "lista"}**${next.provider ? ` (${next.provider})` : ""} · [Abrir](${next.provider ? url : previewOpenPath(run.id)})${prod}`);
       }
       // Smoke de acción en cada preview nueva (también tras un push con el PR ya aprobado): un
       // POST con el Origin real. Sólo se avisa si falla (#96, 16-oct).
@@ -3409,6 +3412,55 @@ export async function previewGate(run: Run, headSha: string | null): Promise<{ r
   return previewGateBlock(await runPreview(run.id, { fresh: true }), headSha);
 }
 
+/** Estado del Deployment `preview` en el PR. Nunca lanza: GitHub caído no traba la fábrica. */
+async function publishDeployState(run: Run, repo: string, sha: string, state: string, error: string | null): Promise<void> {
+  const map: Record<string, "queued" | "in_progress" | "success" | "failure" | undefined> = { waiting: "queued", pending: "in_progress", ready: "success", failed: "failure" };
+  const st = map[state];
+  if (!st) return;
+  try {
+    const sub = run.approvedBy ?? run.requestedBy;
+    const { currentSlug } = await import("../tenant.server");
+    const slug = await currentSlug().catch(() => null);
+    const origin = slug ? `https://${slug}.${process.env.TEAMS_ROOT_DOMAIN ?? "teams.ghosty.studio"}` : null;
+    const G = await import("../connectors/github.server");
+    const r = await G.setPreviewDeployment(sub, repo, sha, {
+      state: st,
+      url: st === "success" && origin ? previewOpenPath(run.id, origin) : null,
+      ...(st === "failure" && error ? { description: error.split("\n")[0] } : {}),
+    });
+    if ("error" in r) console.warn(`[factory] preview #${run.id} en el PR: ${r.error}`);
+  } catch (e) {
+    console.warn(`[factory] preview #${run.id} en el PR: ${(e as Error).message}`);
+  }
+}
+
+/** Pedido cerrado o preview apagada: el Deployment del commit pasa a `inactive` (el PR deja de ofrecerla). */
+export async function deactivatePreviewDeployment(run: Run, repo: string, sha: string | null): Promise<void> {
+  if (!sha) return;
+  try {
+    const G = await import("../connectors/github.server");
+    await G.setPreviewDeployment(run.approvedBy ?? run.requestedBy, repo, sha, { state: "inactive" });
+  } catch { /* GitHub caído: el deployment queda como estaba */ }
+}
+
+/**
+ * La liga de la preview CON su llave, sólo para abrirla (`/preview/<id>`) o capturarla: se la pide a gs en el
+ * momento y NO se guarda. Sin respuesta de gs cae a la liga guardada (sin llave: hosting externo o repo público).
+ */
+export async function resolvePreviewUrl(runId: number): Promise<string | null> {
+  const [row] = await dbq("SELECT status, repo, pr_url, preview_state, preview_url, box_id FROM gt_factory_runs WHERE id = ?", [runId]).catch(() => []);
+  if (!row || row.preview_state !== "ready" || row.status === "done" || row.status === "cancelled") return null;
+  const stored = row.preview_url ? String(row.preview_url) : null;
+  const pr = row.pr_url ? parsePrUrl(String(row.pr_url)) : null;
+  if (pr) {
+    const P = await import("./preview.server");
+    const st = await P.gsPreview("status", { repo: pr.repo, pr: pr.number, ...(row.box_id ? { runId } : {}) }).catch(() => null);
+    const url = st?.status?.phase === "ready" ? st.status.url : null;
+    if (url) return String(url);
+  }
+  return stored;
+}
+
 /**
  * Lo que la tarjeta y @check saben de la preview del pedido (leído de la fila).
  *
@@ -3421,7 +3473,7 @@ export async function previewGate(run: Run, headSha: string | null): Promise<{ r
 export async function runPreview(
   runId: number,
   opts: { fresh?: boolean } = {},
-): Promise<{ state: RunPreviewState; url: string | null; error: string | null; sha: string | null }> {
+): Promise<{ state: RunPreviewState; url: string | null; open: string | null; error: string | null; sha: string | null }> {
   const rows = await dbq(
     "SELECT status, preview_state, preview_url, preview_error, preview_sha, preview_phase, pr_url, approved_by, requested_by FROM gt_factory_runs WHERE id = ?",
     [runId],
@@ -3434,9 +3486,13 @@ export async function runPreview(
     const head = await prHead(String(r.approved_by ?? r.requested_by ?? ""), String(r.pr_url)).catch(() => null);
     if (head && head.sha !== r.preview_sha) state = "pending";
   }
+  // La llave (`?k=`) no sale de aquí: filas viejas la traen guardada y se limpian al leer. Quien necesite
+  // abrirla usa `open` (`/preview/<id>`, que la pide a gs en el momento) o `resolvePreviewUrl`.
+  const url = state === "ready" ? stripPreviewKey(r?.preview_url ? String(r.preview_url) : null) : null;
   return {
     state,
-    url: state === "ready" ? (r?.preview_url ?? null) : null,
+    url,
+    open: url ? previewOpenPath(runId) : null,
     // `waiting` también lleva su motivo («sin lugar: 2 pedidos en curso…»).
     error: state === "failed" || state === "waiting" || state === "released" ? (r?.preview_error ?? null) : null,
     // Soltada después de estar lista (`preview_phase` = ready) lleva su commit: se probó en él y la
