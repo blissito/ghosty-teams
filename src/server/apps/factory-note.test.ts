@@ -81,6 +81,8 @@ vi.mock("./factory-runs.server", () => ({
   previewGate: async () => gate,
   previewRequired: async () => !!gate,
   runPreview: async () => livePreview,
+  // La liga CON llave se pide a gs al probar (la guardada ya no la trae).
+  resolvePreviewUrl: async () => (livePreview?.url ? `${livePreview.url}?k=0123456789abcdef` : null),
   prFiles: async () => [],
   parsePrUrl: () => ({ repo: "o/r", number: 8 }),
   runCardFence: () => "",

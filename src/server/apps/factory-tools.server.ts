@@ -5,6 +5,7 @@
 // Hoy: el webhook genérico de alertas de monitoreo y el uptime del room (`uptime_*`). Las
 // `factory_*` (corrida, estafeta, tarjeta de plan) se suman aquí mismo.
 import { notaNombres, type ConnectorTool, type ToolChannel } from "../connectors/impl";
+import { stripPreviewKey } from "./preview-link";
 import type { ToolDest } from "../connectors/tool-token.server";
 import { isInstalled } from "./installed.server";
 import { MAX_LOOPS, clipReason, countsLoop, isEscalationKind, isGithubRateLimit, normalizeEscalationOptions, stageLabel, type EscalationKind, type EscalationOption } from "./factory-flow";
@@ -742,7 +743,10 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         // localhost no ven. Si la rechaza o truena, no hay pass (#96, 16-oct).
         const livePreview = a.pass === true ? await R.runPreview(run.id, { fresh: true }) : null;
         const S = await import("./factory-smoke.server");
-        const smoke = livePreview?.state === "ready" && livePreview.url ? await S.runActionSmoke(livePreview.url, run.repo, sub) : null;
+        // La liga guardada ya no trae llave: la del smoke se pide a gs en el momento (si no, un POST sin cookie contra una
+        // preview privada da 401 y «pasa» sin haber probado nada).
+        const smokeUrl = livePreview?.state === "ready" ? await R.resolvePreviewUrl(run.id) : null;
+        const smoke = smokeUrl ? await S.runActionSmoke(smokeUrl, run.repo, sub) : null;
         if (S.smokeFailures(smoke))
           return {
             ok: false,
@@ -1220,8 +1224,16 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
       name: "factory_preview",
       description:
         "La preview del PR del pedido: state ready|pending|failed|none, su URL y, si falló, por qué. " +
-        "Si el hosting del repo no las publica, la plataforma la construye en una caja propia. Úsala para probar el cambio como lo verá la persona antes del merge.",
-      inputSchema: { type: "object", properties: { runId: { type: "number" } } },
+        "Si el hosting del repo no las publica, la plataforma la construye en una caja propia. Úsala para probar el cambio como lo verá la persona antes del merge. " +
+        "La URL NO trae llave y tú no la ves: para mirar la página pasa `read` con una ruta («/», «/pedidos») y la plataforma la abre por ti " +
+        "(estado, título y texto visible). Nunca pegues ni pidas la llave (?k=) en un chat o PR: la persona abre la preview con `open`.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          runId: { type: "number" },
+          read: { type: "string", description: "Ruta de la preview a leer, empieza con «/» (p. ej. «/» o «/pedidos?mesa=3»). Devuelve estado, título y texto visible." },
+        },
+      },
       handler: async (sub, a) => {
         const run = await runOf(dest, a.runId);
         // Sin pedido pero en el hilo de un PR (uno de una persona, p. ej. el aviso «PR #44
@@ -1247,7 +1259,8 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           return {
             ok: true,
             state,
-            url: state === "ready" ? b.url : null,
+            url: state === "ready" ? stripPreviewKey(b.url) : null,
+            ...(state === "ready" && typeof a.read === "string" ? { page: await (await import("./preview-read.server")).readPreviewPage(b.url, a.read) } : {}),
             error: state === "failed" ? b.error : null,
             note:
               state === "ready"
@@ -1293,7 +1306,11 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
             (prodRisks.some((x) => x.risk === "live_payment_key") ? " No completes pagos." : "") +
             (prodRisks.some((x) => x.risk === "real_email") ? " No dispares envíos de correo a direcciones reales." : "")
           : "";
-        return { ok: true, ...p, required, ...(prodRisks.length ? { prodRisks } : {}), note: note + prodNote };
+        const page =
+          p.state === "ready" && typeof a.read === "string"
+            ? await (await import("./preview-read.server")).readPreviewPage(await R.resolvePreviewUrl(run.id), a.read)
+            : null;
+        return { ok: true, ...p, required, ...(page ? { page } : {}), ...(prodRisks.length ? { prodRisks } : {}), note: note + prodNote };
       },
     },
     {

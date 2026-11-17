@@ -27,7 +27,7 @@ export function reactRouterDataPath(path: string): string {
 }
 
 /** La llave de la preview privada (`?k=`): el router la acepta como cookie `gs_preview`. */
-function previewAuth(previewUrl: string): { origin: string; cookie: string | null } {
+export function previewAuth(previewUrl: string): { origin: string; cookie: string | null } {
   const u = new URL(previewUrl);
   const k = u.searchParams.get("k");
   return { origin: u.origin, cookie: k ? `gs_preview=${k}` : null };
