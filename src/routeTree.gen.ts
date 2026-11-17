@@ -28,6 +28,7 @@ import { Route as ProspeccionIndexRouteImport } from './routes/prospeccion.index
 import { Route as T3SplatRouteImport } from './routes/t3.$'
 import { Route as RoomSlugRouteImport } from './routes/room.$slug'
 import { Route as ProspeccionIdRouteImport } from './routes/prospeccion.$id'
+import { Route as PreviewRunIdRouteImport } from './routes/preview.$runId'
 import { Route as JoinTokenRouteImport } from './routes/join.$token'
 import { Route as CoeditarSlugRouteImport } from './routes/coeditar.$slug'
 import { Route as CSlugRouteImport } from './routes/c.$slug'
@@ -68,6 +69,7 @@ import { Route as ApiInternalBoardEventRouteImport } from './routes/api.internal
 import { Route as ApiInternalAnnouncementsRouteImport } from './routes/api.internal.announcements'
 import { Route as ApiInternalAlertRouteImport } from './routes/api.internal.alert'
 import { Route as ApiInternalAgentWakeRouteImport } from './routes/api.internal.agent-wake'
+import { Route as ApiHooksMailmaskRouteImport } from './routes/api.hooks.mailmask'
 import { Route as ApiFormTokenRouteImport } from './routes/api.form.$token'
 import { Route as ApiFormUploadTokenRouteImport } from './routes/api.form-upload.$token'
 import { Route as ApiFormFileIdRouteImport } from './routes/api.form-file.$id'
@@ -189,6 +191,11 @@ const RoomSlugRoute = RoomSlugRouteImport.update({
 const ProspeccionIdRoute = ProspeccionIdRouteImport.update({
   id: '/prospeccion/$id',
   path: '/prospeccion/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PreviewRunIdRoute = PreviewRunIdRouteImport.update({
+  id: '/preview/$runId',
+  path: '/preview/$runId',
   getParentRoute: () => rootRouteImport,
 } as any)
 const JoinTokenRoute = JoinTokenRouteImport.update({
@@ -398,6 +405,11 @@ const ApiInternalAgentWakeRoute = ApiInternalAgentWakeRouteImport.update({
   path: '/api/internal/agent-wake',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiHooksMailmaskRoute = ApiHooksMailmaskRouteImport.update({
+  id: '/api/hooks/mailmask',
+  path: '/api/hooks/mailmask',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiFormTokenRoute = ApiFormTokenRouteImport.update({
   id: '/api/form/$token',
   path: '/api/form/$token',
@@ -566,6 +578,7 @@ export interface FileRoutesByFullPath {
   '/c/$slug': typeof CSlugRoute
   '/coeditar/$slug': typeof CoeditarSlugRoute
   '/join/$token': typeof JoinTokenRoute
+  '/preview/$runId': typeof PreviewRunIdRoute
   '/prospeccion/$id': typeof ProspeccionIdRoute
   '/room/$slug': typeof RoomSlugRoute
   '/t3/$': typeof T3SplatRoute
@@ -586,6 +599,7 @@ export interface FileRoutesByFullPath {
   '/api/form-file/$id': typeof ApiFormFileIdRoute
   '/api/form-upload/$token': typeof ApiFormUploadTokenRoute
   '/api/form/$token': typeof ApiFormTokenRoute
+  '/api/hooks/mailmask': typeof ApiHooksMailmaskRoute
   '/api/internal/agent-wake': typeof ApiInternalAgentWakeRoute
   '/api/internal/alert': typeof ApiInternalAlertRoute
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
@@ -653,6 +667,7 @@ export interface FileRoutesByTo {
   '/c/$slug': typeof CSlugRoute
   '/coeditar/$slug': typeof CoeditarSlugRoute
   '/join/$token': typeof JoinTokenRoute
+  '/preview/$runId': typeof PreviewRunIdRoute
   '/prospeccion/$id': typeof ProspeccionIdRoute
   '/room/$slug': typeof RoomSlugRoute
   '/t3/$': typeof T3SplatRoute
@@ -673,6 +688,7 @@ export interface FileRoutesByTo {
   '/api/form-file/$id': typeof ApiFormFileIdRoute
   '/api/form-upload/$token': typeof ApiFormUploadTokenRoute
   '/api/form/$token': typeof ApiFormTokenRoute
+  '/api/hooks/mailmask': typeof ApiHooksMailmaskRoute
   '/api/internal/agent-wake': typeof ApiInternalAgentWakeRoute
   '/api/internal/alert': typeof ApiInternalAlertRoute
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
@@ -742,6 +758,7 @@ export interface FileRoutesById {
   '/c/$slug': typeof CSlugRoute
   '/coeditar/$slug': typeof CoeditarSlugRoute
   '/join/$token': typeof JoinTokenRoute
+  '/preview/$runId': typeof PreviewRunIdRoute
   '/prospeccion/$id': typeof ProspeccionIdRoute
   '/room/$slug': typeof RoomSlugRoute
   '/t3/$': typeof T3SplatRoute
@@ -762,6 +779,7 @@ export interface FileRoutesById {
   '/api/form-file/$id': typeof ApiFormFileIdRoute
   '/api/form-upload/$token': typeof ApiFormUploadTokenRoute
   '/api/form/$token': typeof ApiFormTokenRoute
+  '/api/hooks/mailmask': typeof ApiHooksMailmaskRoute
   '/api/internal/agent-wake': typeof ApiInternalAgentWakeRoute
   '/api/internal/alert': typeof ApiInternalAlertRoute
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
@@ -832,6 +850,7 @@ export interface FileRouteTypes {
     | '/c/$slug'
     | '/coeditar/$slug'
     | '/join/$token'
+    | '/preview/$runId'
     | '/prospeccion/$id'
     | '/room/$slug'
     | '/t3/$'
@@ -852,6 +871,7 @@ export interface FileRouteTypes {
     | '/api/form-file/$id'
     | '/api/form-upload/$token'
     | '/api/form/$token'
+    | '/api/hooks/mailmask'
     | '/api/internal/agent-wake'
     | '/api/internal/alert'
     | '/api/internal/announcements'
@@ -919,6 +939,7 @@ export interface FileRouteTypes {
     | '/c/$slug'
     | '/coeditar/$slug'
     | '/join/$token'
+    | '/preview/$runId'
     | '/prospeccion/$id'
     | '/room/$slug'
     | '/t3/$'
@@ -939,6 +960,7 @@ export interface FileRouteTypes {
     | '/api/form-file/$id'
     | '/api/form-upload/$token'
     | '/api/form/$token'
+    | '/api/hooks/mailmask'
     | '/api/internal/agent-wake'
     | '/api/internal/alert'
     | '/api/internal/announcements'
@@ -1007,6 +1029,7 @@ export interface FileRouteTypes {
     | '/c/$slug'
     | '/coeditar/$slug'
     | '/join/$token'
+    | '/preview/$runId'
     | '/prospeccion/$id'
     | '/room/$slug'
     | '/t3/$'
@@ -1027,6 +1050,7 @@ export interface FileRouteTypes {
     | '/api/form-file/$id'
     | '/api/form-upload/$token'
     | '/api/form/$token'
+    | '/api/hooks/mailmask'
     | '/api/internal/agent-wake'
     | '/api/internal/alert'
     | '/api/internal/announcements'
@@ -1096,6 +1120,7 @@ export interface RootRouteChildren {
   CSlugRoute: typeof CSlugRoute
   CoeditarSlugRoute: typeof CoeditarSlugRoute
   JoinTokenRoute: typeof JoinTokenRoute
+  PreviewRunIdRoute: typeof PreviewRunIdRoute
   ProspeccionIdRoute: typeof ProspeccionIdRoute
   RoomSlugRoute: typeof RoomSlugRoute
   T3SplatRoute: typeof T3SplatRoute
@@ -1115,6 +1140,7 @@ export interface RootRouteChildren {
   ApiFormFileIdRoute: typeof ApiFormFileIdRoute
   ApiFormUploadTokenRoute: typeof ApiFormUploadTokenRoute
   ApiFormTokenRoute: typeof ApiFormTokenRoute
+  ApiHooksMailmaskRoute: typeof ApiHooksMailmaskRoute
   ApiInternalAgentWakeRoute: typeof ApiInternalAgentWakeRoute
   ApiInternalAlertRoute: typeof ApiInternalAlertRoute
   ApiInternalAnnouncementsRoute: typeof ApiInternalAnnouncementsRoute
@@ -1283,6 +1309,13 @@ declare module '@tanstack/react-router' {
       path: '/prospeccion/$id'
       fullPath: '/prospeccion/$id'
       preLoaderRoute: typeof ProspeccionIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/preview/$runId': {
+      id: '/preview/$runId'
+      path: '/preview/$runId'
+      fullPath: '/preview/$runId'
+      preLoaderRoute: typeof PreviewRunIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/join/$token': {
@@ -1565,6 +1598,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiInternalAgentWakeRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/hooks/mailmask': {
+      id: '/api/hooks/mailmask'
+      path: '/api/hooks/mailmask'
+      fullPath: '/api/hooks/mailmask'
+      preLoaderRoute: typeof ApiHooksMailmaskRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/form/$token': {
       id: '/api/form/$token'
       path: '/api/form/$token'
@@ -1816,6 +1856,7 @@ const rootRouteChildren: RootRouteChildren = {
   CSlugRoute: CSlugRoute,
   CoeditarSlugRoute: CoeditarSlugRoute,
   JoinTokenRoute: JoinTokenRoute,
+  PreviewRunIdRoute: PreviewRunIdRoute,
   ProspeccionIdRoute: ProspeccionIdRoute,
   RoomSlugRoute: RoomSlugRoute,
   T3SplatRoute: T3SplatRoute,
@@ -1835,6 +1876,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiFormFileIdRoute: ApiFormFileIdRoute,
   ApiFormUploadTokenRoute: ApiFormUploadTokenRoute,
   ApiFormTokenRoute: ApiFormTokenRoute,
+  ApiHooksMailmaskRoute: ApiHooksMailmaskRoute,
   ApiInternalAgentWakeRoute: ApiInternalAgentWakeRoute,
   ApiInternalAlertRoute: ApiInternalAlertRoute,
   ApiInternalAnnouncementsRoute: ApiInternalAnnouncementsRoute,
@@ -1872,12 +1914,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { createStart } from '@tanstack/react-start'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-  }
-}
