@@ -4,6 +4,7 @@
 // Nunca lanza: un GitHub caído no traba la fábrica; el siguiente tick lo reintenta.
 import { dbq } from "../../dbq.server";
 import { PREVIEW_CHECK_NAME, previewCheckFrom } from "./factory-preview-check";
+import { previewOpenPath, stripPreviewKey } from "./preview-link";
 
 const warned = new Map<string, number>();
 
@@ -26,7 +27,9 @@ export async function syncPrCheck(repo: string, number: number, sha: string): Pr
         id: run.id,
         required: await R.previewRequired(run),
         repoOff: await R.repoPreviewOff(repo),
-        preview: { ...preview, url: row?.preview_url ? String(row.preview_url) : null },
+        // Sin llave: lo que viaja a GitHub no puede abrir la caja (la llave la pide /preview/<id> a gs).
+        preview: { ...preview, url: stripPreviewKey(row?.preview_url ? String(row.preview_url) : null) },
+        openUrl: origin && preview.state === "ready" ? previewOpenPath(run.id, origin) : null,
         headSha: sha,
         smokeFail: (await R.lastEventAt(run.id, "smoke_fail", sha))?.data.fails ?? null,
         skippedBy: skip ? String(u?.name || (u?.handle ? `@${u.handle}` : "") || "una persona") : null,
@@ -36,7 +39,7 @@ export async function syncPrCheck(repo: string, number: number, sha: string): Pr
     }
     const c = previewCheckFrom(input);
     const G = await import("../connectors/github.server");
-    const r = await G.upsertCheckRun(repo, sha, { name: PREVIEW_CHECK_NAME, ...c, detailsUrl: input?.threadUrl ?? null });
+    const r = await G.upsertCheckRun(repo, sha, { name: PREVIEW_CHECK_NAME, ...c, detailsUrl: c.detailsUrl ?? input?.threadUrl ?? null });
     if ("error" in r) throw new Error(r.error);
   } catch (e) {
     if (Date.now() - (warned.get(repo) ?? 0) < 3_600_000) return;

@@ -4,6 +4,7 @@
 // y el ruleset de la fábrica lo exige: GitHub bloquea cualquier camino, y un check requerido que
 // nunca reporta bloquea igual. La regla es la misma puerta (`previewGateBlock`) dicha a GitHub.
 import { previewGateBlock, type PreviewGateState } from "./factory-preview-gate";
+import { scrubPreviewKeys } from "./preview-link";
 
 export const PREVIEW_CHECK_NAME = "Ghosty · Preview";
 
@@ -12,13 +13,13 @@ export type PreviewCheck = {
   conclusion: "success" | "failure" | "neutral" | null;
   title: string;
   summary: string;
+  /** A dónde manda «Detalles» en GitHub: la preview (`/preview/<id>`, sin llave) si está lista; si no, el hilo. */
+  detailsUrl?: string | null;
 };
 
 const done = (conclusion: PreviewCheck["conclusion"], title: string, summary: string): PreviewCheck => ({ status: "completed", conclusion, title, summary });
 
-/** El estado del check. `run: null` = PR que no es de un pedido (el ruleset lo exige en todos). */
-export function previewCheckFrom(
-  run: {
+export type PreviewCheckRun = {
     id: number;
     required: boolean;
     repoOff: boolean;
@@ -31,7 +32,12 @@ export function previewCheckFrom(
     /** Ligas absolutas a Teams. */
     threadUrl: string | null;
     envUrl: string | null;
-  } | null,
+    /** Liga estable `/preview/<id>` (absoluta, SIN llave): la que va a GitHub. La llave la pide Teams a gs al abrirla. */
+    openUrl?: string | null;
+};
+
+function rawCheck(
+  run: PreviewCheckRun | null,
 ): PreviewCheck {
   if (!run) return done("neutral", "No es un pedido de la fábrica", "Ghosty sólo exige la preview en los PRs de sus pedidos.");
   const thread = run.threadUrl ? ` [Ver el hilo del pedido](${run.threadUrl}).` : "";
@@ -55,7 +61,36 @@ export function previewCheckFrom(
   }
   if (run.smokeFail)
     return done("failure", "La preview rechaza envíos", "El POST con el Origin real (como el navegador) falló:\n\n```\n" + run.smokeFail.slice(0, 1500) + "\n```" + thread);
-  return done("success", "Preview lista", `Lista en este commit${run.preview.url ? `: ${run.preview.url}` : ""}; el smoke no encontró fallos.${thread}`);
+  const open = run.openUrl ? ` [Abrir la preview](${run.openUrl}).` : "";
+  return done("success", "Preview lista", `Lista en este commit; el smoke no encontró fallos.${open}${thread}`);
+}
+
+const ICON = { ok: "✅", wait: "⏳", fail: "❌", idle: "▫️" } as const;
+
+/** Los pasos de la preview como tabla (el «stepper» del PR): caja → construcción → smoke. */
+export function previewSteps(run: PreviewCheckRun): string {
+  const st = run.preview.state;
+  const box = st === "waiting" ? ICON.wait : ICON.ok;
+  const build = st === "ready" ? ICON.ok : st === "failed" || st === "needs_env" ? ICON.fail : st === "waiting" ? ICON.idle : ICON.wait;
+  const smoke = st !== "ready" ? ICON.idle : run.smokeFail ? ICON.fail : ICON.ok;
+  return ["| Paso | Estado |", "|---|---|", `| Caja de trabajo | ${box} |`, `| Preview del commit | ${build} |`, `| Smoke (POST con el Origin real) | ${smoke} |`].join("\n");
+}
+
+/**
+ * El estado del check. `run: null` = PR que no es de un pedido (el ruleset lo exige en todos).
+ * Nunca sale una llave de preview (`?k=`): el resumen se limpia aunque alguien la meta en un mensaje, y
+ * «Detalles» apunta a la liga estable, no a la de la caja (auditoría del 17-nov: un PR de repo público
+ * dejaba abierta la preview «privada»).
+ */
+export function previewCheckFrom(run: PreviewCheckRun | null): PreviewCheck {
+  const c = rawCheck(run);
+  const steps = run && run.required && !run.skippedBy && !run.repoOff ? `\n\n${previewSteps(run)}` : "";
+  return {
+    ...c,
+    title: scrubPreviewKeys(c.title),
+    summary: scrubPreviewKeys(`${c.summary}${steps}`),
+    detailsUrl: run ? ((c.conclusion === "success" && run.openUrl) || run.threadUrl || null) : null,
+  };
 }
 
 /** Idempotencia por (repo, sha): mismo contenido = nada; de terminado a en curso, uno nuevo (GitHub enseña el último). */
