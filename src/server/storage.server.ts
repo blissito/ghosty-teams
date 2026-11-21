@@ -94,6 +94,14 @@ const PREFIX = "t3/";
 export function isOwnKey(id: string): boolean {
   return id.startsWith(PREFIX);
 }
+// Llaves que gs escribe en el MISMO bucket (`u/<dueño>/imagenes/…` de generate_image). La
+// presignada que trae el agente se reescribe a `/api/attachment/u%2F…` (own-storage-url) y,
+// sin esto, `mintReadUrl` se la preguntaba a EasyBits → 404: la primera imagen de cada hilo
+// de Brendi salía rota (21-nov). Sólo LECTURA: el objeto es de gs, Teams nunca lo borra.
+const GS_PREFIX = "u/";
+export function isReadableKey(id: string): boolean {
+  return isOwnKey(id) || id.startsWith(GS_PREFIX);
+}
 function newKey(fileName: string): string {
   const safe = (fileName || "file").toLowerCase().replace(/[^a-z0-9._-]/g, "-").slice(-60);
   return `${PREFIX}${randomUUID()}-${safe}`;

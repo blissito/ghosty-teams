@@ -163,7 +163,7 @@ export async function mintReadUrl(fileId: string): Promise<string | null> {
   const storage = await import("./storage.server");
   const t0 = performance.now();
   let url: string | null = null;
-  if (storage.isOwnKey(fileId)) {
+  if (storage.isReadableKey(fileId)) {
     url = await storage.signedUrl(fileId, 6 * 3600);
   } else {
     try {
@@ -174,7 +174,7 @@ export async function mintReadUrl(fileId: string): Promise<string | null> {
     }
   }
   const ms = performance.now() - t0;
-  if (ms > 200) console.log(`[mintReadUrl ${Math.round(ms)}ms own=${storage.isOwnKey(fileId)}] ${fileId.slice(0, 40)}`);
+  if (ms > 200) console.log(`[mintReadUrl ${Math.round(ms)}ms own=${storage.isReadableKey(fileId)}] ${fileId.slice(0, 40)}`);
   if (url) readUrlCache.set(fileId, { url, exp: Date.now() + 50 * 60_000 });
   return url;
 }
@@ -184,7 +184,7 @@ export async function mintReadUrl(fileId: string): Promise<string | null> {
 export async function mintFileBytes(fileId: string): Promise<string | null> {
   if (!fileId) return null;
   const storage = await import("./storage.server");
-  if (storage.isOwnKey(fileId)) {
+  if (storage.isReadableKey(fileId)) {
     const buf = await storage.getBytes(fileId);
     return buf ? buf.toString("base64") : null;
   }
