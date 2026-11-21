@@ -1946,6 +1946,37 @@ export function ciNotStarted(checks: { state: string; seconds: number | null }[]
   return red.length > 0 && red.every((c) => c.seconds !== null && c.seconds <= 5);
 }
 
+/**
+ * Cuánto se espera a que GitHub registre los checks de un commit nuevo antes de creer que ese
+ * commit de verdad no corre CI (workflows con filtro de rutas). El tick mira cada 2 min.
+ */
+export const CI_NONE_GRACE_MS = 3 * 60_000;
+
+/**
+ * Cero checks no es verde. Justo después de un push (o de `update-branch`, que crea un SHA nuevo)
+ * GitHub todavía no registra los checks de ese commit: leído como `none` el merge entraba sin que
+ * corriera nada. En un repo que SÍ corre CI en los PR, un `none` cuenta como `pending` hasta que
+ * lleva `CI_NONE_GRACE_MS` viéndose así en el MISMO commit. Sin workflows, `none` es `none`. Pura.
+ */
+export function settleCiState(state: string, repoHasCi: boolean, firstNoneAt: number | null, now: number): string {
+  if (state !== "none" || !repoHasCi) return state;
+  return firstNoneAt !== null && now - firstNoneAt >= CI_NONE_GRACE_MS ? "none" : "pending";
+}
+
+/** Cuándo se vio por primera vez `none` en cada PR@sha, y si el repo corre CI (10 min). */
+const firstNoneSeen = new Map<string, number>();
+const repoCiCache = new Map<string, { at: number; has: boolean }>();
+async function repoRunsCi(sub: string, repo: string): Promise<boolean> {
+  const key = repo.toLowerCase();
+  const hit = repoCiCache.get(key);
+  if (hit && Date.now() - hit.at < 10 * 60_000) return hit.has;
+  const { hasWorkflows } = await import("./ci-starter.server");
+  // Si GitHub no contesta se asume que sí hay CI: esperar de más es barato, mergear sin checks no.
+  const has = await hasWorkflows(sub, repo).catch(() => true);
+  repoCiCache.set(key, { at: Date.now(), has });
+  return has;
+}
+
 export async function prCi(
   sub: string,
   url: string,
@@ -1960,7 +1991,18 @@ export async function prCi(
     const failed = Array.isArray(r.failed) ? r.failed.map((f: any) => String(f?.name ?? f)).slice(0, 5) : [];
     const checks = Array.isArray(r.checks) ? r.checks : [];
     void import("./factory-repo-alerts.server").then((m) => m.trackRepoCi(pr.repo, checks)).catch(() => {});
-    return { state: String(r.state ?? "none"), failed, checks, notStarted: ciNotStarted(checks) };
+    let state = String(r.state ?? "none");
+    const seenKey = `${url.toLowerCase()}@${String(r.sha ?? "")}`;
+    if (state === "none") {
+      const now = Date.now();
+      if (!firstNoneSeen.has(seenKey)) {
+        // Sin tope el mapa crecería con cada commit de cada PR.
+        if (firstNoneSeen.size > 2000) firstNoneSeen.clear();
+        firstNoneSeen.set(seenKey, now);
+      }
+      state = settleCiState(state, await repoRunsCi(sub, pr.repo), firstNoneSeen.get(seenKey) ?? null, now);
+    } else firstNoneSeen.delete(seenKey);
+    return { state, failed, checks, notStarted: ciNotStarted(checks) };
   } catch {
     return null;
   }
@@ -3606,9 +3648,12 @@ export async function mergeRun(
         };
       }
     }
-    // CI en rojo o corriendo: no se mezcla. Sin CI (`none`) o si GitHub no contesta, como antes:
-    // el chip de la tarjeta era la única señal y «Merge» entraba igual (MailMask #8, 4-oct).
+    // CI en rojo o corriendo: no se mezcla. Sin CI (`none`, repo sin workflows de PR), como antes.
+    // Si GitHub no contesta TAMPOCO se mezcla: sin leer los checks no hay evidencia de nada (antes
+    // pasaba, y un `update-branch` recién hecho podía entrar a main sin que corriera el CI).
     const ci = await prCi(sub, run.prUrl!);
+    if (!ci && !opts.override)
+      return { ok: false, queue: true, error: "No pude leer el CI del PR en GitHub: no se mezcla sin verlo. Se reintenta solo." };
     if (ci?.state === "pending")
       return { ok: false, queue: !opts.override, error: "El CI del PR sigue corriendo: espera a que termine." };
     if (ci?.state === "failure") {

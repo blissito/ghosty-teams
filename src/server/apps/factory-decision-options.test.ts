@@ -51,7 +51,7 @@ vi.mock("./factory-team.server", () => ({ factoryTurnFor: async () => null }));
 process.env.GHOSTY_PARTNER_SECRET = "x";
 vi.stubGlobal("fetch", vi.fn(async () => ({ status: 409, json: async () => ({ error: "no_slot", tier: "free", max: 1, busy: [] }) })));
 
-import { asksPerson, chooseOption, ciNotStarted, decide, escalationFromEvent, type Run } from "./factory-runs.server";
+import { asksPerson, chooseOption, ciNotStarted, CI_NONE_GRACE_MS, decide, escalationFromEvent, settleCiState, type Run } from "./factory-runs.server";
 import { normalizeEscalationOptions, optionNote, parseOptionChoice } from "./factory-flow";
 
 const run = (over: Partial<Run> = {}): Run => ({
@@ -190,5 +190,23 @@ describe("CI que GitHub nunca arrancó", () => {
     expect(ciNotStarted([{ state: "failure", seconds: 3 }, { state: "failure", seconds: 95 }])).toBe(false);
     expect(ciNotStarted([{ state: "failure", seconds: null }])).toBe(false);
     expect(ciNotStarted([{ state: "success", seconds: 2 }])).toBe(false);
+  });
+});
+
+describe("cero checks no es verde", () => {
+  const t0 = 1_800_000_000_000;
+  it("repo con CI y commit recién empujado sin checks = corriendo, no «sin CI»", () => {
+    // Primera vez que se ve el commit (justo tras un push o un update-branch): GitHub aún no registra nada.
+    expect(settleCiState("none", true, null, t0)).toBe("pending");
+    expect(settleCiState("none", true, t0, t0 + 60_000)).toBe("pending");
+  });
+  it("si pasa la gracia y sigue sin checks, ese commit de verdad no corre CI (filtro de rutas)", () => {
+    expect(settleCiState("none", true, t0, t0 + CI_NONE_GRACE_MS)).toBe("none");
+  });
+  it("repo sin workflows de PR: `none` es `none` desde el primer vistazo", () => {
+    expect(settleCiState("none", false, null, t0)).toBe("none");
+  });
+  it("no toca los demás estados", () => {
+    for (const s of ["success", "failure", "pending"]) expect(settleCiState(s, true, null, t0)).toBe(s);
   });
 });

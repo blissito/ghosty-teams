@@ -20,6 +20,8 @@ vi.mock("../../dbq.server", () => ({
   },
 }));
 vi.mock("../../db.server", () => ({ getChannelById: async () => ({ id: 3, slug: "dev" }), filterMutedOut: async (s: string[]) => s }));
+// Sólo `o/with-ci` corre CI en sus PR; el resto de los repos de esta prueba no tiene workflows.
+vi.mock("./ci-starter.server", () => ({ hasWorkflows: async (_sub: string, repo: string) => repo === "o/with-ci" }));
 vi.mock("../notify.server", () => ({ notify: async () => {} }));
 vi.mock("../bus.server", () => ({ publish: () => {}, ch: { room: () => "r" } }));
 vi.mock("../tenant.server", () => ({ currentNamespace: async () => "ns" }));
@@ -111,10 +113,21 @@ describe("mergeRun: guarda de CI", () => {
     expect((await mergeRun(run, "beto")).ok).toBe(true);
     expect(merged).toBe(2);
   });
-  it("si GitHub no contesta los checks, mezcla como antes", async () => {
+  it("si GitHub no contesta los checks, NO mezcla y queda en cola (sin verlos no hay evidencia)", async () => {
     checks = { error: "GitHub no contestó" };
-    expect((await mergeRun(run, "beto")).ok).toBe(true);
-    expect(merged).toBe(1);
+    const r = await mergeRun(run, "beto");
+    expect(r.ok).toBe(false);
+    expect(!r.ok && r.queue).toBe(true);
+    expect(merged).toBe(0);
+  });
+  it("repo CON CI y commit sin checks todavía (recién empujado): espera, no mezcla", async () => {
+    // El hueco del 15-nov: tras un push o un update-branch GitHub aún no registra los checks del
+    // SHA nuevo; leído como «sin CI» entraba a main sin que corriera nada.
+    checks = { state: "none" };
+    const r = await mergeRun({ ...run, prUrl: "https://github.com/o/with-ci/pull/9" } as Run, "beto");
+    expect(r.ok).toBe(false);
+    expect(!r.ok && r.queue).toBe(true);
+    expect(merged).toBe(0);
   });
 });
 
