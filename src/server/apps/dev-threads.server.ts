@@ -68,7 +68,7 @@ async function emailOf(sub: string): Promise<string | null> {
   return r?.email ? String(r.email).toLowerCase() : null;
 }
 
-async function postAs(channelId: number, rootMsgId: number, body: string, who: { handle: string; name: string; avatar?: string }) {
+async function postAs(channelId: number, rootMsgId: number | null, body: string, who: { handle: string; name: string; avatar?: string }) {
   const db = await import("../../db.server");
   const bus = await import("../bus.server");
   const { currentNamespace } = await import("../tenant.server");
@@ -176,8 +176,51 @@ export async function syncDevThread(t: DevThread): Promise<void> {
   }
 }
 
-/** El barrido del tenant (lo llama `sweepTenant`): todos los pendientes ligados y vivos. */
+/** El primer mensaje del hilo de un pendiente que nació fuera del room (gs, la app, la terminal). Puro. */
+export function adoptedRootText(run: { issue?: number | null; title?: string | null; repo?: string | null }): string {
+  const n = run.issue ? ` #${run.issue}` : "";
+  return `🛠️ **Pendiente${n}** · ${String(run.title ?? "").trim() || "sin título"} — ${run.repo ?? ""}`.trim();
+}
+
+/** El room que espeja un repo (sin distinguir mayúsculas). Puro. */
+export function roomForRepo(rooms: { channel_id: number; repo: string; connected_by: string }[], repo: string) {
+  const r = repo.toLowerCase();
+  return rooms.find((x) => String(x.repo).toLowerCase() === r) ?? null;
+}
+
+/**
+ * Una sola fuente de verdad (22-nov): TODO pendiente vivo de un repo conectado a un room tiene su hilo ahí, nazca donde
+ * nazca. Los que aún no lo tienen se adoptan: mensaje en el room, tarjeta en su hilo y el espejo desde el principio.
+ */
+export async function adoptLiveRuns(): Promise<void> {
+  const { devEngineOf } = await import("./dev-engine.server");
+  if ((await devEngineOf()) !== "unified") return;
+  const rooms = (await dbq("SELECT channel_id, repo, connected_by FROM gt_room_repos ORDER BY id", []).catch(() => [])) as {
+    channel_id: number;
+    repo: string;
+    connected_by: string;
+  }[];
+  if (!rooms.length) return;
+  let email: string | null = null;
+  for (const r of rooms) if ((email = await emailOf(r.connected_by))) break;
+  if (!email) return;
+  const live = await devRunsCall("live", { email });
+  if (!live.ok || !Array.isArray(live.data?.runs)) return;
+  for (const run of live.data.runs) {
+    const runId = String(run.id ?? "");
+    if (!runId || !run.repo || (await devThreadByRun(runId))) continue;
+    const room = roomForRepo(rooms, String(run.repo));
+    if (!room) continue;
+    const root = await postAs(room.channel_id, null, adoptedRootText(run), { handle: "ghosty", name: "Ghosty" }).catch(() => null);
+    if (!root) continue;
+    await dbq("INSERT OR IGNORE INTO gt_dev_threads (run_id, channel_id, root_msg_id, requested_by) VALUES (?, ?, ?, ?)", [runId, room.channel_id, root, room.connected_by]);
+    await postAs(room.channel_id, root, devRunFence(runId), { handle: "ghosty", name: "Ghosty" }).catch(() => null);
+  }
+}
+
+/** El barrido del tenant (lo llama `sweepTenant`): adopta los pendientes sin hilo y espeja los ligados y vivos. */
 export async function syncDevThreads(): Promise<void> {
+  await adoptLiveRuns().catch((e) => console.warn(`[dev-threads] adoptar: ${(e as Error).message}`));
   const rows = await dbq("SELECT * FROM gt_dev_threads WHERE closed = 0 ORDER BY created_at DESC LIMIT 50", []).catch(() => []);
   for (const r of rows) await syncDevThread(rowToThread(r)).catch((e) => console.warn(`[dev-threads] ${r.run_id}: ${(e as Error).message}`));
 }

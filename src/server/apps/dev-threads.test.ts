@@ -45,3 +45,13 @@ describe("tarjeta del pendiente", () => {
     expect(devRunView("a", { phase: "merged", ready: true })).toMatchObject({ canMerge: false, live: false });
   });
 });
+
+import { adoptedRootText, roomForRepo } from "./dev-threads.server";
+describe("adoptar pendientes que nacieron fuera del room", () => {
+  it("encuentra el room del repo sin importar mayúsculas y arma la cabeza del hilo", () => {
+    const rooms = [{ channel_id: 7, repo: "blissito/MailMask", connected_by: "u1" }];
+    expect(roomForRepo(rooms, "blissito/mailmask")?.channel_id).toBe(7);
+    expect(roomForRepo(rooms, "otro/repo")).toBeNull();
+    expect(adoptedRootText({ issue: 138, title: "Blog", repo: "blissito/mailmask" })).toBe("🛠️ **Pendiente #138** · Blog — blissito/mailmask");
+  });
+});
