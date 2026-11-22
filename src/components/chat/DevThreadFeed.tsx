@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Message } from "../../db.server";
 import { useT } from "../../i18n";
 import { Markdown } from "../Markdown";
+import { extractAllEbFile, stripEbFile } from "../../lib/ebdoc";
 import { devThreadConversationFn, type DevChatMessage } from "../../server/apps/dev-threads";
 
 export type FeedItem = { kind: "real"; m: Message } | { kind: "dev"; d: DevChatMessage; at: number };
@@ -77,8 +78,24 @@ export function DevFeedRow({ d, writer }: { d: DevChatMessage; writer: { name: s
           <span className="text-xs text-muted">{hhmm(d.at)}</span>
         </div>
         <div className="text-sm text-ink">
-          <Markdown body={d.text} />
+          <Markdown body={stripEbFile(d.text)} />
         </div>
+        {/* Los archivos que entrega el escritor (```eb-file```): imágenes en miniatura, el resto como liga. */}
+        {extractAllEbFile(d.text).length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {extractAllEbFile(d.text).map((f) =>
+              (f.mime ?? "").startsWith("image/") || /\.(png|jpe?g|webp|gif)(\?|$)/i.test(f.url) ? (
+                <a key={f.url} href={f.url} target="_blank" rel="noreferrer">
+                  <img src={f.thumb || f.url} alt={f.name ?? ""} loading="lazy" className="h-28 w-40 rounded-lg border border-border object-cover" />
+                </a>
+              ) : (
+                <a key={f.url} href={f.url} target="_blank" rel="noreferrer" className="rounded-lg border border-border px-2 py-1 text-xs text-ink hover:bg-surface-2">
+                  📎 {f.name ?? f.url.split("?")[0].split("/").pop()}
+                </a>
+              ),
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
