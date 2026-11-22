@@ -8,7 +8,8 @@
 // que un cuerpo vacío basta. 400/403 = la petición se rechazó por origen o CSRF; 5xx = la app
 // truena; 2xx/3xx, 404/405 (sin acción) o 422 (validación) = el chequeo pasó.
 
-export type SmokeResult = { path: string; method: "POST"; status: number | null; ok: boolean; why: string };
+// method "GET" sólo aparece cuando la página misma truena (smoke de gs): sin eso, una ruta declarada que da 500 pasaría en blanco.
+export type SmokeResult = { path: string; method: "GET" | "POST"; status: number | null; ok: boolean; why: string };
 
 /** Veredicto de una respuesta (puro, con su test). */
 export function actionSmokeVerdict(status: number | null, body: string): { ok: boolean; why: string } {
@@ -79,6 +80,39 @@ export async function actionSmoke(previewUrl: string, paths: string[], hit: Smok
   return out.length ? out : null;
 }
 
+/** Un paso del smoke de gs (`POST /api/v2/partners/smoke`). */
+export type GsSmokeStep = { method: "GET" | "POST"; path: string; status: number | null; ok: boolean; why: string };
+
+/**
+ * Los pasos de gs al contrato de siempre: todos los POST y, de los GET, sólo los que fallan (gs no manda el POST
+ * si la página truena, y esa falla no se puede perder). null = no hubo nada que probar, igual que `actionSmoke`.
+ */
+export function smokeResultsFromGs(steps: GsSmokeStep[]): SmokeResult[] | null {
+  const out = steps
+    .filter((s) => s.method === "POST" || !s.ok)
+    .map((s): SmokeResult => ({ path: s.path, method: s.method, status: s.status, ok: s.ok, why: s.why }));
+  return out.length ? out : null;
+}
+
+/** Una sola pieza de smoke (21-nov): lo corre gs. undefined = gs no contestó y toca el local. */
+async function gsSmoke(previewUrl: string, paths: string[]): Promise<SmokeResult[] | null | undefined> {
+  try {
+    const { nativeRuntimeBase, partnerHeaders } = await import("../ghosty-runtime.server");
+    const base = await nativeRuntimeBase();
+    if (!base) return undefined;
+    const { currentNamespace } = await import("../tenant.server");
+    const body = JSON.stringify({ previewUrl, paths });
+    const res = await fetch(`${base}/api/v2/partners/smoke`, { method: "POST", headers: partnerHeaders(body, await currentNamespace()), body, signal: AbortSignal.timeout(90_000) });
+    if (!res.ok) throw new Error(`gs respondió ${res.status}: ${(await res.text().catch(() => "")).slice(0, 200)}`);
+    const data = (await res.json()) as { steps?: GsSmokeStep[] };
+    if (!Array.isArray(data.steps)) throw new Error("gs no mandó steps");
+    return smokeResultsFromGs(data.steps);
+  } catch (e) {
+    console.warn(`[factory] smoke por gs ${previewUrl}: ${(e as Error).message} (corre el local)`);
+    return undefined;
+  }
+}
+
 /** El smoke del pedido con las rutas que declara el repo. Nunca lanza: null si no se pudo correr. */
 export async function runActionSmoke(previewUrl: string, repo: string | null, sub: string, hit?: SmokeHit): Promise<SmokeResult[] | null> {
   try {
@@ -86,6 +120,11 @@ export async function runActionSmoke(previewUrl: string, repo: string | null, su
     if (repo) {
       const { repoTeamFile } = await import("./factory-team.server");
       paths = (await repoTeamFile(repo, sub).catch(() => null))?.smoke ?? [];
+    }
+    // Las previews las prueba gs; producción (`hit` propio, p. ej. `guardedHit`) y gs caído se quedan aquí.
+    if (!hit) {
+      const viaGs = await gsSmoke(previewUrl, paths);
+      if (viaGs !== undefined) return viaGs;
     }
     return await actionSmoke(previewUrl, paths, hit);
   } catch (e) {

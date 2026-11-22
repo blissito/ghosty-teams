@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { actionSmoke, actionSmokeVerdict, reactRouterDataPath, smokeFailures } from "./factory-smoke.server";
+import { actionSmoke, actionSmokeVerdict, reactRouterDataPath, smokeFailures, smokeResultsFromGs } from "./factory-smoke.server";
 
 describe("actionSmokeVerdict", () => {
   it("el #96: 400 por origen es fallo y cita el cuerpo", () => {
@@ -55,5 +55,18 @@ describe("actionSmoke", () => {
     vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => new Response("", { status: init.method === "POST" ? 302 : 200 }));
     const r = await actionSmoke("https://x.preview.ghosty.page/", ["/login"]);
     expect(r).toEqual([{ path: "/login", method: "POST", status: 302, ok: true, why: "302: el envío pasó el chequeo de origen" }]);
+  });
+});
+
+describe("smokeResultsFromGs", () => {
+  it("se queda con los POST y con los GET que fallan; sin nada que probar es null", () => {
+    const r = smokeResultsFromGs([
+      { method: "GET", path: "/", status: 200, ok: true, why: "200" },
+      { method: "POST", path: "/_root.data", status: 400, ok: false, why: "400: la app rechazó el envío (origen/CSRF)" },
+      { method: "GET", path: "/login", status: 500, ok: false, why: "500: la página truena" },
+    ]);
+    expect(r?.map((x) => `${x.method} ${x.path}`)).toEqual(["POST /_root.data", "GET /login"]);
+    expect(smokeFailures(r)).toContain("GET /login → 500");
+    expect(smokeResultsFromGs([{ method: "GET", path: "/", status: 200, ok: true, why: "200" }])).toBeNull();
   });
 });
