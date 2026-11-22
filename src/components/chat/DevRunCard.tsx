@@ -1,12 +1,11 @@
-// La tarjeta de un pendiente de gs en el room (una sola fábrica, 22-nov). Es una VISTA: la conversación, la etapa y el PR
-// viven en gs y se leen en vivo mientras la tarjeta está a la vista; nada se copia a Teams. Lo que se escribe en su
-// composer le llega al escritor por `op:tell`. Molde: el agente de Cursor en Slack (un mensaje con estado, resumen del
-// agente con «Ver más» y botones «Ver PR» / «Abrir en …» / «⋯»).
+// La tarjeta de un pendiente de gs en el room (una sola fábrica, 22-nov). Es una VISTA del estado que vive en gs: etapa,
+// la pregunta del escritor cuando le toca a una persona y botones. Sin chat ni caja de texto dentro (bliss: «chat dentro de
+// chat» no): la conversación con el escritor va en el hilo de este mensaje. Molde: el agente de Cursor en Slack.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useT } from "../../i18n";
 import { Markdown } from "../Markdown";
-import { devThreadActionFn, devThreadCardFn, devThreadConversationFn, devThreadTellFn, type DevChatMessage, type DevRunView } from "../../server/apps/dev-threads";
+import { devThreadActionFn, devThreadCardFn, devThreadTellFn, type DevRunView } from "../../server/apps/dev-threads";
 
 // El apex (no `www`): ahí vive la cookie de sesión de gs.
 const STUDIO = "https://ghosty.studio";
@@ -39,27 +38,13 @@ export function DevRunCard({ runId }: { runId: string }) {
   const box = useRef<HTMLDivElement>(null);
   const visible = useVisible(box);
   const [st, setSt] = useState<(DevRunView & { rootMsgId: number }) | null>(null);
-  const [msgs, setMsgs] = useState<DevChatMessage[]>([]);
-  const lastSeq = useRef(0);
-  const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
 
   const load = useCallback(async () => {
-    const [s, c] = await Promise.all([
-      devThreadCardFn({ data: { runId } }).catch(() => null),
-      devThreadConversationFn({ data: { runId, after: lastSeq.current } }).catch(() => null),
-    ]);
+    const s = await devThreadCardFn({ data: { runId } }).catch(() => null);
     if (s) setSt(s);
-    if (c?.messages.length) {
-      lastSeq.current = Math.max(lastSeq.current, ...c.messages.map((m) => m.seq));
-      setMsgs((prev) => {
-        const seen = new Set(prev.map((m) => m.seq));
-        return [...prev, ...c.messages.filter((m) => !seen.has(m.seq))];
-      });
-    }
   }, [runId]);
 
   // Mientras se ve: cada 5 s si está viva, nada si ya cerró.
@@ -94,21 +79,7 @@ export function DevRunCard({ runId }: { runId: string }) {
       setBusy(false);
     }
   };
-  const send = () => {
-    const text = draft.trim();
-    if (!text) return;
-    void run(async () => {
-      await devThreadTellFn({ data: { runId, text } });
-      setDraft("");
-      setOpen(true);
-    });
-  };
-
   if (!st) return <div ref={box} className="mt-2 h-16 max-w-xl animate-pulse rounded-xl border border-border bg-surface-2 motion-reduce:animate-none" />;
-
-  const writer = msgs.filter((m) => m.role === "writer");
-  const last = writer[writer.length - 1];
-  const shown = open ? msgs : last && last.text !== st.question ? [last] : [];
 
   return (
     <div ref={box} className={`mt-2 max-w-xl rounded-xl border border-border shadow-sm ${st.needsPerson ? "bg-amber-50 dark:bg-amber-950/30" : "bg-surface-2"}`}>
@@ -142,38 +113,6 @@ export function DevRunCard({ runId }: { runId: string }) {
               ))}
             </div>
           )}
-        </div>
-      )}
-
-      {shown.length > 0 && (
-        <div className={`mx-3 mt-2 space-y-2 ${open ? "max-h-80 overflow-y-auto pr-1" : ""}`}>
-          {shown.map((m) => (
-            <div key={m.seq} className={m.role === "person" ? "ml-8 rounded-lg bg-surface px-2 py-1 text-sm" : "text-sm"}>
-              <div className={open ? "" : "line-clamp-4"}>
-                <Markdown body={m.text} />
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-      {msgs.length > 1 && (
-        <button type="button" onClick={() => setOpen((o) => !o)} className="mx-3 mt-1 text-xs font-semibold text-brand hover:underline">
-          {open ? t("Ver menos") : `${t("Ver conversación")} (${msgs.length})`}
-        </button>
-      )}
-
-      {st.live && (
-        <div className="mx-3 mt-2 flex items-center gap-2">
-          <input
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), send())}
-            placeholder={t("Escríbele al escritor…")}
-            className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-2 py-1.5 text-sm text-ink outline-none focus:border-brand"
-          />
-          <button type="button" disabled={busy || !draft.trim()} onClick={send} className="shrink-0 rounded-lg bg-brand px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50">
-            {t("Enviar")}
-          </button>
         </div>
       )}
 
