@@ -1,18 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { devRunFence, isClosedPhase, phaseLine, routesToWriter, writerMessages } from "./dev-threads.server";
+import { devRunFence, routesToWriter, writerMessages } from "./dev-threads.server";
 
 describe("hilo del room = vista del pendiente de gs", () => {
-  it("sin menciones o sólo @ghosty va al escritor; otro agente no", () => {
-    expect(routesToWriter([])).toBe(true);
+  it("sólo @ghosty va al escritor; sin @ o con otro agente no", () => {
+    expect(routesToWriter([])).toBe(false);
     expect(routesToWriter(["ghosty"])).toBe(true);
     expect(routesToWriter(["plan"])).toBe(false);
     expect(routesToWriter(["ghosty", "check"])).toBe(false);
-  });
-  it("sólo publica una línea cuando la fase cambia y pide algo o cierra", () => {
-    expect(phaseLine("working", "needs_person")).toContain("Te toca decidir");
-    expect(phaseLine("needs_person", "needs_person")).toBeNull();
-    expect(phaseLine("working", "waiting_ci")).toBeNull();
-    expect(phaseLine("reviewing", "merged")).toContain("Mezclado");
   });
   it("del escritor sólo pasan sus mensajes con texto", () => {
     const out = writerMessages([
@@ -22,9 +16,7 @@ describe("hilo del room = vista del pendiente de gs", () => {
     ]);
     expect(out).toEqual([{ seq: 2, text: "Ya abrí el PR." }]);
   });
-  it("fases cerradas y fence", () => {
-    expect(isClosedPhase("merged")).toBe(true);
-    expect(isClosedPhase("working")).toBe(false);
+  it("fence", () => {
     expect(devRunFence("abc")).toBe('```gt-devrun\n{"runId":"abc"}\n```');
   });
 });
@@ -53,5 +45,16 @@ describe("adoptar pendientes que nacieron fuera del room", () => {
     expect(roomForRepo(rooms, "blissito/mailmask")?.channel_id).toBe(7);
     expect(roomForRepo(rooms, "otro/repo")).toBeNull();
     expect(adoptedRootText({ issue: 138, title: "Blog", repo: "blissito/mailmask" })).toBe("🛠️ **Pendiente #138** · Blog — blissito/mailmask");
+  });
+});
+
+import { chatMessages } from "./dev-threads";
+describe("chat de la tarjeta", () => {
+  it("escritor y personas, sin vacíos ni sistema; la etapa numérica no es etiqueta", () => {
+    expect(chatMessages([{ seq: 1, role: "user", text: "hola" }, { seq: 2, role: "assistant", text: "¿A o B?" }, { seq: 3, role: "system", text: "x" }, { seq: 4, role: "assistant", text: " " }])).toEqual([
+      { seq: 1, role: "person", text: "hola", at: null },
+      { seq: 2, role: "writer", text: "¿A o B?", at: null },
+    ]);
+    expect(devRunView("a", { phase: "needs_person", stage: 3, estado: "Te necesita" }).label).toBe("Te necesita");
   });
 });

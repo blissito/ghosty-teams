@@ -1022,7 +1022,7 @@ export const postMessageAs = createServerOnlyFn(async (me: SessionMe | null, dat
   if (!factorySigned && data.parentId !== null && me?.sub && body) {
     const { devThreadOf, routesToWriter, tellDevThread } = await import("./apps/dev-threads.server");
     const dt = routesToWriter(mentionedList) && !mencionaAAlguienMas(body.replace(/@ghosty\b/gi, "")) ? await devThreadOf(channel.id, data.parentId).catch(() => null) : null;
-    if (dt && !dt.closed) {
+    if (dt) {
       devTold = true;
       void tellDevThread(dt, me.sub, body).then(async (r) => {
         if (r.ok) return;

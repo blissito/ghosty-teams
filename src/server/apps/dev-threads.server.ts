@@ -3,7 +3,8 @@
 // decide gs. Tres movimientos:
 //   · `startDevThread`: el pedido nace en gs (`op:start`) y el hilo queda ligado.
 //   · `tellDevThread`: lo que la persona escribe en el hilo le llega al escritor (`op:tell`), sin despertar roles.
-//   · `syncDevThreads`: el barrido publica en el hilo lo que dice el escritor y los cambios de fase.
+//   · `syncDevThreads`: el barrido adopta los pendientes vivos que aún no tienen tarjeta. NO copia mensajes: la tarjeta
+//     lee la conversación de gs en vivo (gs es la única fuente).
 import { dbq } from "../../dbq.server";
 import { devRunsCall } from "./dev-engine.server";
 
@@ -12,30 +13,7 @@ export type DevThread = {
   channelId: number;
   rootMsgId: number;
   requestedBy: string | null;
-  convSeq: number;
-  eventSeq: number;
-  phase: string | null;
-  closed: boolean;
 };
-
-// Las fases cerradas de gs (`DevRunPhase`): ya no hay nada que espejar.
-const CLOSED_PHASES = new Set(["merged", "done", "failed", "stopped"]);
-export const isClosedPhase = (phase: string | null | undefined) => !!phase && CLOSED_PHASES.has(phase);
-
-// Lo que se dice en el hilo cuando el pendiente cambia de fase (sólo las que piden algo o cierran: lo demás lo
-// cuenta la tarjeta fija, sin ruido). Puro.
-const PHASE_LINE: Record<string, string> = {
-  needs_person: "✋ **Te toca decidir.** El escritor necesita a una persona; contesta aquí mismo.",
-  ready: "✅ **Listo para mezclar.** CI, revisión y smoke en verde; mézclalo desde la tarjeta de arriba.",
-  merged: "🎉 **Mezclado.** Los cambios ya están en la rama base.",
-  failed: "⛔ **El pendiente falló.** El detalle está en la tarjeta.",
-  stopped: "⏹️ **Pendiente detenido.**",
-  done: "🏁 **Pendiente cerrado sin cambios.**",
-};
-export function phaseLine(prev: string | null, next: string | null): string | null {
-  if (!next || prev === next) return null;
-  return PHASE_LINE[next] ?? null;
-}
 
 /** El fence de la tarjeta del pendiente de gs en el hilo (la pinta `DevRunCard`). Puro. */
 export const devRunFence = (runId: string) => "```gt-devrun\n" + JSON.stringify({ runId }) + "\n```";
@@ -46,10 +24,6 @@ function rowToThread(r: any): DevThread {
     channelId: Number(r.channel_id),
     rootMsgId: Number(r.root_msg_id),
     requestedBy: r.requested_by ? String(r.requested_by) : null,
-    convSeq: Number(r.conv_seq) || 0,
-    eventSeq: Number(r.event_seq) || 0,
-    phase: r.phase ? String(r.phase) : null,
-    closed: Number(r.closed) === 1,
   };
 }
 
@@ -146,9 +120,10 @@ export function planCriteria(planMd: string): string[] {
   return out.slice(0, 15);
 }
 
-/** ¿El mensaje del hilo es para el escritor? Sin menciones, o sólo a @ghosty. Si menciona a otro agente o persona, no. Puro. */
+/** ¿El mensaje del hilo es para el escritor? Sólo si menciona a @ghosty y a nadie más: en el hilo también platica el
+ *  equipo y eso no debe distraer al escritor (sin @ no le llega). Puro. */
 export function routesToWriter(mentions: string[]): boolean {
-  return mentions.every((h) => h.toLowerCase() === "ghosty");
+  return mentions.length > 0 && mentions.every((h) => h.toLowerCase() === "ghosty");
 }
 
 /** Un mensaje del escritor para el hilo (puro): sólo lo que el escritor le dice a la persona, recortado. */
@@ -156,36 +131,6 @@ export function writerMessages(messages: { seq: number; role: string; text: stri
   return messages
     .filter((m) => m.role === "assistant" && m.text && m.text.trim())
     .map((m) => ({ seq: m.seq, text: m.text.trim().slice(0, 6000) }));
-}
-
-/** Espeja un pendiente: lo que dijo el escritor y su cambio de fase. Nunca lanza. */
-export async function syncDevThread(t: DevThread): Promise<void> {
-  if (t.closed) return;
-  const email = t.requestedBy ? await emailOf(t.requestedBy) : null;
-  if (!email) return;
-  const conv = await devRunsCall("conversation", { id: t.runId, after: t.convSeq, email });
-  let convSeq = t.convSeq;
-  if (conv.ok && Array.isArray(conv.data?.messages)) {
-    for (const m of writerMessages(conv.data.messages)) {
-      await postAs(t.channelId, t.rootMsgId, m.text, "writer").catch(() => null);
-    }
-    for (const m of conv.data.messages) convSeq = Math.max(convSeq, Number(m.seq) || 0);
-  }
-  const st = await devRunsCall("status", { id: t.runId, after: t.eventSeq, email });
-  let eventSeq = t.eventSeq;
-  let phase = t.phase;
-  if (st.ok) {
-    for (const e of Array.isArray(st.data?.events) ? st.data.events : []) eventSeq = Math.max(eventSeq, Number(e.seq) || 0);
-    const next = String(st.data?.phase ?? st.data?.run?.phase ?? "") || null;
-    const line = phaseLine(phase, next);
-    if (line) await postAs(t.channelId, t.rootMsgId, line, "platform").catch(() => null);
-    phase = next ?? phase;
-  }
-  if (convSeq !== t.convSeq || eventSeq !== t.eventSeq || phase !== t.phase) {
-    await dbq("UPDATE gt_dev_threads SET conv_seq = ?, event_seq = ?, phase = ?, closed = ? WHERE run_id = ?", [convSeq, eventSeq, phase, isClosedPhase(phase) ? 1 : 0, t.runId]).catch(() => {});
-    const { refreshRoom } = await import("./factory-runs.server");
-    void refreshRoom(t.channelId);
-  }
 }
 
 /** El primer mensaje del hilo de un pendiente que nació fuera del room (gs, la app, la terminal). Puro. */
@@ -223,28 +168,28 @@ export async function adoptLiveRuns(): Promise<void> {
     if (!runId || !run.repo || (await devThreadByRun(runId))) continue;
     const room = roomForRepo(rooms, String(run.repo));
     if (!room) continue;
-    const root = await postAs(room.channel_id, null, adoptedRootText(run), "platform").catch(() => null);
+    // UN solo mensaje en el room: la tarjeta. La conversación la lee la tarjeta de gs; Teams no la copia.
+    const root = await postAs(room.channel_id, null, devRunFence(runId), "platform").catch(() => null);
     if (!root) continue;
     await dbq("INSERT OR IGNORE INTO gt_dev_threads (run_id, channel_id, root_msg_id, requested_by) VALUES (?, ?, ?, ?)", [runId, room.channel_id, root, room.connected_by]);
-    await postAs(room.channel_id, root, devRunFence(runId), "platform").catch(() => null);
   }
 }
 
-/** Mensajes del puente que salieron como «Ghosty» sin avatar (22-nov): les pone la cara de la fábrica. Idempotente. */
-async function fixLegacyFaces(): Promise<void> {
-  const rows = await dbq(
-    `SELECT m.id, m.body, (m.id = t.root_msg_id) AS is_root FROM gc_messages m JOIN gt_dev_threads t
-       ON (m.id = t.root_msg_id OR m.parent_id = t.root_msg_id) AND m.channel_id = t.channel_id
-     WHERE m.agent_handle = 'ghosty' AND (m.avatar IS NULL OR m.avatar = '') LIMIT 200`,
+/**
+ * Limpieza (22-nov): el primer puente copiaba al hilo los mensajes del escritor y la cabeza era texto. gs es la única fuente:
+ * en el room queda SÓLO la tarjeta. Borra las respuestas que publicó el puente en los hilos adoptados y deja la raíz como
+ * la tarjeta. Idempotente (no encuentra nada en la segunda vuelta).
+ */
+async function cleanupCopiedMirror(): Promise<void> {
+  const roots = await dbq(
+    "SELECT t.run_id, t.channel_id, t.root_msg_id FROM gt_dev_threads t JOIN gc_messages m ON m.id = t.root_msg_id WHERE m.sender_sub IS NULL AND m.body LIKE '🛠️ **Pendiente%'",
     [],
   ).catch(() => []);
-  if (!rows.length) return;
-  const platform = await faceOf("platform");
-  const writer = await faceOf("writer");
-  for (const r of rows) {
-    const isPlatform = Number(r.is_root) === 1 || String(r.body ?? "").startsWith("```gt-devrun") || /^[✋✅🎉⛔⏹️🏁⚠️]/u.test(String(r.body ?? ""));
-    const f = isPlatform ? platform : writer;
-    await dbq("UPDATE gc_messages SET agent_handle = ?, sender = ?, avatar = ? WHERE id = ?", [f.handle, f.name, f.avatar, r.id]).catch(() => {});
+  for (const r of roots) {
+    await dbq("DELETE FROM gc_messages WHERE parent_id = ? AND channel_id = ? AND sender_sub IS NULL", [r.root_msg_id, r.channel_id]).catch(() => {});
+    await dbq("UPDATE gc_messages SET body = ? WHERE id = ?", [devRunFence(String(r.run_id)), r.root_msg_id]).catch(() => {});
+    const { refreshRoom } = await import("./factory-runs.server");
+    void refreshRoom(Number(r.channel_id));
   }
 }
 
@@ -253,10 +198,8 @@ export async function postDevNote(channelId: number, rootMsgId: number, text: st
   await postAs(channelId, rootMsgId, text, "platform").catch(() => null);
 }
 
-/** El barrido del tenant (lo llama `sweepTenant`): adopta los pendientes sin hilo y espeja los ligados y vivos. */
+/** El barrido del tenant (lo llama `sweepTenant`): sólo adopta pendientes sin tarjeta. NO espeja: gs es la única fuente. */
 export async function syncDevThreads(): Promise<void> {
-  await fixLegacyFaces().catch(() => {});
+  await cleanupCopiedMirror().catch(() => {});
   await adoptLiveRuns().catch((e) => console.warn(`[dev-threads] adoptar: ${(e as Error).message}`));
-  const rows = await dbq("SELECT * FROM gt_dev_threads WHERE closed = 0 ORDER BY created_at DESC LIMIT 50", []).catch(() => []);
-  for (const r of rows) await syncDevThread(rowToThread(r)).catch((e) => console.warn(`[dev-threads] ${r.run_id}: ${(e as Error).message}`));
 }

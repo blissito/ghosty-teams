@@ -77,6 +77,7 @@ import { pendingAsk } from "@ghostystudio/computer";
 import { computerBrowserFn } from "../../server/chat";
 import { useRtSubscribe } from "../../utils/rt-bus";
 import { PlanCard } from "./PlanCard";
+import { DevRunCard } from "./DevRunCard";
 import { RunCard, RunFossil } from "./RunCard";
 import { PrPreviewButton } from "./PrPreviewButton";
 import { VerdictCard, PreviewErrorCard } from "./VerdictCard";
@@ -3282,9 +3283,10 @@ export function MessageRow({
                 const rc = extractRunCard(m.body);
                 return rc ? <RunCard card={rc} channelId={m.channel_id ?? 0} msgId={m.id} /> : null;
               })()}
-              {extractDevRunCard(m.body) && (
-                <p className="mt-1 text-xs text-muted">{t("El pedido corre en el motor de Ghosty: su estado está arriba del hilo y lo que escribas aquí le llega al escritor.")}</p>
-              )}
+              {(() => {
+                const dr = extractDevRunCard(m.body);
+                return dr ? <DevRunCard runId={dr.runId} /> : null;
+              })()}
               {(() => {
                 const rf = extractRunFossil(m.body);
                 return rf ? <RunFossil runId={rf.runId} title={rf.title} status={rf.status} at={rf.at} cardMsgId={rf.liveMsgId} /> : null;

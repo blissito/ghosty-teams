@@ -2765,4 +2765,11 @@ export const en: Record<string, string> = {
   "Te necesita": "Needs you",
   "Haciendo merge": "Merging",
   "Listo · sin cambios": "Done \u00b7 no changes",
+  "Te toca decidir: contéstale aquí abajo.": "Your call: reply right below.",
+  "Ver conversación": "View conversation",
+  "Ver menos": "Show less",
+  "Escríbele al escritor…": "Write to the writer\u2026",
+  "Abrir en Ghosty": "Open in Ghosty",
+  "Detener el pendiente": "Stop the task",
+  "Te toca decidir: contéstale en la tarjeta del pendiente o menciona a @ghosty aquí.": "Your call: reply in the task card or mention @ghosty here.",
 };

@@ -26,7 +26,7 @@ export function devRunView(runId: string, d: any): DevRunView {
     runId,
     title: String(d?.title ?? "Pendiente"),
     phase,
-    label: String(d?.stage ?? d?.estado ?? phase),
+    label: String(typeof d?.stage === "string" && Number.isNaN(Number(d.stage)) ? d.stage : (d?.estado ?? phase)),
     repo: d?.repo ? String(d.repo) : null,
     issue: Number(d?.issue) || null,
     prUrl: d?.prUrl ? String(d.prUrl) : null,
@@ -37,14 +37,17 @@ export function devRunView(runId: string, d: any): DevRunView {
   };
 }
 
-async function threadFor(channelId: number, rootMsgId: number) {
+// La tarjeta llega por `runId` (el fence); la barra del hilo, por (channel, raíz). Las dos comprueban que quien mira
+// vea el room del pendiente.
+async function ctxFor(q: { runId?: string; channelId?: number; rootMsgId?: number }) {
   const me = await sessionUser();
   if (!me) return null;
+  const { devThreadByRun, devThreadOf } = await import("./dev-threads.server");
+  const t = q.runId ? await devThreadByRun(String(q.runId)) : q.channelId && q.rootMsgId ? await devThreadOf(Number(q.channelId), Number(q.rootMsgId)) : null;
+  if (!t) return null;
   const db = await import("../../db.server");
-  if (!(await db.listChannels(me.sub, me.isOwner)).some((c) => c.id === channelId)) return null;
-  const { devThreadOf } = await import("./dev-threads.server");
-  const t = await devThreadOf(channelId, rootMsgId);
-  return t ? { me, t } : null;
+  if (!(await db.listChannels(me.sub, me.isOwner)).some((c) => c.id === t.channelId)) return null;
+  return { me, t };
 }
 
 async function emailFor(sub: string | null): Promise<string | null> {
@@ -54,25 +57,63 @@ async function emailFor(sub: string | null): Promise<string | null> {
   return r?.email ? String(r.email).toLowerCase() : null;
 }
 
-/** La tarjeta del hilo: null si el hilo no es de un pendiente de gs. */
+type Q = { runId?: string; channelId?: number; rootMsgId?: number };
+
+/** El estado del pendiente (lo lee gs en vivo con la cuenta de quien mira). null si no es un pendiente de gs. */
 export const devThreadCardFn = createServerFn({ method: "POST" })
-  .validator((d: { channelId: number; rootMsgId: number }) => d)
-  .handler(async ({ data }): Promise<DevRunView | null> => {
-    const ctx = await threadFor(Number(data.channelId), Number(data.rootMsgId));
+  .validator((d: Q) => d)
+  .handler(async ({ data }): Promise<(DevRunView & { rootMsgId: number }) | null> => {
+    const ctx = await ctxFor(data);
     if (!ctx) return null;
     const { devRunsCall } = await import("./dev-engine.server");
-    // El pendiente es de quien lo pidió: gs lo lee con su cuenta.
-    const email = await emailFor(ctx.t.requestedBy);
+    const email = (await emailFor(ctx.me.sub)) ?? (await emailFor(ctx.t.requestedBy));
     const r = email ? await devRunsCall("status", { id: ctx.t.runId, email, after: 1e12 }) : null;
-    if (!r?.ok) return devRunView(ctx.t.runId, { phase: ctx.t.phase ?? "queued" });
-    return devRunView(ctx.t.runId, r.data);
+    return { ...devRunView(ctx.t.runId, r?.ok ? r.data : { phase: "queued" }), rootMsgId: ctx.t.rootMsgId };
+  });
+
+export type DevChatMessage = { seq: number; role: "writer" | "person"; text: string; at: string | null };
+
+/** La conversación del escritor, leída de gs en vivo (`after` = último seq que ya tiene la tarjeta). Nada se guarda aquí. */
+export const devThreadConversationFn = createServerFn({ method: "POST" })
+  .validator((d: Q & { after?: number }) => d)
+  .handler(async ({ data }): Promise<{ messages: DevChatMessage[] } | null> => {
+    const ctx = await ctxFor(data);
+    if (!ctx) return null;
+    const email = await emailFor(ctx.me.sub);
+    if (!email) return null;
+    const { devRunsCall } = await import("./dev-engine.server");
+    const r = await devRunsCall("conversation", { id: ctx.t.runId, after: Number(data.after) || 0, email });
+    if (!r.ok) return { messages: [] };
+    return { messages: chatMessages(r.data?.messages) };
+  });
+
+/** Los mensajes de gs para el chat de la tarjeta (puro): el escritor y las personas, sin los de sistema ni vacíos. */
+export function chatMessages(raw: unknown): DevChatMessage[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((m: any) => (m?.role === "assistant" || m?.role === "user") && String(m?.text ?? "").trim())
+    .map((m: any) => ({ seq: Number(m.seq) || 0, role: m.role === "assistant" ? ("writer" as const) : ("person" as const), text: String(m.text).trim(), at: m.at ? String(m.at) : null }));
+}
+
+/** Lo que se escribe en el composer de la tarjeta: al escritor por `op:tell` (gs lo guarda y lo muestra). */
+export const devThreadTellFn = createServerFn({ method: "POST" })
+  .validator((d: Q & { text: string }) => d)
+  .handler(async ({ data }) => {
+    const ctx = await ctxFor(data);
+    if (!ctx) throw new Error("no autorizado");
+    const text = String(data.text ?? "").trim();
+    if (!text) throw new Error("mensaje vacío");
+    const { tellDevThread } = await import("./dev-threads.server");
+    const r = await tellDevThread(ctx.t, ctx.me.sub, text);
+    if (!r.ok) throw new Error(r.message ?? "gs no respondió");
+    return { ok: true as const };
   });
 
 /** Mezclar o detener desde la tarjeta, con la cuenta de quien da el clic (gs comprueba que pueda). */
 export const devThreadActionFn = createServerFn({ method: "POST" })
-  .validator((d: { channelId: number; rootMsgId: number; action: "merge" | "stop" }) => d)
+  .validator((d: Q & { action: "merge" | "stop" }) => d)
   .handler(async ({ data }) => {
-    const ctx = await threadFor(Number(data.channelId), Number(data.rootMsgId));
+    const ctx = await ctxFor(data);
     if (!ctx) throw new Error("no autorizado");
     if (data.action !== "merge" && data.action !== "stop") throw new Error("acción inválida");
     const email = await emailFor(ctx.me.sub);
@@ -80,7 +121,5 @@ export const devThreadActionFn = createServerFn({ method: "POST" })
     const { devRunsCall } = await import("./dev-engine.server");
     const r = await devRunsCall(data.action, { id: ctx.t.runId, email });
     if (!r.ok) throw new Error(String(r.data?.message ?? r.data?.error ?? `gs respondió ${r.status}`));
-    const { syncDevThread } = await import("./dev-threads.server");
-    await syncDevThread(ctx.t).catch(() => {});
     return { ok: true as const };
   });

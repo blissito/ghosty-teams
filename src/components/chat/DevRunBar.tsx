@@ -76,7 +76,7 @@ export function DevRunBar({ channelId, threadId }: { channelId: number; threadId
       </div>
       {st.needsPerson && (
         <p className="mt-1 text-xs font-semibold text-amber-800 dark:text-amber-200">
-          {t("Te toca decidir: contesta en este hilo y le llega al escritor.")}
+          {t("Te toca decidir: contéstale en la tarjeta del pendiente o menciona a @ghosty aquí.")}
         </p>
       )}
     </div>
