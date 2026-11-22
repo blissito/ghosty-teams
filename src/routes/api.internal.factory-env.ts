@@ -65,11 +65,12 @@ export const Route = createFileRoute("/api/internal/factory-env")({
             const rd = await repoReadiness(member.sub, repo, { fresh: true }).catch((e: Error) => ({ error: e.message }));
             const facts = "error" in rd ? null : rd.facts;
             const keys = facts ? null : await P.gsPreview("env-keys", { repo }).catch(() => null);
-            const saved: string[] = facts?.envSavedKeys ?? (Array.isArray(keys?.keys) ? keys.keys : []) ?? [];
+            // null = no se pudo leer el vault (nunca pintarlo como «ninguna»: en Formmy eso escondió 84 guardadas).
+            const saved: string[] | null = facts?.envSavedKeys ?? (Array.isArray(keys?.keys) ? keys.keys : null);
             const example = facts?.envExampleKeys ?? [];
             const blocked = await blockedRunsOf(repo);
             const wantedKeys = [...new Set([...example, ...blocked.flatMap((b) => b.keys)])];
-            const savedSet = new Set(saved);
+            const savedSet = new Set(saved ?? []);
             return Response.json({
               repo,
               rooms: entry.rooms.map((r) => r.slug),
@@ -95,6 +96,9 @@ export const Route = createFileRoute("/api/internal/factory-env")({
             return Response.json({
               repo,
               keys: (out?.keys ?? []) as string[],
+              sent: Array.isArray(out?.sent) ? out.sent : null,
+              kept: Array.isArray(out?.kept) ? out.kept : null,
+              dropped: Array.isArray(out?.dropped) ? out.dropped : null,
               risks: Array.isArray(out?.risks) ? out.risks : [],
               // Lo que sigue: que @check vuelva a revisar los que esto desbloquea.
               blocked: (await blockedRunsOf(repo)).map((b) => ({ id: b.id, title: b.title })),
