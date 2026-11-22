@@ -93,6 +93,18 @@ describe("CI starter", () => {
     expect(yml).toContain("runs-on: [self-hosted, ws-business]");
     // gitleaks siempre en GitHub: en la caja truena por la ruta de /home/runner.
     expect(yml).toMatch(/security:\n.*\n.*\n    runs-on: ubuntu-latest/);
+    // Las revisiones de Ghosty corren en la misma caja que el resto del CI.
+    expect(yml).toContain(`runs-on: '["self-hosted","ws-business"]'`);
+  });
+
+  it("suma las revisiones de Ghosty: reutilizable fijado por SHA, scripts del mismo SHA y sólo en PR", async () => {
+    const r = (await buildCiStarter("u", "acme/app", "ws-business")) as any;
+    const yml = r.files[0].content as string;
+    expect(yml).toContain("  ghosty-checks:\n    if: github.event_name == 'pull_request'\n");
+    expect(yml).toContain("uses: blissito/ghosty-dev/.github/workflows/checks.yml@blissito-ghosty-dev-v1-sha # v1");
+    expect(yml).toContain("checks-ref: blissito-ghosty-dev-v1-sha");
+    // Repo público: GitHub, aunque el espacio tenga caja.
+    expect(yml).toContain(`runs-on: '"ubuntu-latest"'`);
   });
 
   it("repo público: el CI se queda en GitHub aunque el espacio tenga caja", async () => {

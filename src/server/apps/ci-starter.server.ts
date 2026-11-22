@@ -21,6 +21,10 @@ const ACTIONS: Record<string, string> = {
   depReview: "actions/dependency-review-action@v4",
 };
 
+/** Revisiones de Ghosty: workflow reutilizable (deps, sast, migraciones, contrato OpenAPI, bundle, cobertura). */
+const GHOSTY_CHECKS_REPO = "blissito/ghosty-dev";
+const GHOSTY_CHECKS_TAG = "v1";
+
 /** Los checks que el starter crea: son los que la protección de main exige. */
 export const CI_CHECKS = ["verify", "security"];
 
@@ -158,7 +162,10 @@ export async function buildCiStarter(
   const test = pm === "npm" ? "npm test --if-present" : `${pm} run --if-present test`;
 
   const a = Object.fromEntries(await Promise.all(Object.entries(ACTIONS).map(async ([k, v]) => [k, await pin(sub, v)])));
-  const unpinned = Object.values(a).filter((x) => !String(x).includes(" # "));
+  // El reutilizable va por SHA igual que las actions, y sus scripts salen de ese mismo SHA (`checks-ref`).
+  const checksPin = await pin(sub, `${GHOSTY_CHECKS_REPO}@${GHOSTY_CHECKS_TAG}`);
+  const checksRef = checksPin.includes(" # ") ? checksPin.split("@")[1].split(" ")[0] : GHOSTY_CHECKS_TAG;
+  const unpinned = [...Object.values(a), checksPin].filter((x) => !String(x).includes(" # "));
 
   const node = nvmrc ? "node-version-file: .nvmrc" : "node-version: 22";
   // La caja de CI del espacio sólo en repos PRIVADOS (ahí GitHub cobra minutos). En un público
@@ -166,6 +173,8 @@ export async function buildCiStarter(
   // que toma un job a la vez (13-oct). Sin `private` explícito se asume público.
   const ownBox = Boolean(runnerLabel) && info?.private === true;
   const runsOn = ownBox ? `[self-hosted, ${runnerLabel}]` : "ubuntu-latest";
+  // El reutilizable recibe el runner en JSON: mismo lugar que el resto del CI.
+  const runsOnJson = ownBox ? `'["self-hosted","${runnerLabel}"]'` : `'"ubuntu-latest"'`;
   const workflow = `# CI de la Software Factory de Ghosty. Lo exige la protección de la rama principal.
 name: ci
 on:
@@ -207,7 +216,14 @@ ${pm === "pnpm" ? `      - uses: ${a.pnpm}\n` : ""}      - uses: ${a.setupNode}
       - uses: ${a.gitleaks}
         env:
           GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}
-${depReviewOk ? `      - uses: ${a.depReview}\n        with:\n          fail-on-severity: high\n` : ""}${
+${depReviewOk ? `      - uses: ${a.depReview}\n        with:\n          fail-on-severity: high\n` : ""}  # Revisiones de Ghosty (OSS): cada job dice «no aplica» si al repo no le toca.
+  ghosty-checks:
+    if: github.event_name == 'pull_request'
+    uses: ${GHOSTY_CHECKS_REPO}/.github/workflows/checks.yml@${checksPin.includes(" # ") ? `${checksRef} # ${GHOSTY_CHECKS_TAG}` : GHOSTY_CHECKS_TAG}
+    with:
+      runs-on: ${runsOnJson}
+      checks-ref: ${checksRef}
+${
     dockerfile
       ? `  docker:
     if: github.event_name == 'pull_request'
