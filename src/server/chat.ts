@@ -1016,12 +1016,13 @@ export const postMessageAs = createServerOnlyFn(async (me: SessionMe | null, dat
       factorySigned = await maybeMergeReply({ channelId: channel.id, rootId: data.parentId, text: body, sub: me.sub });
     }
   }
-  // Una sola fábrica (22-nov): en el hilo de un pedido que corre en el motor de gs, lo que la persona escribe (sin @, o
-  // con @ghosty) le llega al escritor por `tell`; gs decide por fase. Ningún rol de Teams se despierta.
+  // Una sola fábrica (22-nov): el hilo de un pendiente del motor de gs es DEL ESCRITOR (como el agente de Cursor en
+  // Slack). Todo lo que una persona escribe ahí, con o sin @, le llega por `tell`, y ningún agente del room contesta en
+  // ese hilo (Arqui no ve la conversación del escritor y contestaba sin saber). Para hablar con otro agente: fuera del hilo.
   let devTold = false;
   if (!factorySigned && data.parentId !== null && me?.sub && body) {
-    const { devThreadOf, routesToWriter, tellDevThread } = await import("./apps/dev-threads.server");
-    const dt = routesToWriter(mentionedList) && !mencionaAAlguienMas(body.replace(/@ghosty\b/gi, "")) ? await devThreadOf(channel.id, data.parentId).catch(() => null) : null;
+    const { devThreadOf, tellDevThread } = await import("./apps/dev-threads.server");
+    const dt = await devThreadOf(channel.id, data.parentId).catch(() => null);
     if (dt) {
       devTold = true;
       void tellDevThread(dt, me.sub, body).then(async (r) => {
