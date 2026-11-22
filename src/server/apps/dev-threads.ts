@@ -13,6 +13,9 @@ export type DevRunView = {
   prUrl: string | null;
   issueUrl: string | null;
   needsPerson: boolean;
+  /** La pregunta del escritor cuando le toca a una persona (`note` del run) y sus opciones (último `asked_person`). */
+  question: string | null;
+  options: string[];
   canMerge: boolean;
   live: boolean;
 };
@@ -32,9 +35,19 @@ export function devRunView(runId: string, d: any): DevRunView {
     prUrl: d?.prUrl ? String(d.prUrl) : null,
     issueUrl: d?.issueUrl ? String(d.issueUrl) : null,
     needsPerson: phase === "needs_person",
+    question: phase === "needs_person" && d?.note ? String(d.note) : null,
+    options: phase === "needs_person" ? lastAskOptions(d?.events) : [],
     canMerge: d?.canMerge === true || (d?.ready === true && LIVE.has(phase) && phase !== "merging"),
     live: LIVE.has(phase),
   };
+}
+
+/** Las opciones de la última pregunta del escritor (`asked_person`), si las dio. Puro. */
+export function lastAskOptions(events: unknown): string[] {
+  if (!Array.isArray(events)) return [];
+  const ask = [...events].reverse().find((e: any) => e?.kind === "asked_person");
+  const opts = (ask as any)?.data?.options;
+  return Array.isArray(opts) ? opts.map((o: unknown) => String(typeof o === "object" && o ? ((o as any).label ?? (o as any).text ?? "") : o)).filter(Boolean).slice(0, 6) : [];
 }
 
 // La tarjeta llega por `runId` (el fence); la barra del hilo, por (channel, raíz). Las dos comprueban que quien mira
@@ -67,7 +80,7 @@ export const devThreadCardFn = createServerFn({ method: "POST" })
     if (!ctx) return null;
     const { devRunsCall } = await import("./dev-engine.server");
     const email = (await emailFor(ctx.me.sub)) ?? (await emailFor(ctx.t.requestedBy));
-    const r = email ? await devRunsCall("status", { id: ctx.t.runId, email, after: 1e12 }) : null;
+    const r = email ? await devRunsCall("status", { id: ctx.t.runId, email, after: 0 }) : null;
     return { ...devRunView(ctx.t.runId, r?.ok ? r.data : { phase: "queued" }), rootMsgId: ctx.t.rootMsgId };
   });
 

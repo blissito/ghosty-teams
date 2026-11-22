@@ -58,3 +58,13 @@ describe("chat de la tarjeta", () => {
     expect(devRunView("a", { phase: "needs_person", stage: 3, estado: "Te necesita" }).label).toBe("Te necesita");
   });
 });
+
+import { lastAskOptions } from "./dev-threads";
+describe("pregunta del escritor", () => {
+  it("la pregunta sale de note y las opciones del último asked_person", () => {
+    const d = { phase: "needs_person", note: "¿Publico ya?", events: [{ kind: "asked_person", data: { options: ["Viejo"] } }, { kind: "asked_person", data: { question: "x", options: ["Sí", { label: "No" }] } }] };
+    expect(devRunView("a", d)).toMatchObject({ question: "¿Publico ya?", options: ["Sí", "No"] });
+    expect(lastAskOptions(null)).toEqual([]);
+    expect(devRunView("a", { phase: "working", note: "vieja" }).question).toBeNull();
+  });
+});

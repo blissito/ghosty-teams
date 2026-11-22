@@ -8,7 +8,8 @@ import { useT } from "../../i18n";
 import { Markdown } from "../Markdown";
 import { devThreadActionFn, devThreadCardFn, devThreadConversationFn, devThreadTellFn, type DevChatMessage, type DevRunView } from "../../server/apps/dev-threads";
 
-const STUDIO = "https://www.ghosty.studio";
+// El apex (no `www`): ahí vive la cookie de sesión de gs.
+const STUDIO = "https://ghosty.studio";
 const TONE: Record<string, string> = {
   queued: "bg-muted",
   working: "bg-brand",
@@ -107,7 +108,7 @@ export function DevRunCard({ runId }: { runId: string }) {
 
   const writer = msgs.filter((m) => m.role === "writer");
   const last = writer[writer.length - 1];
-  const shown = open ? msgs : last ? [last] : [];
+  const shown = open ? msgs : last && last.text !== st.question ? [last] : [];
 
   return (
     <div ref={box} className={`mt-2 max-w-xl rounded-xl border border-border shadow-sm ${st.needsPerson ? "bg-amber-50 dark:bg-amber-950/30" : "bg-surface-2"}`}>
@@ -118,7 +119,31 @@ export function DevRunCard({ runId }: { runId: string }) {
         <span className="ml-auto shrink-0 rounded-full border border-border px-2 py-0.5 text-[11px] text-muted">{t(st.label)}</span>
       </div>
       {st.repo && <p className="px-3 text-xs italic text-muted">{st.repo}</p>}
-      {st.needsPerson && <p className="mx-3 mt-2 rounded-lg bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-900 dark:bg-amber-900/40 dark:text-amber-100">{t("Te toca decidir: contéstale aquí abajo.")}</p>}
+      {st.needsPerson && (
+        <div className="mx-3 mt-2 rounded-lg bg-amber-100 px-2 py-1.5 text-amber-950 dark:bg-amber-900/40 dark:text-amber-50">
+          <p className="text-xs font-semibold">{t("Te toca decidir")}</p>
+          {st.question && (
+            <div className="mt-1 text-sm">
+              <Markdown body={st.question} />
+            </div>
+          )}
+          {st.options.length > 0 && (
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {st.options.map((o) => (
+                <button
+                  key={o}
+                  type="button"
+                  disabled={busy}
+                  onClick={() => run(() => devThreadTellFn({ data: { runId, text: o } }))}
+                  className="rounded-full border border-amber-400 bg-white/70 px-2.5 py-1 text-xs font-semibold hover:bg-white disabled:opacity-50 dark:bg-amber-950/40"
+                >
+                  {o}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {shown.length > 0 && (
         <div className={`mx-3 mt-2 space-y-2 ${open ? "max-h-80 overflow-y-auto pr-1" : ""}`}>
