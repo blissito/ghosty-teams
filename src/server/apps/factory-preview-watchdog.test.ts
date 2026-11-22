@@ -101,7 +101,12 @@ vi.mock("./factory-team.server", () => ({ factoryTurnFor: async () => null }));
 vi.mock("./readiness.server", () => ({ repoReadiness: async () => null, invalidateReadiness: () => {} }));
 vi.mock("./factory-preview-check.server", () => ({ syncPrCheck: async () => {} }));
 vi.mock("./pr-preview.server", () => ({ recordEvictedPreviews: async () => {} }));
-vi.mock("./factory-smoke.server", () => ({ runActionSmoke: async () => null, smokeFailures: () => null }));
+vi.mock("./factory-smoke.server", () => ({
+  runActionSmoke: async () => null,
+  runSmokeReport: async () => ({ results: null, page: null, lighthouse: null }),
+  smokeFailures: () => null,
+  pageIssuesText: () => "",
+}));
 vi.mock("./factory-shots.server", () => ({ captureVerdictShots: async () => {} }));
 vi.mock("../connectors/github.server", () => ({
   allTools: () => [{ name: "github_get_pr", handler: async () => ({ headSha: "abc1234", draft: false, head: "dependabot/npm/rr-8" }) }],
