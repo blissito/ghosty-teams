@@ -2762,9 +2762,7 @@ export const en: Record<string, string> = {
   "El pedido corre en el motor de Ghosty: su estado está arriba del hilo y lo que escribas aquí le llega al escritor.": "This request runs on Ghosty's engine: its status is at the top of the thread and whatever you write here reaches the writer.",
   "En fila": "Queued",
   "Esperando el CI": "Waiting for CI",
-  "En revisión": "In review",
   "Te necesita": "Needs you",
   "Haciendo merge": "Merging",
   "Listo · sin cambios": "Done \u00b7 no changes",
-  "Falló": "Failed",
 };
