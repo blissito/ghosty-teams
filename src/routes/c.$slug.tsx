@@ -1,5 +1,6 @@
 import { RunBar } from "../components/chat/RunBar";
 import { DevRunBar } from "../components/chat/DevRunBar";
+import { DevFeedRow, mergeFeed, useDevFeed } from "../components/chat/DevThreadFeed";
 import { forwardRef, Fragment, useCallback, useContext, useEffect, useImperativeHandle, useMemo, useReducer, useRef, useState } from "react";
 import { IDLE_MS } from "../lib/presence";
 import { shouldChime } from "../lib/chime";
@@ -7983,7 +7984,9 @@ function ThreadView({
   // podría traer `replies` no-array → `.length`/`.map` crasheaban el render. Normalizar
   // aquí complementa la validación-al-cargar (cubre también corrupción de esta sesión).
   const replies = Array.isArray(data?.replies) ? data.replies : [];
-  const replyCount = replies.length;
+  // Pendiente de gs: lo que dice el escritor se pinta en el hilo como mensajes normales (vista en vivo, no se guarda).
+  const devFeed = useDevFeed(suyo.id, threadId);
+  const replyCount = replies.length + (devFeed?.messages.filter((m) => m.role !== "platform").length ?? 0);
   useEffect(() => {
     if (data) onReloaded(replies);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -8066,9 +8069,15 @@ function ThreadView({
                   {replyCount === 1 ? t("1 respuesta") : t("{n} respuestas", { n: replyCount })}
                 </div>
                 <LatestPlanCtx.Provider value={latestPlanId(replies)}>
-                  {replies.map((m, i) => (
-                    <MessageRow key={m.id} m={m} prev={replies[i - 1]} />
-                  ))}
+                  {devFeed
+                    ? mergeFeed(replies, devFeed.messages).map((it, i, all) =>
+                        it.kind === "real" ? (
+                          <MessageRow key={it.m.id} m={it.m} prev={(all[i - 1] as { kind: string; m?: Message } | undefined)?.m} />
+                        ) : (
+                          <DevFeedRow key={`dev-${it.d.seq}`} d={it.d} writer={devFeed.writer} />
+                        ),
+                      )
+                    : replies.map((m, i) => <MessageRow key={m.id} m={m} prev={replies[i - 1]} />)}
                 </LatestPlanCtx.Provider>
               </>
             )}

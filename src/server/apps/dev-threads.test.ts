@@ -50,10 +50,11 @@ describe("adoptar pendientes que nacieron fuera del room", () => {
 
 import { chatMessages } from "./dev-threads";
 describe("chat de la tarjeta", () => {
-  it("escritor y personas, sin vacíos ni sistema; la etapa numérica no es etiqueta", () => {
-    expect(chatMessages([{ seq: 1, role: "user", text: "hola" }, { seq: 2, role: "assistant", text: "¿A o B?" }, { seq: 3, role: "system", text: "x" }, { seq: 4, role: "assistant", text: " " }])).toEqual([
-      { seq: 1, role: "person", text: "hola", at: null },
-      { seq: 2, role: "writer", text: "¿A o B?", at: null },
+  it("usa el kind de gs y deduce del rol si no viene; la etapa numérica no es etiqueta", () => {
+    expect(chatMessages([{ seq: 1, kind: "platform", text: "Turno programado" }, { seq: 2, role: "assistant", text: "¿A o B?" }, { seq: 3, role: "user", text: "A", from: "github", by: "@bliss" }, { seq: 4, kind: "writer", text: " " }, { seq: 5, kind: "person", text: "dup", from: "room" }])).toEqual([
+      { seq: 1, role: "platform", text: "Turno programado", at: null, by: null },
+      { seq: 2, role: "writer", text: "¿A o B?", at: null, by: null },
+      { seq: 3, role: "person", text: "A", at: null, by: "@bliss" },
     ]);
     expect(devRunView("a", { phase: "needs_person", stage: 3, estado: "Te necesita" }).label).toBe("Te necesita");
   });

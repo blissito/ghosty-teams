@@ -122,6 +122,9 @@ export function DevRunCard({ runId }: { runId: string }) {
             {t("Mezclar")}
           </button>
         )}
+        <a href={`?thread=${st.rootMsgId}`} className="rounded-lg border border-border px-3 py-1.5 text-xs font-bold text-ink hover:bg-surface">
+          💬 {t("Ver conversación")}
+        </a>
         {st.prUrl && (
           <a href={st.prUrl} target="_blank" rel="noreferrer" className={`rounded-lg px-3 py-1.5 text-xs font-bold ${st.canMerge ? "border border-border text-ink" : "bg-emerald-700 text-white"}`}>
             {t("Ver PR")}

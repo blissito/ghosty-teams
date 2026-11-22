@@ -2772,4 +2772,6 @@ export const en: Record<string, string> = {
   "Abrir en Ghosty": "Open in Ghosty",
   "Detener el pendiente": "Stop the task",
   "Te toca decidir: contéstale en la tarjeta del pendiente o menciona a @ghosty aquí.": "Your call: reply in the task card or mention @ghosty here.",
+  "Persona": "Person",
+  "Te toca decidir: contéstale aquí con @ghosty.": "Your call: reply here with @ghosty.",
 };

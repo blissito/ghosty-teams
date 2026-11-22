@@ -84,28 +84,39 @@ export const devThreadCardFn = createServerFn({ method: "POST" })
     return { ...devRunView(ctx.t.runId, r?.ok ? r.data : { phase: "queued" }), rootMsgId: ctx.t.rootMsgId };
   });
 
-export type DevChatMessage = { seq: number; role: "writer" | "person"; text: string; at: string | null };
+export type DevChatMessage = { seq: number; role: "writer" | "person" | "platform"; text: string; at: string | null; by: string | null };
 
 /** La conversación del escritor, leída de gs en vivo (`after` = último seq que ya tiene la tarjeta). Nada se guarda aquí. */
 export const devThreadConversationFn = createServerFn({ method: "POST" })
   .validator((d: Q & { after?: number }) => d)
-  .handler(async ({ data }): Promise<{ messages: DevChatMessage[] } | null> => {
+  .handler(async ({ data }): Promise<{ messages: DevChatMessage[]; writer: { name: string; avatar: string } } | null> => {
     const ctx = await ctxFor(data);
     if (!ctx) return null;
     const email = await emailFor(ctx.me.sub);
     if (!email) return null;
     const { devRunsCall } = await import("./dev-engine.server");
     const r = await devRunsCall("conversation", { id: ctx.t.runId, after: Number(data.after) || 0, email });
-    if (!r.ok) return { messages: [] };
-    return { messages: chatMessages(r.data?.messages) };
+    const { ROLE_NAMES, roleAvatar } = await import("./factory-roles");
+    const { resolvedAgents } = await import("../../agents.server");
+    const a = (await resolvedAgents().catch(() => [])).find((x) => x.handle === "build");
+    const writer = { name: a?.name ?? ROLE_NAMES.build, avatar: a?.avatar || roleAvatar("build") };
+    if (!r.ok) return { messages: [], writer };
+    return { messages: chatMessages(r.data?.messages), writer };
   });
 
-/** Los mensajes de gs para el chat de la tarjeta (puro): el escritor y las personas, sin los de sistema ni vacíos. */
+/** Los mensajes de gs para el hilo (puro). gs ya los clasifica en `kind` (writer | person | platform) con el texto limpio;
+ *  sin `kind` (gs viejo) se deduce del rol. Sólo se quitan los vacíos. */
 export function chatMessages(raw: unknown): DevChatMessage[] {
   if (!Array.isArray(raw)) return [];
   return raw
-    .filter((m: any) => (m?.role === "assistant" || m?.role === "user") && String(m?.text ?? "").trim())
-    .map((m: any) => ({ seq: Number(m.seq) || 0, role: m.role === "assistant" ? ("writer" as const) : ("person" as const), text: String(m.text).trim(), at: m.at ? String(m.at) : null }));
+    .map((m: any) => {
+      const role: DevChatMessage["role"] =
+        m?.kind === "writer" || m?.kind === "person" || m?.kind === "platform" ? m.kind : m?.role === "assistant" ? "writer" : m?.role === "user" ? "person" : "platform";
+      return { seq: Number(m?.seq) || 0, role, text: String(m?.text ?? "").trim(), at: m?.at ? String(m.at) : null, by: m?.by ? String(m.by) : null, from: m?.from ? String(m.from) : null };
+    })
+    // Lo que una persona dijo desde el room ya es un mensaje de Teams en el hilo: no se pinta dos veces.
+    .filter((m) => m.text && !(m.role === "person" && m.from === "room"))
+    .map(({ from: _from, ...m }) => m);
 }
 
 /** Lo que se escribe en el composer de la tarjeta: al escritor por `op:tell` (gs lo guarda y lo muestra). */
