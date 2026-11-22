@@ -8078,6 +8078,7 @@ function ThreadView({
                             key={`dev-${it.d.seq}`}
                             d={it.d}
                             writer={devFeed.writer}
+                            issueUrl={devFeed.issueUrl}
                             grouped={(() => {
                               const p = all[i - 1];
                               return !!p && p.kind === "dev" && p.d.role === it.d.role && p.d.by === it.d.by && it.d.role !== "platform" && it.at - p.at < 300;

@@ -99,12 +99,12 @@ export const devThreadCardFn = createServerFn({ method: "POST" })
     return { ...devRunView(ctx.t.runId, r?.ok ? r.data : { phase: "queued" }), rootMsgId: ctx.t.rootMsgId };
   });
 
-export type DevChatMessage = { seq: number; role: "writer" | "person" | "platform"; text: string; at: string | null; by: string | null };
+export type DevChatMessage = { seq: number; role: "writer" | "person" | "platform"; text: string; at: string | null; by: string | null; from: string | null };
 
 /** La conversación del escritor, leída de gs en vivo (`after` = último seq que ya tiene la tarjeta). Nada se guarda aquí. */
 export const devThreadConversationFn = createServerFn({ method: "POST" })
   .validator((d: Q & { after?: number }) => d)
-  .handler(async ({ data }): Promise<{ messages: DevChatMessage[]; writer: { name: string; avatar: string } } | null> => {
+  .handler(async ({ data }): Promise<{ messages: DevChatMessage[]; writer: { name: string; avatar: string }; issueUrl?: string | null } | null> => {
     const ctx = await ctxFor(data);
     if (!ctx) return null;
     const email = await emailFor(ctx.me.sub);
@@ -116,7 +116,9 @@ export const devThreadConversationFn = createServerFn({ method: "POST" })
     const a = (await resolvedAgents().catch(() => [])).find((x) => x.handle === "build");
     const writer = { name: a?.name ?? ROLE_NAMES.build, avatar: a?.avatar || roleAvatar("build") };
     if (!r.ok) return { messages: [], writer };
-    return { messages: chatMessages(r.data?.messages), writer };
+    // En la primera carga, la liga del issue para la etiqueta «desde GitHub».
+    const issueUrl = !Number(data.after) ? ((await devRunsCall("status", { id: ctx.t.runId, email, after: 0 }).catch(() => null))?.data?.issueUrl ?? null) : undefined;
+    return { messages: chatMessages(r.data?.messages), writer, issueUrl };
   });
 
 /** Los mensajes de gs para el hilo (puro). gs ya los clasifica en `kind` (writer | person | platform) con el texto limpio;
@@ -130,8 +132,7 @@ export function chatMessages(raw: unknown): DevChatMessage[] {
       return { seq: Number(m?.seq) || 0, role, text: String(m?.text ?? "").trim(), at: m?.at ? String(m.at) : null, by: m?.by ? String(m.by) : null, from: m?.from ? String(m.from) : null };
     })
     // Lo que una persona dijo desde el room ya es un mensaje de Teams en el hilo: no se pinta dos veces.
-    .filter((m) => m.text && !(m.role === "person" && m.from === "room"))
-    .map(({ from: _from, ...m }) => m);
+    .filter((m) => m.text && !(m.role === "person" && m.from === "room"));
 }
 
 /** Lo que se escribe en el composer de la tarjeta: al escritor por `op:tell` (gs lo guarda y lo muestra). */

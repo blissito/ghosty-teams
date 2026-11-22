@@ -23,7 +23,7 @@ export function mergeFeed(replies: Message[], dev: DevChatMessage[]): FeedItem[]
 
 /** La conversación del pendiente para un hilo. `null` si el hilo no es de un pendiente de gs (no se vuelve a preguntar). */
 export function useDevFeed(channelId: number, threadId: number) {
-  const [state, setState] = useState<{ messages: DevChatMessage[]; writer: { name: string; avatar: string } } | null>(null);
+  const [state, setState] = useState<{ messages: DevChatMessage[]; writer: { name: string; avatar: string }; issueUrl: string | null } | null>(null);
   const lastSeq = useRef(0);
   const isDev = useRef<boolean | null>(null);
   useEffect(() => {
@@ -43,7 +43,7 @@ export function useDevFeed(channelId: number, threadId: number) {
       if (r.messages.length) lastSeq.current = Math.max(lastSeq.current, ...r.messages.map((m) => m.seq));
       setState((prev) => {
         const seen = new Set((prev?.messages ?? []).map((m) => m.seq));
-        return { writer: r.writer, messages: [...(prev?.messages ?? []), ...r.messages.filter((m) => !seen.has(m.seq))] };
+        return { writer: r.writer, issueUrl: r.issueUrl !== undefined ? r.issueUrl : (prev?.issueUrl ?? null), messages: [...(prev?.messages ?? []), ...r.messages.filter((m) => !seen.has(m.seq))] };
       });
     };
     void tick();
@@ -72,7 +72,7 @@ export function ebFilesAsAttachments(text: string, seq: number): Attachment[] {
 const hhmm = (iso: string | null) => (iso ? new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "");
 
 /** Un mensaje del pendiente en el hilo, con la misma forma que los de Teams (avatar, nombre, hora, cuerpo). */
-export function DevFeedRow({ d, writer, grouped = false }: { d: DevChatMessage; writer: { name: string; avatar: string }; grouped?: boolean }) {
+export function DevFeedRow({ d, writer, grouped = false, issueUrl = null }: { d: DevChatMessage; writer: { name: string; avatar: string }; grouped?: boolean; issueUrl?: string | null }) {
   const t = useT();
   if (d.role === "platform") {
     return <div className="py-1 pl-11 text-xs text-muted">{d.text}</div>;
@@ -109,6 +109,14 @@ export function DevFeedRow({ d, writer, grouped = false }: { d: DevChatMessage; 
         <div className="flex items-baseline gap-2">
           <span className="text-sm font-semibold text-ink">{name}</span>
           {isWriter && <span className="rounded bg-surface-3 px-1 text-[10px] font-bold uppercase tracking-wide text-muted">{t("Agente")}</span>}
+          {d.from === "github" &&
+            (issueUrl ? (
+              <a href={issueUrl} target="_blank" rel="noreferrer" className="text-xs text-muted underline-offset-2 hover:text-ink hover:underline">
+                {t("desde GitHub")}
+              </a>
+            ) : (
+              <span className="text-xs text-muted">{t("desde GitHub")}</span>
+            ))}
           <span className="text-xs text-muted">{hhmm(d.at)}</span>
         </div>
         {body}

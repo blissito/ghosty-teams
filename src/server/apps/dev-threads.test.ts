@@ -52,9 +52,9 @@ import { chatMessages } from "./dev-threads";
 describe("chat de la tarjeta", () => {
   it("usa el kind de gs y deduce del rol si no viene; la etapa numérica no es etiqueta", () => {
     expect(chatMessages([{ seq: 1, kind: "platform", text: "Turno programado" }, { seq: 2, role: "assistant", text: "¿A o B?" }, { seq: 3, role: "user", text: "A", from: "github", by: "@bliss" }, { seq: 4, kind: "writer", text: " " }, { seq: 5, kind: "person", text: "dup", from: "room" }])).toEqual([
-      { seq: 1, role: "platform", text: "Turno programado", at: null, by: null },
-      { seq: 2, role: "writer", text: "¿A o B?", at: null, by: null },
-      { seq: 3, role: "person", text: "A", at: null, by: "@bliss" },
+      { seq: 1, role: "platform", text: "Turno programado", at: null, by: null, from: null },
+      { seq: 2, role: "writer", text: "¿A o B?", at: null, by: null, from: null },
+      { seq: 3, role: "person", text: "A", at: null, by: "@bliss", from: "github" },
     ]);
     expect(devRunView("a", { phase: "needs_person", stage: 3, estado: "Te necesita" }).label).toBe("Te necesita");
   });
