@@ -1026,8 +1026,8 @@ export const postMessageAs = createServerOnlyFn(async (me: SessionMe | null, dat
       devTold = true;
       void tellDevThread(dt, me.sub, body).then(async (r) => {
         if (r.ok) return;
-        const { postAgent } = await import("../db.server");
-        await postAgent(channel.id, data.parentId, `⚠️ No le llegó al escritor: ${r.message ?? "gs no respondió"}`, "msg", "ghosty", "Ghosty", "general", "").catch(() => null);
+        const { postDevNote } = await import("./apps/dev-threads.server");
+        await postDevNote(channel.id, data.parentId!, `⚠️ No le llegó al escritor: ${r.message ?? "gs no respondió"}`);
       });
     }
   }

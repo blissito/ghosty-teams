@@ -68,11 +68,23 @@ async function emailOf(sub: string): Promise<string | null> {
   return r?.email ? String(r.email).toLowerCase() : null;
 }
 
-async function postAs(channelId: number, rootMsgId: number | null, body: string, who: { handle: string; name: string; avatar?: string }) {
+// Las caras de la fábrica (avatares 3D): lo que dice el escritor sale como @build (Worker); la cabeza del pedido y los
+// avisos de fase, como @plan (Arqui). Antes salía «Ghosty» sin avatar y rompía la imagen de la fábrica.
+type Face = "writer" | "platform";
+async function faceOf(face: Face): Promise<{ handle: string; name: string; avatar: string }> {
+  const handle = face === "writer" ? "build" : "plan";
+  const { resolvedAgents } = await import("../../agents.server");
+  const { ROLE_NAMES, roleAvatar } = await import("./factory-roles");
+  const a = (await resolvedAgents().catch(() => [])).find((x) => x.handle === handle);
+  return { handle, name: a?.name ?? ROLE_NAMES[handle], avatar: a?.avatar || roleAvatar(handle) };
+}
+
+async function postAs(channelId: number, rootMsgId: number | null, body: string, face: Face) {
+  const who = await faceOf(face);
   const db = await import("../../db.server");
   const bus = await import("../bus.server");
   const { currentNamespace } = await import("../tenant.server");
-  const { id } = await db.postAgent(channelId, rootMsgId, body, "msg", who.handle, who.name, "general", who.avatar ?? "");
+  const { id } = await db.postAgent(channelId, rootMsgId, body, "msg", who.handle, who.name, "general", who.avatar);
   const msg = await db.getMessage(id);
   if (msg) bus.publish(bus.ch.room(await currentNamespace(), channelId), { t: "message:new", msg });
   return id;
@@ -104,7 +116,7 @@ export async function startDevThread(a: {
   const runId = r.data?.id ?? r.data?.run?.id ?? r.data?.result?.id;
   if (!r.ok || !runId) return { ok: false, error: String(r.data?.message ?? r.data?.error ?? `gs respondió ${r.status}`) };
   await dbq("INSERT OR IGNORE INTO gt_dev_threads (run_id, channel_id, root_msg_id, requested_by) VALUES (?, ?, ?, ?)", [String(runId), a.channelId, a.rootMsgId, a.sub]);
-  await postAs(a.channelId, a.rootMsgId, devRunFence(String(runId)), { handle: "ghosty", name: "Ghosty" }).catch(() => null);
+  await postAs(a.channelId, a.rootMsgId, devRunFence(String(runId)), "platform").catch(() => null);
   return { ok: true, runId: String(runId) };
 }
 
@@ -155,7 +167,7 @@ export async function syncDevThread(t: DevThread): Promise<void> {
   let convSeq = t.convSeq;
   if (conv.ok && Array.isArray(conv.data?.messages)) {
     for (const m of writerMessages(conv.data.messages)) {
-      await postAs(t.channelId, t.rootMsgId, m.text, { handle: "ghosty", name: "Ghosty" }).catch(() => null);
+      await postAs(t.channelId, t.rootMsgId, m.text, "writer").catch(() => null);
     }
     for (const m of conv.data.messages) convSeq = Math.max(convSeq, Number(m.seq) || 0);
   }
@@ -166,7 +178,7 @@ export async function syncDevThread(t: DevThread): Promise<void> {
     for (const e of Array.isArray(st.data?.events) ? st.data.events : []) eventSeq = Math.max(eventSeq, Number(e.seq) || 0);
     const next = String(st.data?.phase ?? st.data?.run?.phase ?? "") || null;
     const line = phaseLine(phase, next);
-    if (line) await postAs(t.channelId, t.rootMsgId, line, { handle: "ghosty", name: "Ghosty" }).catch(() => null);
+    if (line) await postAs(t.channelId, t.rootMsgId, line, "platform").catch(() => null);
     phase = next ?? phase;
   }
   if (convSeq !== t.convSeq || eventSeq !== t.eventSeq || phase !== t.phase) {
@@ -211,15 +223,39 @@ export async function adoptLiveRuns(): Promise<void> {
     if (!runId || !run.repo || (await devThreadByRun(runId))) continue;
     const room = roomForRepo(rooms, String(run.repo));
     if (!room) continue;
-    const root = await postAs(room.channel_id, null, adoptedRootText(run), { handle: "ghosty", name: "Ghosty" }).catch(() => null);
+    const root = await postAs(room.channel_id, null, adoptedRootText(run), "platform").catch(() => null);
     if (!root) continue;
     await dbq("INSERT OR IGNORE INTO gt_dev_threads (run_id, channel_id, root_msg_id, requested_by) VALUES (?, ?, ?, ?)", [runId, room.channel_id, root, room.connected_by]);
-    await postAs(room.channel_id, root, devRunFence(runId), { handle: "ghosty", name: "Ghosty" }).catch(() => null);
+    await postAs(room.channel_id, root, devRunFence(runId), "platform").catch(() => null);
   }
+}
+
+/** Mensajes del puente que salieron como «Ghosty» sin avatar (22-nov): les pone la cara de la fábrica. Idempotente. */
+async function fixLegacyFaces(): Promise<void> {
+  const rows = await dbq(
+    `SELECT m.id, m.body, (m.id = t.root_msg_id) AS is_root FROM gc_messages m JOIN gt_dev_threads t
+       ON (m.id = t.root_msg_id OR m.parent_id = t.root_msg_id) AND m.channel_id = t.channel_id
+     WHERE m.agent_handle = 'ghosty' AND (m.avatar IS NULL OR m.avatar = '') LIMIT 200`,
+    [],
+  ).catch(() => []);
+  if (!rows.length) return;
+  const platform = await faceOf("platform");
+  const writer = await faceOf("writer");
+  for (const r of rows) {
+    const isPlatform = Number(r.is_root) === 1 || String(r.body ?? "").startsWith("```gt-devrun") || /^[✋✅🎉⛔⏹️🏁⚠️]/u.test(String(r.body ?? ""));
+    const f = isPlatform ? platform : writer;
+    await dbq("UPDATE gc_messages SET agent_handle = ?, sender = ?, avatar = ? WHERE id = ?", [f.handle, f.name, f.avatar, r.id]).catch(() => {});
+  }
+}
+
+/** Aviso corto de la plataforma en el hilo de un pendiente (con la cara de Arqui). */
+export async function postDevNote(channelId: number, rootMsgId: number, text: string): Promise<void> {
+  await postAs(channelId, rootMsgId, text, "platform").catch(() => null);
 }
 
 /** El barrido del tenant (lo llama `sweepTenant`): adopta los pendientes sin hilo y espeja los ligados y vivos. */
 export async function syncDevThreads(): Promise<void> {
+  await fixLegacyFaces().catch(() => {});
   await adoptLiveRuns().catch((e) => console.warn(`[dev-threads] adoptar: ${(e as Error).message}`));
   const rows = await dbq("SELECT * FROM gt_dev_threads WHERE closed = 0 ORDER BY created_at DESC LIMIT 50", []).catch(() => []);
   for (const r of rows) await syncDevThread(rowToThread(r)).catch((e) => console.warn(`[dev-threads] ${r.run_id}: ${(e as Error).message}`));
