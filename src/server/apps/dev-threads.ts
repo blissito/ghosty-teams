@@ -119,7 +119,16 @@ export const devThreadCardFn = createServerFn({ method: "POST" })
     return { ...devRunView(ctx.t.runId, r?.ok ? r.data : { phase: "queued" }), rootMsgId: ctx.t.rootMsgId };
   });
 
-export type DevChatMessage = { seq: number; role: "writer" | "person" | "platform"; text: string; at: string | null; by: string | null; from: string | null };
+export type DevChatMessage = {
+  seq: number;
+  role: "writer" | "person" | "platform";
+  text: string;
+  at: string | null;
+  by: string | null;
+  from: string | null;
+  /** Quién escribió (persona): nombre y foto de Teams si `by` es un correo del espacio; de GitHub si es @login. */
+  author?: { name: string; avatar: string | null } | null;
+};
 
 /** La conversación del escritor, leída de gs en vivo (`after` = último seq que ya tiene la tarjeta). Nada se guarda aquí. */
 export const devThreadConversationFn = createServerFn({ method: "POST" })
@@ -138,8 +147,27 @@ export const devThreadConversationFn = createServerFn({ method: "POST" })
     if (!r.ok) return { messages: [], writer };
     // En la primera carga, la liga del issue para la etiqueta «desde GitHub».
     const issueUrl = !Number(data.after) ? ((await devRunsCall("status", { id: ctx.t.runId, email, after: 0 }).catch(() => null))?.data?.issueUrl ?? null) : undefined;
-    return { messages: chatMessages(r.data?.messages), writer, issueUrl };
+    const messages = chatMessages(r.data?.messages);
+    const authors = await authorsFor(messages.map((m) => m.by));
+    return { messages: messages.map((m) => (m.role === "person" && m.by ? { ...m, author: authors.get(m.by.toLowerCase()) ?? null } : m)), writer, issueUrl };
   });
+
+/** `by` → autor: un correo se busca en los usuarios de Teams (nombre y foto); un @login es de GitHub. */
+async function authorsFor(bys: (string | null)[]): Promise<Map<string, { name: string; avatar: string | null }>> {
+  const out = new Map<string, { name: string; avatar: string | null }>();
+  const emails = [...new Set(bys.filter((b): b is string => !!b && b.includes("@") && !b.startsWith("@")).map((b) => b.toLowerCase()))];
+  for (const b of new Set(bys.filter((b): b is string => !!b && /^@[\w-]+(\[bot\])?$/.test(b)))) {
+    const login = b.slice(1).replace(/\[bot\]$/, "");
+    out.set(b.toLowerCase(), { name: b, avatar: `https://github.com/${login}.png?size=72` });
+  }
+  if (emails.length) {
+    const { dbq } = await import("../../dbq.server");
+    const rows = await dbq(`SELECT email, name, avatar FROM gc_users WHERE lower(email) IN (${emails.map(() => "?").join(",")})`, emails).catch(() => []);
+    for (const r of rows as any[]) out.set(String(r.email).toLowerCase(), { name: String(r.name || String(r.email).split("@")[0]), avatar: r.avatar ? String(r.avatar) : null });
+    for (const e of emails) if (!out.has(e)) out.set(e, { name: e.split("@")[0], avatar: null });
+  }
+  return out;
+}
 
 /** Los mensajes de gs para el hilo (puro). gs ya los clasifica en `kind` (writer | person | platform) con el texto limpio;
  *  sin `kind` (gs viejo) se deduce del rol. Sólo se quitan los vacíos. */

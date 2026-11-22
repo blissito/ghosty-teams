@@ -88,7 +88,8 @@ export function DevFeedRow({ d, writer, grouped = false, issueUrl = null }: { d:
       {files.length > 0 && <AttachmentList attachments={files} />}
     </>
   );
-  const name = isWriter ? writer.name : d.by ?? (d.from === "chat" ? t("En Ghosty Studio") : t("Persona"));
+  const name = isWriter ? writer.name : d.author?.name ?? d.by ?? (d.from === "chat" ? t("En Ghosty Studio") : t("Persona"));
+  const avatar = isWriter ? writer.avatar : (d.author?.avatar ?? null);
   if (grouped) {
     // Seguido del mismo autor: sin avatar ni nombre, como agrupa Slack.
     return (
@@ -100,8 +101,8 @@ export function DevFeedRow({ d, writer, grouped = false, issueUrl = null }: { d:
   }
   return (
     <div className="flex gap-3 px-1 pt-2 pb-0.5">
-      {isWriter && writer.avatar ? (
-        <img src={writer.avatar} alt="" className="h-9 w-9 shrink-0 rounded-lg" />
+      {avatar ? (
+        <img src={avatar} alt="" className="h-9 w-9 shrink-0 rounded-lg object-cover" />
       ) : (
         <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-surface-3 text-xs font-bold text-muted">{name.replace(/^@/, "").slice(0, 2).toUpperCase()}</div>
       )}
