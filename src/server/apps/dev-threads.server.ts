@@ -90,7 +90,7 @@ export async function startDevThread(a: {
   const runId = r.data?.id ?? r.data?.run?.id ?? r.data?.result?.id;
   if (!r.ok || !runId) return { ok: false, error: String(r.data?.message ?? r.data?.error ?? `gs respondió ${r.status}`) };
   await dbq("INSERT OR IGNORE INTO gt_dev_threads (run_id, channel_id, root_msg_id, requested_by) VALUES (?, ?, ?, ?)", [String(runId), a.channelId, a.rootMsgId, a.sub]);
-  await postAs(a.channelId, a.rootMsgId, devRunFence(String(runId)), "platform").catch(() => null);
+  await postAs(a.channelId, a.rootMsgId, devRunFence(String(runId)), "writer").catch(() => null);
   return { ok: true, runId: String(runId) };
 }
 
@@ -179,7 +179,7 @@ export async function adoptLiveRuns(): Promise<void> {
     const room = roomForRepo(rooms, String(run.repo));
     if (!room) continue;
     // UN solo mensaje en el room: la tarjeta. La conversación la lee la tarjeta de gs; Teams no la copia.
-    const root = await postAs(room.channel_id, null, devRunFence(runId), "platform").catch(() => null);
+    const root = await postAs(room.channel_id, null, devRunFence(runId), "writer").catch(() => null);
     if (!root) continue;
     await dbq("INSERT OR IGNORE INTO gt_dev_threads (run_id, channel_id, root_msg_id, requested_by) VALUES (?, ?, ?, ?)", [runId, room.channel_id, root, room.connected_by]);
   }
@@ -191,6 +191,14 @@ export async function adoptLiveRuns(): Promise<void> {
  * la tarjeta. Idempotente (no encuentra nada en la segunda vuelta).
  */
 async function cleanupCopiedMirror(): Promise<void> {
+  // La tarjeta de un pendiente es del escritor (Worker), no de Arqui: con la cara de Arqui parecía que contestaba el agente del
+  // room. Re-firma las que ya se publicaron. Idempotente.
+  const w = await faceOf("writer");
+  await dbq(
+    `UPDATE gc_messages SET agent_handle = ?, sender = ?, avatar = ?
+     WHERE id IN (SELECT root_msg_id FROM gt_dev_threads) AND sender_sub IS NULL AND body LIKE '%gt-devrun%' AND COALESCE(agent_handle,'') <> ?`,
+    [w.handle, w.name, w.avatar, w.handle],
+  ).catch(() => {});
   const roots = await dbq(
     "SELECT t.run_id, t.channel_id, t.root_msg_id FROM gt_dev_threads t JOIN gc_messages m ON m.id = t.root_msg_id WHERE m.sender_sub IS NULL AND m.body LIKE '🛠️ **Pendiente%'",
     [],
@@ -203,9 +211,9 @@ async function cleanupCopiedMirror(): Promise<void> {
   }
 }
 
-/** Aviso corto de la plataforma en el hilo de un pendiente (con la cara de Arqui). */
+/** Aviso corto en el hilo de un pendiente, con la cara del escritor (el hilo es suyo; ningún otro agente habla ahí). */
 export async function postDevNote(channelId: number, rootMsgId: number, text: string): Promise<void> {
-  await postAs(channelId, rootMsgId, text, "platform").catch(() => null);
+  await postAs(channelId, rootMsgId, text, "writer").catch(() => null);
 }
 
 /** El barrido del tenant (lo llama `sweepTenant`): sólo adopta pendientes sin tarjeta. NO espeja: gs es la única fuente. */
