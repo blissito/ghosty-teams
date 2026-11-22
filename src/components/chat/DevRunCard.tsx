@@ -128,7 +128,7 @@ export function DevRunCard({ runId }: { runId: string }) {
       )}
       {st.needsPerson && (
         <div className="mx-3 mt-2 rounded-lg bg-amber-100 px-2 py-1.5 text-amber-950 dark:bg-amber-900/40 dark:text-amber-50">
-          <p className="text-xs font-semibold">{st.idle ? t("El escritor se detuvo sin terminar: dile cómo seguir en el hilo con @ghosty.") : t("Te toca decidir")}</p>
+          <p className="text-xs font-semibold">{st.idle ? t("El escritor se detuvo sin terminar: dile cómo seguir en el hilo.") : t("Te toca decidir")}</p>
           {st.question && (
             <div className="mt-1 text-sm">
               <Markdown body={st.question} />

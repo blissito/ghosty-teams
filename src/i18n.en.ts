@@ -2773,9 +2773,9 @@ export const en: Record<string, string> = {
   "Detener el pendiente": "Stop the task",
   "Te toca decidir: contéstale en la tarjeta del pendiente o menciona a @ghosty aquí.": "Your call: reply in the task card or mention @ghosty here.",
   "Persona": "Person",
-  "Te toca decidir: contéstale aquí con @ghosty.": "Your call: reply here with @ghosty.",
-  "El escritor se detuvo sin terminar: dile cómo seguir en el hilo con @ghosty.": "The writer stopped before finishing: tell it how to continue in the thread with @ghosty.",
   "desde GitHub": "from GitHub",
   "En Ghosty Studio": "In Ghosty Studio",
   "Prueba en vivo": "Live check",
+  "Te toca decidir: contéstale aquí.": "Your call: reply here.",
+  "El escritor se detuvo sin terminar: dile cómo seguir en el hilo.": "The writer stopped before finishing: tell it how to continue in the thread.",
 };
