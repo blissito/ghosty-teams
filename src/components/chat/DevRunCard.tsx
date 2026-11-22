@@ -166,7 +166,7 @@ export function DevRunCard({ runId }: { runId: string }) {
             {t("Ver PR")}
           </a>
         )}
-        <a href={`${STUDIO}/c/desarrollo/${encodeURIComponent(runId)}`} target="_blank" rel="noreferrer" className="rounded-lg border border-border px-3 py-1.5 text-xs font-bold text-ink hover:bg-surface">
+        <a href={`${STUDIO}/c/dev/${encodeURIComponent(runId)}`} target="_blank" rel="noreferrer" className="rounded-lg border border-border px-3 py-1.5 text-xs font-bold text-ink hover:bg-surface">
           {t("Abrir en Ghosty")}
         </a>
         {st.live && st.phase !== "merging" && (
