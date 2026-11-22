@@ -277,6 +277,28 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           if (!asked && repos.length > 1)
             return { ok: false, error: `Este room tiene varios repos: di en \`repo\` sobre cuál es el plan (${repos.join(", ")}).` };
           const repo = asked || repos[0] || null;
+          // Una sola fábrica (22-nov): con el motor de gs en el espacio, el pedido nace allá y este hilo es su vista.
+          // @plan ya no firma ni despierta a @build: el escritor de gs construye, revisa y avisa por fase.
+          const threadRootNow = threadRoot(dest);
+          if (threadRootNow && repo) {
+            const { devEngineOf } = await import("./dev-engine.server");
+            if ((await devEngineOf()) === "unified") {
+              const { planCriteria, startDevThread } = await import("./dev-threads.server");
+              const issueN = Number(a.issue);
+              const started = await startDevThread({
+                channelId: dest.channelId,
+                rootMsgId: threadRootNow,
+                sub,
+                repo,
+                title: planTitle(a.title, planMd),
+                goal: planMd,
+                criteria: planCriteria(planMd),
+                issue: Number.isInteger(issueN) && issueN > 0 ? issueN : null,
+              });
+              if (!started.ok) return { ok: false, error: `El motor de pendientes no lo aceptó: ${started.error}` };
+              return { ok: true, devRunId: started.runId, note: "El pedido ya corre en el motor de Ghosty y su tarjeta está en el hilo. Tu paso terminó: no esperes firma ni despiertes a nadie." };
+            }
+          }
           let root = threadRoot(dest);
           if (!root) {
             // Turno sin hilo (una tarea programada despierta a @plan top-level): el pedido

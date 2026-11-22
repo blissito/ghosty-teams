@@ -1,4 +1,5 @@
 import { RunBar } from "../components/chat/RunBar";
+import { DevRunBar } from "../components/chat/DevRunBar";
 import { forwardRef, Fragment, useCallback, useContext, useEffect, useImperativeHandle, useMemo, useReducer, useRef, useState } from "react";
 import { IDLE_MS } from "../lib/presence";
 import { shouldChime } from "../lib/chime";
@@ -8024,6 +8025,7 @@ function ThreadView({
       </header>
       {/* Pedido de la fábrica: estado y acción principal SIEMPRE a la vista, sin scroll. */}
       <RunBar channelId={channel.id} threadId={threadId} />
+      <DevRunBar channelId={channel.id} threadId={threadId} />
       {/* overflow-anchor:none → desactiva el scroll-anchoring nativo del navegador. Al cargar
           una imagen ARRIBA del viewport el browser movía scrollTop para conservar la vista, lo
           que disparaba onScroll → apagaba `stick` a media carga y el ResizeObserver dejaba de

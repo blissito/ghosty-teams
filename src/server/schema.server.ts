@@ -1098,6 +1098,20 @@ async function migrate(): Promise<void> {
   // La cabeza del PR que @check revisó en su último veredicto: un `check_fail` sólo gasta vuelta
   // si @build la movió (`countsLoop` en apps/factory-flow.ts).
   await addColumn("gt_factory_runs", "checked_sha", "TEXT");
+  // Una sola fábrica (22-nov): el hilo de un room ligado a un pendiente del motor de gs (`devEngine: "unified"`).
+  // Teams sólo guarda el mapeo y los cursores del espejo; el estado vive en gs.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_dev_threads (
+    run_id       TEXT PRIMARY KEY,
+    channel_id   INTEGER NOT NULL,
+    root_msg_id  INTEGER NOT NULL,
+    requested_by TEXT,
+    conv_seq     INTEGER NOT NULL DEFAULT 0,
+    event_seq    INTEGER NOT NULL DEFAULT 0,
+    phase        TEXT,
+    closed       INTEGER NOT NULL DEFAULT 0,
+    created_at   INTEGER NOT NULL DEFAULT (unixepoch())
+  )`);
+  await exec("CREATE UNIQUE INDEX IF NOT EXISTS gt_dev_threads_thread ON gt_dev_threads(channel_id, root_msg_id)");
   // Lo único que @check revisa en la siguiente vuelta (lo pone quien decide un escalado); se
   // borra con su veredicto.
   await addColumn("gt_factory_runs", "check_scope", "TEXT");

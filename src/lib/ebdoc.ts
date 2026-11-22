@@ -1248,6 +1248,7 @@ export function bubbleWithoutEbDoc(
     // La de plan de la Software Factory: el fence sólo trae ids, la tarjeta lee el resto.
     body = stripPlanCard(body);
     body = stripRunCard(body);
+    body = stripDevRunCard(body);
     body = stripRelay(body);
     body = stripVerdictCard(body);
     body = stripPreviewErrorCard(body);
@@ -1541,6 +1542,22 @@ export function extractRunFossil(body: string): RunFossilData | null {
   } catch {
     return null;
   }
+}
+
+/* ── Pedido que corre en el motor de gs (```gt-devrun```, 22-nov) ─────────────── */
+// Marca el hilo como vista del pendiente; el estado lo pinta la barra fija (`DevRunBar`).
+export function extractDevRunCard(body: string): { runId: string } | null {
+  const m = body.match(/```gt-devrun[^\n]*\n([\s\S]*?)```/);
+  if (!m) return null;
+  try {
+    const runId = String((JSON.parse(m[1].trim()) as Record<string, unknown>).runId ?? "");
+    return runId ? { runId } : null;
+  } catch {
+    return null;
+  }
+}
+export function stripDevRunCard(body: string): string {
+  return body.replace(/```gt-devrun[^\n]*\n[\s\S]*?```/, "").trim();
 }
 
 /* ── Línea de relevo entre roles (```gt-relay```) ──────────────────────────── */

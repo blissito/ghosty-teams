@@ -198,6 +198,9 @@ export async function sweepTenant(ns: string): Promise<void> {
   const { retryWaitingPrPreviews } = await import("./pr-preview.server");
   await retryWaitingPrPreviews().catch(() => {});
   await announcePreviews().catch(() => {});
+  // Pedidos que corren en el motor de gs: su hilo espeja al escritor y los cambios de fase.
+  const { syncDevThreads } = await import("./dev-threads.server");
+  await syncDevThreads().catch((e) => console.error("[dev-threads] barrido", e));
   // Pausados porque GitHub limitó las peticiones (#137): a su hora @check revisa otra vez sola.
   const { recheckRateLimited } = await import("./factory-runs.server");
   await recheckRateLimited().catch(() => {});

@@ -1016,6 +1016,21 @@ export const postMessageAs = createServerOnlyFn(async (me: SessionMe | null, dat
       factorySigned = await maybeMergeReply({ channelId: channel.id, rootId: data.parentId, text: body, sub: me.sub });
     }
   }
+  // Una sola fábrica (22-nov): en el hilo de un pedido que corre en el motor de gs, lo que la persona escribe (sin @, o
+  // con @ghosty) le llega al escritor por `tell`; gs decide por fase. Ningún rol de Teams se despierta.
+  let devTold = false;
+  if (!factorySigned && data.parentId !== null && me?.sub && body) {
+    const { devThreadOf, routesToWriter, tellDevThread } = await import("./apps/dev-threads.server");
+    const dt = routesToWriter(mentionedList) && !mencionaAAlguienMas(body.replace(/@ghosty\b/gi, "")) ? await devThreadOf(channel.id, data.parentId).catch(() => null) : null;
+    if (dt && !dt.closed) {
+      devTold = true;
+      void tellDevThread(dt, me.sub, body).then(async (r) => {
+        if (r.ok) return;
+        const { postAgent } = await import("../db.server");
+        await postAgent(channel.id, data.parentId, `⚠️ No le llegó al escritor: ${r.message ?? "gs no respondió"}`, "msg", "ghosty", "Ghosty", "general", "").catch(() => null);
+      });
+    }
+  }
   // Push a los usuarios @tagged (fire-and-forget resiliente).
   // `unresolved` viaja al cliente: un `@algo` que no es nadie y no despierta a ningún
   // agente se quedaba en silencio absoluto (ni 👀 ni aviso). Ahora se dice, con los
@@ -1050,7 +1065,9 @@ export const postMessageAs = createServerOnlyFn(async (me: SessionMe | null, dat
   // la anterior se contesta en su hilo. Lo que vale para todo el room va a las notas del agente.
   const respondents: { handle: string; parent: number | null; fleetThread: string; shellId: number; steered?: boolean }[] = [];
   let threadAgent: string | null = null;
-  if (mentionedList.length) {
+  if (devTold) {
+    // El escritor de gs ya tiene el mensaje; su respuesta llega al hilo por el espejo.
+  } else if (mentionedList.length) {
     const parentFor = data.parentId ?? id; // top-level → abre hilo bajo TU mensaje
     // «@a coordina con @b» arranca sólo a @a, que llama a @b cuando lo necesite. Antes
     // arrancaban los dos con el mismo pedido y salían dos entregables (descti, 24-sep).

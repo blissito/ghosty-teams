@@ -94,7 +94,7 @@ import { registerModalEsc } from "../../utils/modal-esc";
 import { useScrollLock } from "../../utils/scroll-lock";
 import { type ArtifactView, viewFromAttachment } from "../../components/ArtifactPanel";
 import { FxOverlay } from "./FxOverlay";
-import { extractFx, extractEbDoc, bubbleWithoutEbDoc, extractToolState, extractComputerCard, type ComputerCardData, extractSubagents, extractSteps, extractTodos, extractAlert, extractAsk, extractPermission, extractAllPr, extractAllGh, extractTask, extractTests, extractPlanCard, extractRunCard, extractRunFossil, extractRelay, type RelayData, extractVerdictCard, extractPreviewErrorCard, extractSprintCard, extractAsksCard, extractAdsProposalCard, extractAdsCampaignCard, extractAdsReportCard, extractAdsPendingCard, parseAskUserMd, type ToolState, type TodoState, type AlertCardData, type AskCardData, type PermissionCardData, type GhCardData, type PrCardData, type TaskCardData, type TestsCardData } from "../../lib/ebdoc";
+import { extractFx, extractEbDoc, bubbleWithoutEbDoc, extractToolState, extractComputerCard, type ComputerCardData, extractSubagents, extractSteps, extractTodos, extractAlert, extractAsk, extractPermission, extractAllPr, extractAllGh, extractTask, extractTests, extractPlanCard, extractRunCard, extractDevRunCard, extractRunFossil, extractRelay, type RelayData, extractVerdictCard, extractPreviewErrorCard, extractSprintCard, extractAsksCard, extractAdsProposalCard, extractAdsCampaignCard, extractAdsReportCard, extractAdsPendingCard, parseAskUserMd, type ToolState, type TodoState, type AlertCardData, type AskCardData, type PermissionCardData, type GhCardData, type PrCardData, type TaskCardData, type TestsCardData } from "../../lib/ebdoc";
 import { SubagentList } from "./SubagentList";
 import { prCardStateFn, runCardActionFn, taskCardStateFn, runTaskCardActionFn } from "../../server/connectors";
 import { answerAgentAskFn } from "../../server/agent-ask";
@@ -2696,7 +2696,7 @@ export function useAgentMeta(handle: string): AgentMeta | null {
 
 // Lo que publica la plataforma con la cara de un rol (tarjetas, avisos del sprint) no corrió en
 // ningún modelo: sin turno no hay pie. Antes salía «Plan · claude-haiku-5-5» en la tarjeta (8-oct).
-const PLATFORM_POST = /^\s*(```gt-(run|sprint|plan|relay|pr)\b|🚀|▶️|🧩|🔎|🎉)/u;
+const PLATFORM_POST = /^\s*(```gt-(run|devrun|sprint|plan|relay|pr)\b|🚀|▶️|🧩|🔎|🎉)/u;
 function platformPost(m: { turn_model?: string | null; body?: string | null }): boolean {
   return !m.turn_model && PLATFORM_POST.test(String(m.body ?? ""));
 }
@@ -3282,6 +3282,9 @@ export function MessageRow({
                 const rc = extractRunCard(m.body);
                 return rc ? <RunCard card={rc} channelId={m.channel_id ?? 0} msgId={m.id} /> : null;
               })()}
+              {extractDevRunCard(m.body) && (
+                <p className="mt-1 text-xs text-muted">{t("El pedido corre en el motor de Ghosty: su estado está arriba del hilo y lo que escribas aquí le llega al escritor.")}</p>
+              )}
               {(() => {
                 const rf = extractRunFossil(m.body);
                 return rf ? <RunFossil runId={rf.runId} title={rf.title} status={rf.status} at={rf.at} cardMsgId={rf.liveMsgId} /> : null;
