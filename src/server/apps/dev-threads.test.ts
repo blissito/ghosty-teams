@@ -78,3 +78,14 @@ describe("pregunta real vs avance viejo", () => {
     expect(devRunView("a", { phase: "needs_person", note: "avance", events: [{ kind: "asked_person", data: { reason: "writer_idle" } }] })).toMatchObject({ question: null, idle: true });
   });
 });
+
+import { fichaChecks } from "./dev-threads";
+describe("ficha de gs en la tarjeta", () => {
+  it("lee los estados tal cual y la preview; sin ficha no hay piezas", () => {
+    expect(fichaChecks({ ci: "ok", review: "running", smoke: "none", preview: { state: "failed", url: "https://p" } })).toEqual({
+      checks: [{ key: "ci", state: "ok" }, { key: "review", state: "running" }, { key: "preview", state: "bad" }],
+      previewUrl: "https://p",
+    });
+    expect(fichaChecks(undefined)).toEqual({ checks: [], previewUrl: null });
+  });
+});

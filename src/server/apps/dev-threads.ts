@@ -20,6 +20,9 @@ export type DevRunView = {
   options: string[];
   canMerge: boolean;
   live: boolean;
+  /** La mesa de trabajo del pendiente tal como la arma gs (`ficha` de op:status); Teams no calcula estados. */
+  checks: { key: "ci" | "review" | "smoke" | "preview"; state: "ok" | "bad" | "running" | "none" }[];
+  previewUrl: string | null;
 };
 
 const LIVE = new Set(["queued", "working", "waiting_ci", "reviewing", "needs_person", "merging"]);
@@ -42,7 +45,24 @@ export function devRunView(runId: string, d: any): DevRunView {
     options: phase === "needs_person" ? lastAskOptions(d?.events) : [],
     canMerge: d?.canMerge === true || (d?.ready === true && LIVE.has(phase) && phase !== "merging"),
     live: LIVE.has(phase),
+    ...fichaChecks(d?.ficha),
   };
+}
+
+const PREVIEW_STATE: Record<string, "ok" | "bad" | "running" | "none"> = { ready: "ok", building: "running", failed: "bad", none: "none" };
+const CHECK_STATES = new Set(["ok", "bad", "running", "none"]);
+
+/** Las piezas de la `ficha` de gs que pinta la tarjeta (puro). Sin ficha (gs viejo), nada. */
+export function fichaChecks(f: any): Pick<DevRunView, "checks" | "previewUrl"> {
+  if (!f || typeof f !== "object") return { checks: [], previewUrl: null };
+  const st = (v: unknown) => (CHECK_STATES.has(String(v)) ? (String(v) as "ok" | "bad" | "running" | "none") : "none");
+  const checks: DevRunView["checks"] = [
+    { key: "ci", state: st(f.ci) },
+    { key: "review", state: st(f.review) },
+    { key: "smoke", state: st(f.smoke) },
+    { key: "preview", state: PREVIEW_STATE[String(f.preview?.state)] ?? "none" },
+  ];
+  return { checks: checks.filter((c) => c.state !== "none"), previewUrl: f.preview?.url ? String(f.preview.url) : null };
 }
 
 function lastAsk(events: unknown): any {

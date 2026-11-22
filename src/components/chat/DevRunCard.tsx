@@ -20,6 +20,9 @@ const TONE: Record<string, string> = {
   failed: "bg-red-500",
 };
 
+const CHECK_EMOJI = { ok: "✅", running: "🔄", bad: "❌", none: "" } as const;
+const CHECK_LABEL = { ci: "CI", review: "Revisión", smoke: "Prueba en vivo", preview: "Vista previa" } as const;
+
 /** ¿La tarjeta está a la vista? Sólo entonces se le pregunta a gs. */
 function useVisible(ref: React.RefObject<HTMLElement | null>): boolean {
   const [v, setV] = useState(false);
@@ -106,6 +109,23 @@ export function DevRunCard({ runId }: { runId: string }) {
         <span className="ml-auto shrink-0 rounded-full border border-border px-2 py-0.5 text-[11px] text-muted">{t(st.label)}</span>
       </div>
       {st.repo && <p className="px-3 text-xs italic text-muted">{st.repo}</p>}
+      {(st.checks?.length ?? 0) > 0 && (
+        // La mesa de trabajo de gs (`ficha`): cada pieza con el emoji de su estado; aquí no se calcula nada.
+        <p className="flex flex-wrap gap-x-3 gap-y-1 px-3 pt-1 text-xs text-muted">
+          {st.checks.map((c) => (
+            <span key={c.key}>
+              {CHECK_EMOJI[c.state]}{" "}
+              {c.key === "preview" && st.previewUrl ? (
+                <a href={st.previewUrl} target="_blank" rel="noreferrer" className="underline-offset-2 hover:text-ink hover:underline">
+                  {t(CHECK_LABEL[c.key])}
+                </a>
+              ) : (
+                t(CHECK_LABEL[c.key])
+              )}
+            </span>
+          ))}
+        </p>
+      )}
       {st.needsPerson && (
         <div className="mx-3 mt-2 rounded-lg bg-amber-100 px-2 py-1.5 text-amber-950 dark:bg-amber-900/40 dark:text-amber-50">
           <p className="text-xs font-semibold">{st.idle ? t("El escritor se detuvo sin terminar: dile cómo seguir en el hilo con @ghosty.") : t("Te toca decidir")}</p>
