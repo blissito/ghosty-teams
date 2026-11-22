@@ -720,9 +720,24 @@ export const factoryRunCardFn = createServerFn({ method: "POST" })
       dueAt: run.status === "plan_review" ? (run.dueAt ?? null) : null,
       // Cancelado: en qué etapa iba y por qué, para conservar las ✓ de lo que sí se hizo.
       cancelled: run.status === "cancelled" ? await cancelledView(run, me.sub) : null,
+      // El último smoke completo (rutas, página y Lighthouse, por gs): chips de la tarjeta y panel «Verificación».
+      smoke: await lastSmoke(run.id),
       ...(await runLive(run)),
     };
   });
+
+/** El último `smoke_report` del pedido (bitácora), o null. */
+async function lastSmoke(runId: number) {
+  const { dbq } = await import("../../dbq.server");
+  const [row] = await dbq("SELECT data_json, at FROM gt_factory_events WHERE run_id = ? AND type = 'smoke_report' ORDER BY id DESC LIMIT 1", [runId]).catch(() => []);
+  if (!row?.data_json) return null;
+  try {
+    const d = JSON.parse(String(row.data_json)) as import("./factory-smoke.server").SmokeReport & { sha?: string; ok?: boolean };
+    return { sha: d.sha ?? null, ok: d.ok !== false, results: d.results ?? null, page: d.page ?? null, lighthouse: d.lighthouse ?? null, at: Number(row.at) || null };
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Pedido cancelado para su tarjeta: la etapa (bitácora) y si el PR quedó cerrado en GitHub. Lo
@@ -1353,6 +1368,39 @@ export const factoryFixCiFn = createServerFn({ method: "POST" })
     const next = await R.reopenWithNotes(run, by, "", await reqOrigin().catch(() => ""), { ci: ci.failed });
     if (!next) throw new Error("no pude reabrir el pedido");
     ciCache.delete(run.prUrl);
+    void R.refreshRoom(run.channelId);
+    return { ok: true as const };
+  });
+
+/**
+ * «Pedir arreglo al agente» con el smoke en rojo o con hallazgos de la página: lo pide en el HILO (queda la conversación) y
+ * le llega al escritor como nota; con el PR ya en revisión, otra vuelta en la misma rama (como «arreglar el CI»).
+ */
+export const factorySmokeFixFn = createServerFn({ method: "POST" })
+  .validator((d: { runId: number }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) throw new Error("no autenticado");
+    const R = await import("./factory-runs.server");
+    const run = await R.getRun(Number(data.runId));
+    if (!run) throw new Error("no existe el pedido");
+    const db = await import("../../db.server");
+    if (!(await db.listChannels(me.sub, me.isOwner)).some((c) => c.id === run.channelId)) throw new Error("no ves ese room");
+    if (["done", "cancelled"].includes(run.status)) throw new Error("el pedido ya terminó");
+    const smoke = await lastSmoke(run.id);
+    const S = await import("./factory-smoke.server");
+    const routes = S.smokeFailures(smoke?.results ?? null);
+    const page = S.pageIssuesText(smoke?.page ?? null);
+    if (!routes && !page) throw new Error("el smoke no tiene nada que arreglar");
+    const by = me.name || me.sub;
+    const what = [routes, page].filter(Boolean).join("\n");
+    const text = `El smoke contra la preview encontró esto:\n${what}\nReprodúcelo en la preview, corrígelo en la misma rama y vuelve a subir.`;
+    await R.addNote(run.id, by, text);
+    await R.postInThread(run, "plan", `🔧 ${by} pidió arreglar lo del smoke:\n${what}`);
+    if (run.status === "pr_review" && run.prUrl) {
+      const { reqOrigin } = await import("../../origin.server");
+      if (!(await R.reopenWithNotes(run, by, "", await reqOrigin().catch(() => ""), { smoke: true }))) throw new Error("no pude reabrir el pedido");
+    }
     void R.refreshRoom(run.channelId);
     return { ok: true as const };
   });

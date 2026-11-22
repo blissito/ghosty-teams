@@ -3104,10 +3104,18 @@ async function announceRunPreview(row: Record<string, any>, P: typeof import("./
       // POST con el Origin real. Sólo se avisa si falla (#96, 16-oct).
       if (url) {
         const S = await import("./factory-smoke.server");
-        const fails = S.smokeFailures(await S.runActionSmoke(url, pr.repo, sub));
+        // Completo (rutas + página + Lighthouse, por gs): queda en la bitácora para la tarjeta y el panel «Verificación».
+        // Con la llave en el momento (la liga guardada puede no traerla y sin ella todo da 401 y «pasa»).
+        const report = await S.runSmokeReport(next.provider ? url : ((await resolvePreviewUrl(run.id)) ?? url), pr.repo, sub);
+        const fails = S.smokeFailures(report.results);
+        const pageIssues = S.pageIssuesText(report.page);
+        await logEvent(run.id, "smoke_report", null, { sha: head.sha, ok: !fails, ...report });
         if (fails) {
           await logEvent(run.id, "smoke_fail", null, { sha: head.sha, fails: fails.slice(0, 800) });
           await postInThread(run, "build", `⛔ **La preview rechaza envíos** (POST con el Origin real, como el navegador):\n${fails}\nNo lo mezcles así.`);
+        } else if (pageIssues) {
+          // No frena el merge (como en gs): se dice concreto para que la persona decida si lo pide.
+          await postInThread(run, "build", `🔎 **Smoke de la página** en la preview:\n${pageIssues}\nNo frena el merge; «Pedir arreglo al agente» en la tarjeta se lo encarga.`);
         }
       }
       // Si @check ya dio su veredicto con otra versión (o sin preview), las capturas de su

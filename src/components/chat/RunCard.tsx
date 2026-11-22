@@ -22,6 +22,7 @@ import { factoryVerdictFn, factoryMergeFn, factoryRunCardFn, factoryDecisionFn, 
 import { prepareRepoFn } from "../../server/apps/readiness";
 import type { RunCardData } from "../../lib/ebdoc";
 import { runKindTag } from "../../lib/factory-kinds";
+import { SmokeStrip } from "./RunVerification";
 
 type State = Awaited<ReturnType<typeof factoryRunCardFn>>;
 
@@ -692,6 +693,16 @@ function RunCardBody({ card, channelId, inPanel, msgId }: { card: RunCardData; c
             </button>
           </p>
         )}
+        {/* El smoke completo de gs (rutas, página y Lighthouse) y el panel «Verificación» (22-nov). */}
+        <SmokeStrip
+          runId={st.runId}
+          title={st.title}
+          smoke={st.smoke ?? null}
+          ci={st.ci ? { state: st.ci.state, checks: st.ci.checks } : null}
+          prUrl={st.prUrl}
+          live={!["done", "cancelled"].includes(st.status)}
+          onChanged={refresh}
+        />
         {st.ci?.state === "none" && !st.ci.repoHasCi && (
           <p className="mt-2 flex flex-wrap items-center gap-2 text-xs font-semibold text-amber-700 dark:text-amber-300" role="status">
             {t("Sin CI: nadie corrió las pruebas fuera de la caja de los agentes. Prepara el repo antes del merge.")}

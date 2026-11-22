@@ -113,6 +113,68 @@ async function gsSmoke(previewUrl: string, paths: string[]): Promise<SmokeResult
   }
 }
 
+// ── Reporte completo (22-nov): página y Lighthouse, también de gs ────────────────────────────────
+
+/** Lo que gs vio en la página (`PageSignals` de gs): imágenes rotas, desbordes y contraste, con dónde. */
+export type SmokePageIssue = { kind: "image" | "layout" | "contrast"; what: string; where: string };
+export type SmokePage = { brokenImages: number; layout: number; contrastFails: number; contrastRan: boolean; issues?: SmokePageIssue[] };
+export type SmokeLighthouse = { performance: number | null; accessibility: number | null; bestPractices: number | null; seo: number | null } | null;
+export type SmokeReport = { results: SmokeResult[] | null; page: SmokePage | null; lighthouse: SmokeLighthouse };
+
+/** Lo de la página que se le pide arreglar al escritor, un renglón por hallazgo (puro). Contraste sólo si corrió. */
+export function pageIssuesText(page: SmokePage | null, max = 8): string {
+  const issues = (page?.issues ?? []).filter((i) => i.kind !== "contrast" || page?.contrastRan);
+  const label = { image: "imagen rota", layout: "desborde", contrast: "contraste" } as const;
+  return issues.slice(0, max).map((i) => `- ${label[i.kind]}: ${i.what}${i.where ? ` (${i.where})` : ""}`).join("\n");
+}
+
+/** Normaliza lo que manda gs (puro): números o null, issues acotadas. */
+export function reportFromGs(data: { steps?: GsSmokeStep[]; page?: any; lighthouse?: any }): SmokeReport {
+  const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.round(v) : null);
+  const p = data.page;
+  const page: SmokePage | null = p
+    ? {
+        brokenImages: Number(p.brokenImages) || 0,
+        layout: Number(p.layout) || 0,
+        contrastFails: Number(p.contrastFails) || 0,
+        contrastRan: p.contrastRan === true,
+        issues: Array.isArray(p.issues)
+          ? p.issues.slice(0, 15).map((i: any) => ({ kind: i.kind, what: String(i.what ?? "").slice(0, 200), where: String(i.where ?? "").slice(0, 120) }))
+          : [],
+      }
+    : null;
+  const l = data.lighthouse;
+  const lighthouse = l ? { performance: n(l.performance), accessibility: n(l.accessibility), bestPractices: n(l.bestPractices), seo: n(l.seo) } : null;
+  return { results: smokeResultsFromGs(Array.isArray(data.steps) ? data.steps : []), page, lighthouse };
+}
+
+/**
+ * El smoke completo de una preview, por gs (una sola pieza): rutas, página y Lighthouse. Si gs no contesta, sólo las
+ * rutas con el local (sin página ni Lighthouse). Nunca lanza.
+ */
+export async function runSmokeReport(previewUrl: string, repo: string | null, sub: string): Promise<SmokeReport> {
+  let paths: string[] = [];
+  try {
+    if (repo) {
+      const { repoTeamFile } = await import("./factory-team.server");
+      paths = (await repoTeamFile(repo, sub).catch(() => null))?.smoke ?? [];
+    }
+    const { nativeRuntimeBase, partnerHeaders } = await import("../ghosty-runtime.server");
+    const base = await nativeRuntimeBase();
+    if (base) {
+      const { currentNamespace } = await import("../tenant.server");
+      const body = JSON.stringify({ previewUrl, paths, full: true });
+      // Inspect + Lighthouse en render-svc: hasta ~3 min.
+      const res = await fetch(`${base}/api/v2/partners/smoke`, { method: "POST", headers: partnerHeaders(body, await currentNamespace()), body, signal: AbortSignal.timeout(200_000) });
+      if (res.ok) return reportFromGs(await res.json());
+      console.warn(`[factory] smoke completo por gs ${previewUrl}: ${res.status}`);
+    }
+  } catch (e) {
+    console.warn(`[factory] smoke completo por gs ${previewUrl}: ${(e as Error).message}`);
+  }
+  return { results: await actionSmoke(previewUrl, paths).catch(() => null), page: null, lighthouse: null };
+}
+
 /** El smoke del pedido con las rutas que declara el repo. Nunca lanza: null si no se pudo correr. */
 export async function runActionSmoke(previewUrl: string, repo: string | null, sub: string, hit?: SmokeHit): Promise<SmokeResult[] | null> {
   try {
