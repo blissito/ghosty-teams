@@ -8074,7 +8074,15 @@ function ThreadView({
                         it.kind === "real" ? (
                           <MessageRow key={it.m.id} m={it.m} prev={(all[i - 1] as { kind: string; m?: Message } | undefined)?.m} />
                         ) : (
-                          <DevFeedRow key={`dev-${it.d.seq}`} d={it.d} writer={devFeed.writer} />
+                          <DevFeedRow
+                            key={`dev-${it.d.seq}`}
+                            d={it.d}
+                            writer={devFeed.writer}
+                            grouped={(() => {
+                              const p = all[i - 1];
+                              return !!p && p.kind === "dev" && p.d.role === it.d.role && p.d.by === it.d.by && it.d.role !== "platform" && it.at - p.at < 300;
+                            })()}
+                          />
                         ),
                       )
                     : replies.map((m, i) => <MessageRow key={m.id} m={m} prev={replies[i - 1]} />)}

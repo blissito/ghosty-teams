@@ -12,3 +12,11 @@ describe("hilo del pendiente", () => {
     expect(out).toEqual(["r1", "d1", "r2", "d2"]);
   });
 });
+
+import { ebFilesAsAttachments } from "./DevThreadFeed";
+describe("archivos del escritor", () => {
+  it("eb-file de nuestro bucket → adjunto con su llave; texto sin bloque", () => {
+    const txt = 'Aquí:\n```eb-file\n{"url":"https://t3.storage.dev/ghosty-teams/u/a/b/x.png?X-Amz=1"}\n```\nfin';
+    expect(ebFilesAsAttachments(txt, 3)).toEqual([{ id: -300, file_id: "u/a/b/x.png", mime: "image/png", size: null, name: "x.png" }]);
+  });
+});

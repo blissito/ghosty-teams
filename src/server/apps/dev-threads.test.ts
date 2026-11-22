@@ -74,7 +74,7 @@ import { askQuestion } from "./dev-threads";
 describe("pregunta real vs avance viejo", () => {
   it("writer_idle no es pregunta; asked_person con question sí", () => {
     expect(askQuestion({ note: "Sigo con la integración", events: [{ kind: "asked_person", data: { reason: "writer_idle" } }] })).toBeNull();
-    expect(askQuestion({ note: "x", events: [{ kind: "asked_person", data: { question: "¿A o B?" } }] })).toBe("¿A o B?");
+    expect(askQuestion({ events: [{ kind: "asked_person", data: { question: "¿A o B?" } }] })).toBe("¿A o B?");
     expect(devRunView("a", { phase: "needs_person", note: "avance", events: [{ kind: "asked_person", data: { reason: "writer_idle" } }] })).toMatchObject({ question: null, idle: true });
   });
 });

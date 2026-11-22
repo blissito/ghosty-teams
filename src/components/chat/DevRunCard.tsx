@@ -33,18 +33,34 @@ function useVisible(ref: React.RefObject<HTMLElement | null>): boolean {
   return v;
 }
 
+// Última vista conocida de cada pendiente: la tarjeta se pinta al instante con ella y gs la actualiza encima.
+const CACHE_KEY = (id: string) => `gt-devrun:${id}`;
+function cachedView(id: string): (DevRunView & { rootMsgId: number }) | null {
+  try {
+    const raw = typeof localStorage !== "undefined" ? localStorage.getItem(CACHE_KEY(id)) : null;
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function DevRunCard({ runId }: { runId: string }) {
   const t = useT();
   const box = useRef<HTMLDivElement>(null);
   const visible = useVisible(box);
-  const [st, setSt] = useState<(DevRunView & { rootMsgId: number }) | null>(null);
+  const [st, setSt] = useState<(DevRunView & { rootMsgId: number }) | null>(() => cachedView(runId));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
 
   const load = useCallback(async () => {
     const s = await devThreadCardFn({ data: { runId } }).catch(() => null);
-    if (s) setSt(s);
+    if (s) {
+      setSt(s);
+      try {
+        localStorage.setItem(CACHE_KEY(runId), JSON.stringify(s));
+      } catch {}
+    }
   }, [runId]);
 
   // Mientras se ve: cada 5 s si está viva, nada si ya cerró.

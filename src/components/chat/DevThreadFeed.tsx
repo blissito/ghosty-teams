@@ -7,6 +7,8 @@ import type { Message } from "../../db.server";
 import { useT } from "../../i18n";
 import { Markdown } from "../Markdown";
 import { extractAllEbFile, stripEbFile } from "../../lib/ebdoc";
+import type { Attachment } from "../../db.server";
+import { AttachmentList } from "./message";
 import { devThreadConversationFn, type DevChatMessage } from "../../server/apps/dev-threads";
 
 export type FeedItem = { kind: "real"; m: Message } | { kind: "dev"; d: DevChatMessage; at: number };
@@ -54,18 +56,50 @@ export function useDevFeed(channelId: number, threadId: number) {
   return state;
 }
 
+/** Los ```eb-file``` del escritor como adjuntos de Teams (puro). Viven en nuestro bucket (`…/ghosty-teams/<llave>`), así
+ *  que `/api/attachment/<llave>` los sirve firmados igual que cualquier adjunto. */
+export function ebFilesAsAttachments(text: string, seq: number): Attachment[] {
+  return extractAllEbFile(text).flatMap((f, i) => {
+    const m = /\/ghosty-teams\/([^?#]+)/.exec(f.url);
+    if (!m) return [];
+    const key = decodeURIComponent(m[1]);
+    const ext = (key.split(".").pop() ?? "").toLowerCase();
+    const mime = f.mime ?? (/^(png|jpe?g|webp|gif)$/.test(ext) ? `image/${ext === "jpg" ? "jpeg" : ext}` : null);
+    return [{ id: -(seq * 100 + i), file_id: key, mime, size: f.size ?? null, name: f.name ?? key.split("/").pop() ?? null } as Attachment];
+  });
+}
+
 const hhmm = (iso: string | null) => (iso ? new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "");
 
 /** Un mensaje del pendiente en el hilo, con la misma forma que los de Teams (avatar, nombre, hora, cuerpo). */
-export function DevFeedRow({ d, writer }: { d: DevChatMessage; writer: { name: string; avatar: string } }) {
+export function DevFeedRow({ d, writer, grouped = false }: { d: DevChatMessage; writer: { name: string; avatar: string }; grouped?: boolean }) {
   const t = useT();
   if (d.role === "platform") {
     return <div className="py-1 pl-11 text-xs text-muted">{d.text}</div>;
   }
   const isWriter = d.role === "writer";
+  const files = ebFilesAsAttachments(d.text, d.seq);
+  const body = (
+    <>
+      <div className="text-sm text-ink">
+        <Markdown body={stripEbFile(d.text)} />
+      </div>
+      {/* Los archivos del escritor (```eb-file```) con el MISMO renderer de adjuntos de Teams (abre en el panel). */}
+      {files.length > 0 && <AttachmentList attachments={files} />}
+    </>
+  );
   const name = isWriter ? writer.name : d.by ?? t("Persona");
+  if (grouped) {
+    // Seguido del mismo autor: sin avatar ni nombre, como agrupa Slack.
+    return (
+      <div className="flex gap-3 px-1 py-0.5">
+        <div className="w-9 shrink-0" />
+        <div className="min-w-0 flex-1">{body}</div>
+      </div>
+    );
+  }
   return (
-    <div className="flex gap-3 px-1 py-2">
+    <div className="flex gap-3 px-1 pt-2 pb-0.5">
       {isWriter && writer.avatar ? (
         <img src={writer.avatar} alt="" className="h-9 w-9 shrink-0 rounded-lg" />
       ) : (
@@ -77,25 +111,7 @@ export function DevFeedRow({ d, writer }: { d: DevChatMessage; writer: { name: s
           {isWriter && <span className="rounded bg-surface-3 px-1 text-[10px] font-bold uppercase tracking-wide text-muted">{t("Agente")}</span>}
           <span className="text-xs text-muted">{hhmm(d.at)}</span>
         </div>
-        <div className="text-sm text-ink">
-          <Markdown body={stripEbFile(d.text)} />
-        </div>
-        {/* Los archivos que entrega el escritor (```eb-file```): imágenes en miniatura, el resto como liga. */}
-        {extractAllEbFile(d.text).length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-2">
-            {extractAllEbFile(d.text).map((f) =>
-              (f.mime ?? "").startsWith("image/") || /\.(png|jpe?g|webp|gif)(\?|$)/i.test(f.url) ? (
-                <a key={f.url} href={f.url} target="_blank" rel="noreferrer">
-                  <img src={f.thumb || f.url} alt={f.name ?? ""} loading="lazy" className="h-28 w-40 rounded-lg border border-border object-cover" />
-                </a>
-              ) : (
-                <a key={f.url} href={f.url} target="_blank" rel="noreferrer" className="rounded-lg border border-border px-2 py-1 text-xs text-ink hover:bg-surface-2">
-                  📎 {f.name ?? f.url.split("?")[0].split("/").pop()}
-                </a>
-              ),
-            )}
-          </div>
-        )}
+        {body}
       </div>
     </div>
   );

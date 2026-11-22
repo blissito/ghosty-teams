@@ -53,9 +53,8 @@ function lastAsk(events: unknown): any {
  *  pregunta: el `note` es su último avance y pintarlo como «Te toca decidir» engaña. */
 export function askQuestion(d: any): string | null {
   const ask = lastAsk(d?.events);
-  if (ask?.data?.question) return String(ask.data.question);
   if (ask?.data?.reason === "writer_idle") return null;
-  return d?.note ? String(d.note) : null;
+  return d?.note ? String(d.note) : ask?.data?.question ? String(ask.data.question) : null;
 }
 
 /** Las opciones de la última pregunta del escritor (`asked_person`), si las dio. Puro. */
