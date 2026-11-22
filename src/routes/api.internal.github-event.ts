@@ -217,12 +217,7 @@ export const Route = createFileRoute("/api/internal/github-event")({
             for (const c of await adoptDependabotPr(ev)) runRooms.add(c);
           }
           const prRuns = await runsByPr(ev.repo, ev.number);
-          // PR sin pedido: si alguien le levantó preview con el botón de su tarjeta, su caja aparte
-          // se tira al mezclar o cerrar (la de un pedido la tira `onPrEvent`). Sin caja, gs no hace nada.
-          if ((ev.action === "merged" || ev.action === "closed") && !prRuns.length)
-            void import("../server/apps/preview.server")
-              .then((P) => P.gsPreview("down", { repo: ev.repo, pr: ev.number }))
-              .catch(() => {});
+          // La preview de un PR sin pedido la levanta y la tira gs por su webhook (servicios del PR, 22-nov).
           for (const run of prRuns) {
             runRooms.add(run.channelId);
             if (ev.action === "merged" || ev.action === "closed") await onPrEvent(run, ev.action);

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { prPreviewStatusFn, prPreviewUpFn } from "../../server/apps/pr-preview";
+import { prPreviewStatusFn } from "../../server/apps/pr-preview";
 import type { PrPreviewView } from "../../server/apps/pr-preview.server";
 import { useT } from "../../i18n";
 
@@ -14,7 +14,6 @@ const WORKING = new Set(["creating", "fetching", "installing", "building", "star
 export function PrPreviewButton({ channelId, repo, number }: { channelId: number; repo: string; number: number }) {
   const t = useT();
   const [v, setV] = useState<PrPreviewView | null>(null);
-  const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
   const refresh = useCallback(() => {
@@ -44,20 +43,9 @@ export function PrPreviewButton({ channelId, repo, number }: { channelId: number
     return () => clearInterval(id);
   }, [waiting, refresh]);
 
-  if (!v?.eligible) return null;
-
-  const up = async () => {
-    if (busy) return;
-    setBusy(true);
-    setErr("");
-    try {
-      setV(await prPreviewUpFn({ data: { channelId, repo, number } }));
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
+  // gs levanta sola la preview de todo PR no borrador de un repo conectado (servicios del PR, 22-nov): aquí sólo se
+  // muestra su estado; sin caja todavía no se pinta nada (antes había botón y salían dos cajas).
+  if (!v?.eligible || v.phase === "none" || v.phase === "evicted") return null;
 
   const phaseLabel: Record<string, string> = {
     creating: t("creando la caja…"),
@@ -66,7 +54,6 @@ export function PrPreviewButton({ channelId, repo, number }: { channelId: number
     building: t("construyendo…"),
     starting: t("arrancando…"),
   };
-  const subtle = "rounded-md border border-border px-2 py-0.5 text-[11px] font-medium text-muted transition hover:bg-surface-3 hover:text-ink disabled:opacity-50";
 
   return (
     <div className="mt-1 flex max-w-xl flex-wrap items-center gap-1.5">
@@ -84,12 +71,9 @@ export function PrPreviewButton({ channelId, repo, number }: { channelId: number
         <span className="text-[11px] text-muted">
           {t("Preview")}: {phaseLabel[v.phase] ?? "…"}
         </span>
-      ) : (
-        <button type="button" disabled={busy} onClick={up} className={subtle}>
-          {busy ? "…" : v.phase === "failed" ? t("Reintentar preview") : t("Levantar preview")}
-        </button>
-      )}
-      {v.phase === "evicted" && !err ? <span className="text-[11px] text-muted">{t("Se soltó para dar lugar a un pedido u otra preview")}</span> : null}
+      ) : v.phase === "failed" ? (
+        <span className="text-[11px] text-muted">{t("Preview")}:</span>
+      ) : null}
       {err || (v.phase === "failed" && v.error) ? (
         <span className="min-w-0 flex-1 truncate text-[11px] text-red-500" title={err || v.error || ""}>
           {err || v.error}
