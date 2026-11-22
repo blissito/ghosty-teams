@@ -285,7 +285,12 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
             if ((await devEngineOf()) === "unified") {
               const { planCriteria, startDevThread } = await import("./dev-threads.server");
               const issueN = Number(a.issue);
+              // La liga del hilo, para que la tarjeta del pendiente en gs sepa volver aquí.
+              const base = await origin();
+              const ch = base ? await (await import("../../db.server")).getChannelById(dest.channelId).catch(() => null) : null;
+              const threadUrl = base && ch ? `${base}/c/${ch.slug}?thread=${threadRootNow}` : null;
               const started = await startDevThread({
+                threadUrl,
                 channelId: dest.channelId,
                 rootMsgId: threadRootNow,
                 sub,
