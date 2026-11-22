@@ -142,7 +142,7 @@ export function DevRunCard({ runId }: { runId: string }) {
                   type="button"
                   disabled={busy}
                   onClick={() => run(() => devThreadTellFn({ data: { runId, text: o } }))}
-                  className="rounded-full border border-amber-400 bg-white/70 px-2.5 py-1 text-xs font-semibold hover:bg-white disabled:opacity-50 dark:bg-amber-950/40"
+                  className="rounded-full border border-border bg-surface px-2.5 py-1 text-xs font-semibold text-ink transition hover:border-brand hover:bg-surface-2 disabled:opacity-50"
                 >
                   {o}
                 </button>
