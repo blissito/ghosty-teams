@@ -1020,12 +1020,13 @@ export const postMessageAs = createServerOnlyFn(async (me: SessionMe | null, dat
   // Slack). Todo lo que una persona escribe ahí, con o sin @, le llega por `tell`, y ningún agente del room contesta en
   // ese hilo (Arqui no ve la conversación del escritor y contestaba sin saber). Para hablar con otro agente: fuera del hilo.
   let devTold = false;
-  if (!factorySigned && data.parentId !== null && me?.sub && body) {
+  if (!factorySigned && data.parentId !== null && me?.sub && (body || files.length)) {
     const { devThreadOf, tellDevThread } = await import("./apps/dev-threads.server");
     const dt = await devThreadOf(channel.id, data.parentId).catch(() => null);
     if (dt) {
       devTold = true;
-      void tellDevThread(dt, me.sub, body).then(async (r) => {
+      // Los adjuntos del mensaje le llegan al escritor como ligas firmadas (op:tell `attachments`).
+      void tellDevThread(dt, me.sub, body, files.map((f) => ({ fileId: f.fileId, name: f.name, mime: f.mime, size: f.size }))).then(async (r) => {
         if (r.ok) return;
         const { postDevNote } = await import("./apps/dev-threads.server");
         await postDevNote(channel.id, data.parentId!, `⚠️ No le llegó al escritor: ${r.message ?? "gs no respondió"}`);

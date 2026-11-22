@@ -95,12 +95,22 @@ export async function startDevThread(a: {
 }
 
 /** Lo que la persona escribe en el hilo, al escritor. gs decide por fase (steer, otra vuelta, cancelar automerge). */
-export async function tellDevThread(t: DevThread, sub: string, text: string): Promise<{ ok: boolean; message?: string }> {
+export type DevTellFile = { fileId: string; name: string; mime?: string | null; size?: number | null };
+
+/** Adjuntos de Teams → `attachments` de op:tell (puro salvo la firma): url firmada 2 h de nuestro bucket, máx. 5. */
+export function tellAttachments(files: DevTellFile[], sign: (key: string) => string) {
+  return files.slice(0, 5).map((f) => ({ url: sign(f.fileId), name: f.name || f.fileId.split("/").pop() || "archivo", ...(f.mime ? { mime: f.mime } : {}), ...(f.size ? { size: f.size } : {}) }));
+}
+
+export async function tellDevThread(t: DevThread, sub: string, text: string, files: DevTellFile[] = []): Promise<{ ok: boolean; message?: string }> {
   const email = await emailOf(sub);
   if (!email) return { ok: false, message: "no encuentro tu correo en este espacio" };
-  let r = await devRunsCall("tell", { id: t.runId, note: text.slice(0, 4000), email });
+  const { signedUrl } = await import("../storage.server");
+  const attachments = tellAttachments(files, (k) => signedUrl(k, 7200));
+  const body = { id: t.runId, note: text.slice(0, 4000), email, ...(attachments.length ? { attachments } : {}) };
+  let r = await devRunsCall("tell", body);
   // Mientras `tell` no esté en el gs desplegado, `resume` hace lo mismo para la nota.
-  if (!r.ok && r.status === 400 && r.data?.error === "op") r = await devRunsCall("resume", { id: t.runId, note: text.slice(0, 4000), email });
+  if (!r.ok && r.status === 400 && r.data?.error === "op") r = await devRunsCall("resume", body);
   return r.ok ? { ok: true } : { ok: false, message: String(r.data?.message ?? r.data?.error ?? `gs respondió ${r.status}`) };
 }
 

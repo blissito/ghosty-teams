@@ -89,3 +89,13 @@ describe("ficha de gs en la tarjeta", () => {
     expect(fichaChecks(undefined)).toEqual({ checks: [], previewUrl: null });
   });
 });
+
+import { tellAttachments } from "./dev-threads.server";
+describe("adjuntos al escritor", () => {
+  it("firma cada llave, máximo 5, con nombre", () => {
+    const f = Array.from({ length: 7 }, (_, i) => ({ fileId: `u/x/${i}.png`, name: "", mime: "image/png", size: 10 }));
+    const out = tellAttachments(f, (k) => `https://t3.storage.dev/b/${k}?X-Amz-Signature=s`);
+    expect(out).toHaveLength(5);
+    expect(out[0]).toEqual({ url: "https://t3.storage.dev/b/u/x/0.png?X-Amz-Signature=s", name: "0.png", mime: "image/png", size: 10 });
+  });
+});
