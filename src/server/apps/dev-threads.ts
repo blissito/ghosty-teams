@@ -15,6 +15,8 @@ export type DevRunView = {
   needsPerson: boolean;
   /** La pregunta del escritor cuando le toca a una persona (`note` del run) y sus opciones (último `asked_person`). */
   question: string | null;
+  /** «Te necesita» porque el escritor se detuvo sin terminar (no porque preguntara algo). */
+  idle?: boolean;
   options: string[];
   canMerge: boolean;
   live: boolean;
@@ -35,11 +37,25 @@ export function devRunView(runId: string, d: any): DevRunView {
     prUrl: d?.prUrl ? String(d.prUrl) : null,
     issueUrl: d?.issueUrl ? String(d.issueUrl) : null,
     needsPerson: phase === "needs_person",
-    question: phase === "needs_person" && d?.note ? String(d.note) : null,
+    question: phase === "needs_person" ? askQuestion(d) : null,
+    idle: phase === "needs_person" && lastAsk(d?.events)?.data?.reason === "writer_idle",
     options: phase === "needs_person" ? lastAskOptions(d?.events) : [],
     canMerge: d?.canMerge === true || (d?.ready === true && LIVE.has(phase) && phase !== "merging"),
     live: LIVE.has(phase),
   };
+}
+
+function lastAsk(events: unknown): any {
+  return Array.isArray(events) ? [...events].reverse().find((e: any) => e?.kind === "asked_person") : null;
+}
+
+/** La pregunta real del escritor (puro): la del último `asked_person`. Si se detuvo sin preguntar (`writer_idle`), no hay
+ *  pregunta: el `note` es su último avance y pintarlo como «Te toca decidir» engaña. */
+export function askQuestion(d: any): string | null {
+  const ask = lastAsk(d?.events);
+  if (ask?.data?.question) return String(ask.data.question);
+  if (ask?.data?.reason === "writer_idle") return null;
+  return d?.note ? String(d.note) : null;
 }
 
 /** Las opciones de la última pregunta del escritor (`asked_person`), si las dio. Puro. */
