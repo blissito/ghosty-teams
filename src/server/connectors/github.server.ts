@@ -628,9 +628,8 @@ const PREVIEW_DEPLOY_NOTE: Record<PreviewDeployState, string> = {
 };
 
 // ── Check runs de la App («Ghosty · Preview») ────────────────────────────────
-// La Checks API sólo la escribe una GitHub App: va siempre con el token de instalación, sin
-// respaldo del usuario. (repo@sha:nombre) → el check que ya publicamos y con qué contenido.
-const checkRuns = new Map<string, { id: number; completed: boolean; sig: string | null }>();
+// El check «Ghosty · Preview» lo escribe gs (un solo publicador por nombre): Teams le pasa el contenido desde
+// `syncPrCheck`. Aquí sólo queda saber si la App puede escribir checks en el repo.
 
 /** ¿La instalación de la App en el repo puede escribir checks? Sin eso un check requerido nunca reporta. */
 export async function appCanWriteChecks(repo: string): Promise<boolean> {
@@ -638,51 +637,6 @@ export async function appCanWriteChecks(repo: string): Promise<boolean> {
   if (!instId) return false;
   const inst = await appFetch(`/app/installations/${instId}`);
   return inst?.permissions?.checks === "write";
-}
-
-/**
- * Crea o actualiza el check `name` en `sha`, idempotente por (repo, sha): con el mismo contenido
- * no llama a GitHub; si no lo recuerda, lo busca por nombre (de NUESTRA App) antes de crear otro.
- */
-export async function upsertCheckRun(
-  repo: string,
-  sha: string,
-  c: { name: string; status: "in_progress" | "completed"; conclusion: string | null; title: string; summary: string; detailsUrl?: string | null },
-): Promise<{ ok: true; action: "skip" | "patch" | "post" } | { error: string }> {
-  const { checkRunWrite } = await import("../apps/factory-preview-check");
-  const key = `${repo.toLowerCase()}@${sha}:${c.name}`;
-  const sig = JSON.stringify([c.status, c.conclusion, c.title, c.summary, c.detailsUrl ?? null]);
-  let existing = checkRuns.get(key) ?? null;
-  if (existing?.sig === sig) return { ok: true, action: "skip" };
-  // El mismo token de instalación que `publishPreviewDeployment` (vía `writeToken`), sin usuario.
-  const instId = await installationIdFor(repo);
-  const token = instId ? await installationToken(instId) : null;
-  if (!token) return { error: "el repo no está entre los que la persona comparte con Ghosty en GitHub (que lo elija en Integraciones → GitHub → Elegir repos)" };
-  if (!existing) {
-    const appId = Number(process.env.GITHUB_APP_ID ?? 0);
-    const list = await apiWith(token, `/repos/${repo}/commits/${sha}/check-runs?check_name=${encodeURIComponent(c.name)}&filter=latest&per_page=20`);
-    const own = Array.isArray(list?.check_runs) ? list.check_runs.find((r: any) => !appId || Number(r?.app?.id) === appId) : null;
-    if (own?.id) existing = { id: Number(own.id), completed: own.status === "completed", sig: null };
-  }
-  const action = checkRunWrite(existing, { status: c.status, sig });
-  const body: Record<string, unknown> = {
-    name: c.name,
-    status: c.status,
-    output: { title: c.title.slice(0, 250), summary: c.summary.slice(0, 60000) },
-    ...(c.detailsUrl ? { details_url: c.detailsUrl } : {}),
-    ...(c.status === "completed" ? { conclusion: c.conclusion ?? "neutral", completed_at: new Date().toISOString() } : {}),
-  };
-  const r =
-    action === "patch" && existing
-      ? await apiWith(token, `/repos/${repo}/check-runs/${existing.id}`, { method: "PATCH", body: JSON.stringify(body) })
-      : await apiWith(token, `/repos/${repo}/check-runs`, {
-          method: "POST",
-          body: JSON.stringify({ ...body, head_sha: sha, started_at: new Date().toISOString() }),
-        });
-  if (r?.error || !r?.id) return { error: String(r?.error ?? "GitHub no devolvió el check") };
-  if (checkRuns.size > 2000) checkRuns.clear();
-  checkRuns.set(key, { id: Number(r.id), completed: c.status === "completed", sig });
-  return { ok: true, action };
 }
 
 /** Igual que `api`, pero con un token ya resuelto (el del bot o el del usuario). */

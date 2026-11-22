@@ -38,9 +38,15 @@ export async function syncPrCheck(repo: string, number: number, sha: string): Pr
       };
     }
     const c = previewCheckFrom(input);
-    const G = await import("../connectors/github.server");
-    const r = await G.upsertCheckRun(repo, sha, { name: PREVIEW_CHECK_NAME, ...c, detailsUrl: c.detailsUrl ?? input?.threadUrl ?? null });
-    if ("error" in r) throw new Error(r.error);
+    // Un solo publicador por nombre de check: lo escribe gs (que además manda si el PR es de un pendiente de
+    // «Desarrollo»). Dos fuentes con el mismo nombre chocan en GitHub (ficha de gs: checks-y-revision-contra-issue-nov21).
+    const { nativeRuntimeBase, partnerHeaders } = await import("../ghosty-runtime.server");
+    const base = await nativeRuntimeBase();
+    if (!base) throw new Error("sin gs para publicar el check");
+    const { currentNamespace } = await import("../tenant.server");
+    const body = JSON.stringify({ repo, number, sha, check: { name: PREVIEW_CHECK_NAME, ...c, detailsUrl: c.detailsUrl ?? input?.threadUrl ?? null } });
+    const res = await fetch(`${base}/api/v2/partners/checks/preview`, { method: "POST", headers: partnerHeaders(body, await currentNamespace()), body, signal: AbortSignal.timeout(30_000) });
+    if (!res.ok) throw new Error(`gs respondió ${res.status}: ${(await res.text().catch(() => "")).slice(0, 200)}`);
   } catch (e) {
     if (Date.now() - (warned.get(repo) ?? 0) < 3_600_000) return;
     warned.set(repo, Date.now());

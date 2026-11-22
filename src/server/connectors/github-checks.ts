@@ -9,7 +9,7 @@
 // un `get` y así la usan igual la tool del agente (token de quien la invoca) y la tarjeta
 // (token de quien la mira).
 
-import { PREVIEW_CHECK_NAME } from "../apps/factory-preview-check";
+import { GHOSTY_CHECK_NAMES } from "../apps/factory-preview-check";
 
 export type ChecksState = "success" | "failure" | "pending" | "none";
 
@@ -47,10 +47,10 @@ export function aggregateChecks(checkRuns: unknown, combined: unknown): ChecksSu
   const checks: CheckItem[] = [];
   let total = 0;
 
-  // «Ghosty · Preview» no es CI: es la puerta de la preview, con su propia regla. Contarlo aquí
+  // Los «Ghosty · …» de gs no son CI (Preview, Revisiones del push): es la puerta de la preview, con su propia regla. Contarlo aquí
   // dejaba el CI «corriendo» mientras se construía y regresaba a @build un PR sin preview.
   const runs = (Array.isArray((checkRuns as any)?.check_runs) ? (checkRuns as any).check_runs : []).filter(
-    (r: any) => r?.name !== PREVIEW_CHECK_NAME,
+    (r: any) => !GHOSTY_CHECK_NAMES.includes(r?.name),
   );
   for (const r of runs) {
     total++;

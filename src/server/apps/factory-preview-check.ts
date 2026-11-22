@@ -7,6 +7,8 @@ import { previewGateBlock, type PreviewGateState } from "./factory-preview-gate"
 import { scrubPreviewKeys } from "./preview-link";
 
 export const PREVIEW_CHECK_NAME = "Ghosty · Preview";
+/** Checks que publica gs y que no son el CI del repo (los «Ghosty · …»). */
+export const GHOSTY_CHECK_NAMES: readonly string[] = [PREVIEW_CHECK_NAME, "Ghosty · Revisiones del push"];
 
 export type PreviewCheck = {
   status: "in_progress" | "completed";
@@ -93,8 +95,3 @@ export function previewCheckFrom(run: PreviewCheckRun | null): PreviewCheck {
   };
 }
 
-/** Idempotencia por (repo, sha): mismo contenido = nada; de terminado a en curso, uno nuevo (GitHub enseña el último). */
-export function checkRunWrite(existing: { completed: boolean; sig: string | null } | null, next: { status: PreviewCheck["status"]; sig: string }): "skip" | "patch" | "post" {
-  if (existing?.sig === next.sig) return "skip";
-  return !existing || (existing.completed && next.status === "in_progress") ? "post" : "patch";
-}

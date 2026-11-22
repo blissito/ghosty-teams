@@ -10,7 +10,7 @@
 // que se firma; la protección la activa el dueño con un clic (nunca un agente: con
 // `administration` podría quitarla).
 import { githubApi } from "../connectors/github.server";
-import { PREVIEW_CHECK_NAME } from "./factory-preview-check";
+import { GHOSTY_CHECK_NAMES } from "./factory-preview-check";
 
 /** Las actions del workflow, por tag. El SHA se resuelve al generarlo (tj-actions, 2025). */
 const ACTIONS: Record<string, string> = {
@@ -265,7 +265,7 @@ export async function protectionState(sub: string, repo: string): Promise<Protec
  * es informativo.
  */
 export function requiredChecksFor(observed: string[]): { context: string }[] {
-  return observed.filter((n) => n !== PREVIEW_CHECK_NAME).map((context) => ({ context }));
+  return observed.filter((n) => !GHOSTY_CHECK_NAMES.includes(n)).map((context) => ({ context }));
 }
 
 /** Los checks que de verdad corren en la cabeza de la rama principal (sus nombres). */
