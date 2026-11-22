@@ -10,6 +10,8 @@ export type OpenPreviewDeps = {
   canSee: (channel: { id: number }, sub: string, isOwner: boolean) => Promise<boolean>;
   /** La liga CON llave, pedida a gs (null = no hay preview lista). */
   resolve: (runId: number) => Promise<string | null>;
+  /** Boleto de un solo uso del navegador de un agente (`?t=`): entra sin sesión. Ver `preview-ticket.ts`. */
+  redeemTicket?: (runId: number) => boolean;
 };
 
 export type OpenPreviewResult =
@@ -30,11 +32,14 @@ export async function openPreview(
 ): Promise<OpenPreviewResult> {
   const runId = Number(runIdRaw);
   if (!Number.isInteger(runId) || runId <= 0) return { status: 404, body: "not found" };
-  if (!me) return { status: 401, body: "Inicia sesión para abrir la preview." };
-  // 404 (no 403) para quien no ve el room: no se confirma que el pedido existe.
-  const channelId = await deps.runChannel(runId);
-  const channel = channelId ? await deps.getChannel(channelId) : null;
-  if (!channel || !(await deps.canSee(channel, me.sub, me.isOwner))) return { status: 404, body: "not found" };
+  const ticketed = !me && !!deps.redeemTicket?.(runId);
+  if (!me && !ticketed) return { status: 401, body: "Inicia sesión para abrir la preview." };
+  if (me) {
+    // 404 (no 403) para quien no ve el room: no se confirma que el pedido existe.
+    const channelId = await deps.runChannel(runId);
+    const channel = channelId ? await deps.getChannel(channelId) : null;
+    if (!channel || !(await deps.canSee(channel, me.sub, me.isOwner))) return { status: 404, body: "not found" };
+  }
   const url = await deps.resolve(runId);
   if (!url) return { status: 409, body: "La preview de este pedido no está lista (o ya se cerró)." };
   return { status: 302, location: url };

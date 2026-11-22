@@ -1226,12 +1226,14 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         "La preview del PR del pedido: state ready|pending|failed|none, su URL y, si falló, por qué. " +
         "Si el hosting del repo no las publica, la plataforma la construye en una caja propia. Úsala para probar el cambio como lo verá la persona antes del merge. " +
         "La URL NO trae llave y tú no la ves: para mirar la página pasa `read` con una ruta («/», «/pedidos») y la plataforma la abre por ti " +
-        "(estado, título y texto visible). Nunca pegues ni pidas la llave (?k=) en un chat o PR: la persona abre la preview con `open`.",
+        "(estado, título y texto visible). Para probarla con clics en el navegador de tu computadora pasa `browse: true` y abre la `browseUrl` que regresa " +
+        "(un solo uso; nunca pidas que alguien inicie sesión por ti). Nunca pegues ni pidas la llave (?k=) en un chat o PR: la persona abre la preview con `open`.",
       inputSchema: {
         type: "object",
         properties: {
           runId: { type: "number" },
           read: { type: "string", description: "Ruta de la preview a leer, empieza con «/» (p. ej. «/» o «/pedidos?mesa=3»). Devuelve estado, título y texto visible." },
+          browse: { type: "boolean", description: "true = una liga de UN SOLO USO (10 min) para abrir la preview en el navegador de tu computadora y probarla con clics (capturar, recargar). No pidas iniciar sesión: con esta liga entra sola. No la pegues en el chat ni en el PR." },
         },
       },
       handler: async (sub, a) => {
@@ -1310,7 +1312,18 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           p.state === "ready" && typeof a.read === "string"
             ? await (await import("./preview-read.server")).readPreviewPage(await R.resolvePreviewUrl(run.id), a.read)
             : null;
-        return { ok: true, ...p, required, ...(page ? { page } : {}), ...(prodRisks.length ? { prodRisks } : {}), note: note + prodNote };
+        // El navegador del agente no tiene sesión de Teams: un boleto de un solo uso en vez de «inicia sesión en mi computadora».
+        let browseUrl: string | null = null;
+        if (a.browse === true && p.state === "ready" && process.env.SESSION_SECRET) {
+          const { currentSlug } = await import("../tenant.server");
+          const slug = await currentSlug().catch(() => null);
+          const origin = slug ? `https://${slug}.${process.env.TEAMS_ROOT_DOMAIN ?? "teams.ghosty.studio"}` : null;
+          const { makePreviewTicket } = await import("./preview-ticket");
+          const { previewOpenPath } = await import("./preview-link");
+          if (origin) browseUrl = `${previewOpenPath(run.id, origin)}?t=${makePreviewTicket(run.id, process.env.SESSION_SECRET)}`;
+        }
+        const browseNote = browseUrl ? " Abre `browseUrl` en el navegador de tu computadora (un solo uso, 10 min; si caduca pide otra con browse). No la pegues en el chat ni en el PR." : "";
+        return { ok: true, ...p, required, ...(page ? { page } : {}), ...(browseUrl ? { browseUrl } : {}), ...(prodRisks.length ? { prodRisks } : {}), note: note + prodNote + browseNote };
       },
     },
     {

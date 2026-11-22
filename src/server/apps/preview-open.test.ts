@@ -46,3 +46,14 @@ describe("/preview/<id>", () => {
     expect("body" in r ? r.body : "").not.toContain(KEY);
   });
 });
+
+describe("boleto del navegador de un agente", () => {
+  it("sin sesión pero con boleto válido: redirige a la preview con llave", async () => {
+    const r = await openPreview("184", null, deps({ redeemTicket: (id) => id === 184 }));
+    expect(r.status).toBe(302);
+  });
+  it("sin sesión y sin boleto: 401", async () => {
+    const r = await openPreview("184", null, deps({ redeemTicket: () => false }));
+    expect(r.status).toBe(401);
+  });
+});
