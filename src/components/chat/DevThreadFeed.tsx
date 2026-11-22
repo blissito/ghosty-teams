@@ -88,7 +88,7 @@ export function DevFeedRow({ d, writer, grouped = false, issueUrl = null }: { d:
       {files.length > 0 && <AttachmentList attachments={files} />}
     </>
   );
-  const name = isWriter ? writer.name : d.by ?? t("Persona");
+  const name = isWriter ? writer.name : d.by ?? (d.from === "chat" ? t("En Ghosty Studio") : t("Persona"));
   if (grouped) {
     // Seguido del mismo autor: sin avatar ni nombre, como agrupa Slack.
     return (

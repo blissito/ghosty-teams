@@ -2776,4 +2776,5 @@ export const en: Record<string, string> = {
   "Te toca decidir: contéstale aquí con @ghosty.": "Your call: reply here with @ghosty.",
   "El escritor se detuvo sin terminar: dile cómo seguir en el hilo con @ghosty.": "The writer stopped before finishing: tell it how to continue in the thread with @ghosty.",
   "desde GitHub": "from GitHub",
+  "En Ghosty Studio": "In Ghosty Studio",
 };
