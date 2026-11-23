@@ -197,17 +197,18 @@ export const devThreadTellFn = createServerFn({ method: "POST" })
     return { ok: true as const };
   });
 
-/** Mezclar o detener desde la tarjeta, con la cuenta de quien da el clic (gs comprueba que pueda). */
+/** Mezclar, detener, reabrir o soltar la espera desde la tarjeta, con la cuenta de quien da el clic (gs comprueba que pueda). */
 export const devThreadActionFn = createServerFn({ method: "POST" })
-  .validator((d: Q & { action: "merge" | "stop" }) => d)
+  .validator((d: Q & { action: "merge" | "stop" | "reopen" | "release" }) => d)
   .handler(async ({ data }) => {
     const ctx = await ctxFor(data);
     if (!ctx) throw new Error("no autorizado");
-    if (data.action !== "merge" && data.action !== "stop") throw new Error("acción inválida");
+    if (data.action !== "merge" && data.action !== "stop" && data.action !== "reopen" && data.action !== "release") throw new Error("acción inválida");
     const email = await emailFor(ctx.me.sub);
     if (!email) throw new Error("no encuentro tu correo en este espacio");
     const { devRunsCall } = await import("./dev-engine.server");
-    const r = await devRunsCall(data.action, { id: ctx.t.runId, email });
+    // «Seguir sin esperar» = `resume` en gs (suelta «Esperando #N» sin cerrar el PR que bloquea).
+    const r = await devRunsCall(data.action === "release" ? "resume" : data.action, { id: ctx.t.runId, email });
     if (!r.ok) throw new Error(String(r.data?.message ?? r.data?.error ?? `gs respondió ${r.status}`));
     return { ok: true as const };
   });

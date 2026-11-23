@@ -158,6 +158,16 @@ export function DevRunCard({ runId }: { runId: string }) {
             {t("Mezclar")}
           </button>
         )}
+        {st.phase === "stopped" && st.prUrl && (
+          <button type="button" disabled={busy} onClick={() => run(() => devThreadActionFn({ data: { runId, action: "reopen" } }))} className="rounded-lg border border-border px-3 py-1.5 text-xs font-bold text-ink hover:bg-surface disabled:opacity-50">
+            {t("Reabrir")}
+          </button>
+        )}
+        {st.phase === "blocked" && (
+          <button type="button" disabled={busy} onClick={() => run(() => devThreadActionFn({ data: { runId, action: "release" } }))} className="rounded-lg border border-border px-3 py-1.5 text-xs font-bold text-ink hover:bg-surface disabled:opacity-50">
+            {t("Seguir sin esperar")}
+          </button>
+        )}
         <a href={`?thread=${st.rootMsgId}`} className="rounded-lg border border-border px-3 py-1.5 text-xs font-bold text-ink hover:bg-surface">
           💬 {t("Ver conversación")}
         </a>

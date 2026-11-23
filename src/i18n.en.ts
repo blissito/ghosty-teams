@@ -2771,6 +2771,7 @@ export const en: Record<string, string> = {
   "Escríbele al escritor…": "Write to the writer\u2026",
   "Abrir en Ghosty": "Open in Ghosty",
   "Detener el pendiente": "Stop the task",
+  "Seguir sin esperar": "Go on without waiting",
   "Te toca decidir: contéstale en la tarjeta del pendiente o menciona a @ghosty aquí.": "Your call: reply in the task card or mention @ghosty here.",
   "Persona": "Person",
   "desde GitHub": "from GitHub",
