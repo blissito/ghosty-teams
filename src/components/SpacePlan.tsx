@@ -40,17 +40,11 @@ export type SpaceStatus = {
 
 export type SpaceModule = { key: string; name: string; fromMxn: number | null; href: string };
 
-/** Respaldo si gs todavía no manda `modules`: los mismos números que cotiza gs hoy (F1 $1,897
- *  dentro de `quote()`, Ventas $890 + IVA = $1,032) y la liga de llamada de Partner de /planes. */
+/** Respaldo si gs todavía no manda `modules`: los mismos precios que cobra gs (24-nov, IVA incluido). */
 const FALLBACK_MODULES: SpaceModule[] = [
-  { key: "factory", name: "Factory", fromMxn: 1897, href: "https://www.ghosty.studio/planes?factory=F1" },
-  { key: "sales", name: "Sales", fromMxn: 1032, href: "https://www.ghosty.studio/planes?p=sales#planes" },
-  {
-    key: "partner",
-    name: "Partner",
-    fromMxn: null,
-    href: "https://wa.me/527717759013?text=%C2%A1Hola!%20Quiero%20agendar%20una%20llamada%20para%20ser%20Partner%20de%20Ghosty.",
-  },
+  { key: "factory", name: "Factory", fromMxn: 299, href: "https://www.ghosty.studio/app/cajas?trabajo=1" },
+  { key: "sales", name: "Sales", fromMxn: 890, href: "https://www.ghosty.studio/planes?p=sales#planes" },
+  { key: "partner", name: "SDK", fromMxn: 690, href: "https://www.ghosty.studio/planes?p=teams&sdk=1" },
 ];
 const MODULE_ICON: Record<string, React.ReactNode> = {
   factory: <Factory size={16} />,
