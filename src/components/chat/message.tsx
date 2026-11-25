@@ -3544,7 +3544,9 @@ function ComputerCard({ messageId, card, vivo, agentName, handle }: { messageId:
   const tr = useT();
   const { onOpenArtifact } = useContext(ChatCtx);
   // Los pasos en vivo (si llegaron) dicen qué hace AHORA; el cuerpo sólo trae el resumen.
-  const { steps } = useComputerSteps(messageId);
+  // Turno terminado no pinta tarjeta: tampoco pide sus pasos (con cientos de burbujas en el hilo
+  // eran cientos de lecturas al abrirlo).
+  const { steps } = useComputerSteps(messageId, { fetch: vivo && card.live });
   // Turno terminado: sin tarjeta. El «▶ Ver cómo lo hice · Trabajó N s» ya no aportaba nada
   // (la lista de herramientas va arriba de la respuesta) y estorbaba en cada burbuja (bliss, 9-nov).
   if (!(vivo && card.live)) return null;

@@ -10,13 +10,31 @@ const byMessage = new Map<number, AgentStep[]>();
 const liveTurn = new Map<number, boolean>();
 const listeners = new Set<() => void>();
 const loading = new Set<number>();
+// Cuántos componentes montados miran cada burbuja: ésas no se expulsan del tope.
+const mounted = new Map<number, number>();
+
+/** La entrada más vieja que nadie está mirando (o undefined si todas están montadas). */
+function oldestUnmounted<V>(m: Map<number, V>): number | undefined {
+  for (const k of m.keys()) if (!mounted.has(k)) return k;
+}
 
 export function setComputerSteps(messageId: number, steps: AgentStep[], live = false): void {
+  // Se borra antes de poner: así la burbuja queda al final (la más reciente) del orden de expulsión.
+  byMessage.delete(messageId);
   byMessage.set(messageId, steps);
+  liveTurn.delete(messageId);
   liveTurn.set(messageId, live);
-  if (liveTurn.size > 60) liveTurn.delete(liveTurn.keys().next().value!);
-  // Tope: una pestaña abierta todo el día no debe guardar los pasos de cada turno.
-  if (byMessage.size > 60) byMessage.delete(byMessage.keys().next().value!);
+  // Tope: una pestaña abierta todo el día no debe guardar los pasos de cada turno. Nunca se
+  // expulsa una burbuja montada: con más de 60 en pantalla se expulsaban entre sí, cada una
+  // volvía a pedir sus pasos y el panel abierto parpadeaba en blanco cada segundo (25-nov).
+  if (byMessage.size > 60) {
+    const k = oldestUnmounted(byMessage);
+    if (k !== undefined) byMessage.delete(k);
+  }
+  if (liveTurn.size > 60) {
+    const k = oldestUnmounted(liveTurn);
+    if (k !== undefined) liveTurn.delete(k);
+  }
   for (const l of listeners) l();
 }
 
@@ -27,12 +45,23 @@ function subscribe(l: () => void) {
 
 const EMPTY: AgentStep[] = [];
 
-/** Los pasos de una burbuja; si no llegaron en vivo, los pide una vez a la base. */
-export function useComputerSteps(messageId: number): { steps: AgentStep[]; loaded: boolean; live: boolean } {
+/**
+ * Los pasos de una burbuja; si no llegaron en vivo, los pide una vez a la base (salvo
+ * `fetch: false`: la tarjeta de un turno terminado no se pinta y no tiene por qué pedirlos).
+ */
+export function useComputerSteps(messageId: number, { fetch = true }: { fetch?: boolean } = {}): { steps: AgentStep[]; loaded: boolean; live: boolean } {
   const steps = useSyncExternalStore(subscribe, () => byMessage.get(messageId) ?? EMPTY, () => EMPTY);
   const loaded = byMessage.has(messageId);
   useEffect(() => {
-    if (loaded || loading.has(messageId)) return;
+    mounted.set(messageId, (mounted.get(messageId) ?? 0) + 1);
+    return () => {
+      const n = (mounted.get(messageId) ?? 1) - 1;
+      if (n > 0) mounted.set(messageId, n);
+      else mounted.delete(messageId);
+    };
+  }, [messageId]);
+  useEffect(() => {
+    if (!fetch || loaded || loading.has(messageId)) return;
     loading.add(messageId);
     void getComputerStepsFn({ data: { id: messageId } })
       .then((r) => {
@@ -43,7 +72,7 @@ export function useComputerSteps(messageId: number): { steps: AgentStep[]; loade
         if (!byMessage.has(messageId)) setComputerSteps(messageId, []);
       })
       .finally(() => loading.delete(messageId));
-  }, [messageId, loaded]);
+  }, [messageId, loaded, fetch]);
   return { steps, loaded, live: liveTurn.get(messageId) === true };
 }
 
