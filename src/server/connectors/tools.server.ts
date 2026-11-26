@@ -103,35 +103,36 @@ export async function listUserTools(
   // "no tengo Sentry" teniendo una compartida delante.
   const { listAvailableProviders } = await import("./store.server");
   const connected = await listAvailableProviders(sub);
-  const out: ToolDecl[] = nativeTools(dest).map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }));
-  // Las de Ghosty Tasks van aparte de `nativeTools` porque ésa es síncrona y éstas piden sus
-  // schemas al tablero. Un Tasks caído no puede dejar al usuario sin el resto de sus tools.
-  for (const t of await taskTools(sub, dest).catch(() => []))
-    out.push({ name: t.name, description: t.description, inputSchema: t.inputSchema });
-  // Las de apps instaladas (hoy la Software Factory): [] si el espacio no la tiene.
-  for (const t of await factoryTools(sub, dest).catch(() => []))
-    out.push({ name: t.name, description: t.description, inputSchema: t.inputSchema });
-  // Ghosty Ads: sólo con la app instalada y en turnos de @ads.
-  for (const t of await adsTools(sub, dest).catch(() => []))
-    out.push({ name: t.name, description: t.description, inputSchema: t.inputSchema });
-  for (const id of connected) {
-    const load = loaderFor(id);
-    if (!load) continue;
-    try {
-      const mod = await load();
-      for (const t of await toolsOf(mod, sub, dest)) out.push({ name: t.name, description: t.description, inputSchema: t.inputSchema });
-    } catch {
-      // un conector roto no rompe el listado de los demás
-    }
-  }
-  // Sin GitHub propio ni compartido, en un room con repos y la App instalada: las de GitHub
-  // trabajan con la App sobre los repos del room (`withAgentRepoScope`, 3-nov).
-  if (!connected.has("github")) {
-    for (const t of await appGithubTools(sub, dest).catch(() => [])) out.push({ name: t.name, description: t.description, inputSchema: t.inputSchema });
-  }
-  // Los conectores de Ghosty Studio (Drive) con la cuenta de quien escribe: se conectan en
-  // ghosty.studio y sirven aquí sin conectar otra vez (`studio-bridge.server.ts`).
-  for (const t of await studioTools(sub).catch(() => [])) out.push(t);
+  const decl = (t: { name: string; description: string; inputSchema: ToolDecl["inputSchema"] }): ToolDecl => ({ name: t.name, description: t.description, inputSchema: t.inputSchema });
+  // Todas las fuentes EN PARALELO y en el mismo orden de siempre (25-nov-2026). Antes iban una tras otra
+  // —Tasks, Factory, Ads, cada conector, GitHub de la App, Studio— y varias van a la red: la lista
+  // tardaba 5–8 s, y gs la espera al abrir cada sesión de un agente (`teamsToolsFor` en gs).
+  const groups = await Promise.all([
+    // Las de Ghosty Tasks van aparte de `nativeTools` porque ésa es síncrona y éstas piden sus
+    // schemas al tablero. Un Tasks caído no puede dejar al usuario sin el resto de sus tools.
+    taskTools(sub, dest).then((ts) => ts.map(decl)).catch(() => [] as ToolDecl[]),
+    // Las de apps instaladas (hoy la Software Factory): [] si el espacio no la tiene.
+    factoryTools(sub, dest).then((ts) => ts.map(decl)).catch(() => [] as ToolDecl[]),
+    // Ghosty Ads: sólo con la app instalada y en turnos de @ads.
+    adsTools(sub, dest).then((ts) => ts.map(decl)).catch(() => [] as ToolDecl[]),
+    ...[...connected].map(async (id): Promise<ToolDecl[]> => {
+      const load = loaderFor(id);
+      if (!load) return [];
+      try {
+        return (await toolsOf(await load(), sub, dest)).map(decl);
+      } catch {
+        // un conector roto no rompe el listado de los demás
+        return [];
+      }
+    }),
+    // Sin GitHub propio ni compartido, en un room con repos y la App instalada: las de GitHub
+    // trabajan con la App sobre los repos del room (`withAgentRepoScope`, 3-nov).
+    connected.has("github") ? Promise.resolve([] as ToolDecl[]) : appGithubTools(sub, dest).then((ts) => ts.map(decl)).catch(() => [] as ToolDecl[]),
+    // Los conectores de Ghosty Studio (Drive) con la cuenta de quien escribe: se conectan en
+    // ghosty.studio y sirven aquí sin conectar otra vez (`studio-bridge.server.ts`).
+    studioTools(sub).catch(() => [] as ToolDecl[]),
+  ]);
+  const out: ToolDecl[] = [...nativeTools(dest).map(decl), ...groups.flat()];
   // Un solo filtro al final, sobre TODO lo reunido: nativas, tablero y conectores. Filtrar en
   // cada rama era lo que dejaba huecos.
   return out.filter(
