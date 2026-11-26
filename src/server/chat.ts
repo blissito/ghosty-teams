@@ -708,10 +708,15 @@ export const pingTypingFn = createServerFn({ method: "POST" })
           dmId: data.dmId,
         });
       }
+      // Escribirle a un agente nativo de gs: que su caja despierte mientras termina de escribir.
+      void warmDmAgent(ns, data.dmId, user.sub);
       return { ok: true as const };
     }
     const channel = data.slug ? await db.getChannel(data.slug) : null;
     if (!channel) return { ok: false as const };
+    // En el hilo de un agente (lo sigue sin re-@mención): precalentar su conversación. Un
+    // mensaje de primer nivel abre conversación nueva, ahí no hay nada que calentar.
+    if (data.parentId != null) void warmThreadAgent(ns, channel, data.parentId);
     bus.publish(bus.ch.room(ns, channel.id), {
       t: "typing",
       sub: user.sub,
@@ -721,6 +726,33 @@ export const pingTypingFn = createServerFn({ method: "POST" })
     });
     return { ok: true as const };
   });
+
+/** Precalienta el agente del DM `dmId` (sólo gs-native; ver `warm-native.server.ts`). Nunca lanza. */
+async function warmDmAgent(ns: string, dmId: number, sub: string): Promise<void> {
+  try {
+    const { warmGate, warmNativeConversation } = await import("./warm-native.server");
+    if (!warmGate.take(`${ns}:dm:${dmId}`)) return;
+    const db = await import("../db.server");
+    const handle = await db.getDmAgentHandle(dmId);
+    if (!handle || !(await db.isDmMember(dmId, sub))) return;
+    await warmNativeConversation(handle, `dm-${dmId}`); // == askDmAgentFn
+  } catch { /* best-effort */ }
+}
+
+/** Precalienta al agente que sigue el hilo `rootId` (el que contestaría sin @). Nunca lanza. */
+async function warmThreadAgent(ns: string, channel: { id: number; slug: string }, rootId: number): Promise<void> {
+  try {
+    const { warmGate, warmNativeConversation } = await import("./warm-native.server");
+    if (!warmGate.take(`${ns}:room:${channel.id}:${rootId}`)) return;
+    const db = await import("../db.server");
+    const root = await db.getMessage(rootId);
+    const handle = await threadFollowAgent(channel.id, rootId, root?.agent_handle ?? null);
+    if (!handle) return;
+    // Misma clave que `askAgent` (fleetSuffixFor con la raíz del hilo y FLEET_THREAD).
+    const { fleetSuffixFor } = await import("./apps/factory-session.server");
+    await warmNativeConversation(handle, await fleetSuffixFor(handle, channel, rootId, FLEET_THREAD));
+  } catch { /* best-effort */ }
+}
 
 // Toggle de reacción emoji sobre un mensaje. Publica el nuevo total en vivo.
 // Message-centric: la audiencia (room o DM) se deriva del propio mensaje, así
